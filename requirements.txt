@@ -1,0 +1,36 @@
+# CrispLens v2 — FastAPI backend dependencies
+# Install: pip install -r requirements.txt
+
+# Web framework
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# Face recognition
+insightface
+onnxruntime
+faiss-cpu
+opencv-python-headless
+numpy
+
+# Image processing
+pillow
+
+# Auth & security
+bcrypt
+cryptography
+
+# Config & utilities
+pyyaml
+requests
+
+# VLM providers
+openai
+anthropic
+
+# Cloud drive bridges (internxt-cli uses BIP39 mnemonic key derivation)
+mnemonic
+
+# Optional: visual duplicate detection
+# imagehash

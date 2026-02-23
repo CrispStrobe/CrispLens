@@ -1,0 +1,215 @@
+"""
+routers/filesystem.py — Filesystem browse and add-to-DB pipeline.
+"""
+import json
+import logging
+import os
+import sqlite3
+from pathlib import Path
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from routers.deps import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm'}
+
+
+def _state():
+    from fastapi_app import state
+    return state
+
+
+def _connect(db_path: str):
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+class AddRequest(BaseModel):
+    paths:      List[str]
+    recursive:  bool = True
+    visibility: str  = 'shared'
+
+
+def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
+    result = []
+    for p in paths:
+        pp = Path(p)
+        if pp.is_file() and pp.suffix.lower() in IMAGE_EXTENSIONS:
+            result.append(str(pp))
+        elif pp.is_dir():
+            pattern = '**/*' if recursive else '*'
+            result.extend(
+                str(f) for f in pp.glob(pattern)
+                if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+            )
+    return result
+
+
+@router.get("/browse")
+def browse_filesystem(path: str = Query('')) -> Dict[str, Any]:
+    """
+    List a directory with DB-status for each image file and subdirectory.
+
+    Returns:
+      {
+        path: str,
+        parent: str | null,
+        entries: [
+          { name, path, is_dir: true,  total_files, db_count } |
+          { name, path, is_dir: false, in_db, image_id }
+        ]
+      }
+    """
+    s = _state()
+
+    if not path:
+        # Default to the data/install dir so VPS users land in a useful place.
+        # Fall back to home dir if the env var is not set.
+        path = os.environ.get('FACE_REC_DATA_DIR') or os.path.expanduser('~')
+
+    target = Path(path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        entries = []
+
+        try:
+            scan_iter = sorted(
+                os.scandir(path),
+                key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower())
+            )
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
+
+        for entry in scan_iter:
+            if entry.name.startswith('.'):
+                continue
+
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    # Count image files in this dir (non-recursive, shallow check)
+                    try:
+                        dir_images = [
+                            f for f in os.scandir(entry.path)
+                            if f.is_file() and Path(f.name).suffix.lower() in IMAGE_EXTENSIONS
+                        ]
+                        total = len(dir_images)
+                        if total > 0:
+                            img_paths = [f.path for f in dir_images]
+                            placeholders = ','.join('?' * len(img_paths))
+                            row = conn.execute(
+                                f"SELECT COUNT(*) as cnt FROM images "
+                                f"WHERE filepath IN ({placeholders}) AND processed=1",
+                                img_paths
+                            ).fetchone()
+                            db_count = row['cnt'] if row else 0
+                        else:
+                            db_count = 0
+                    except PermissionError:
+                        total = 0
+                        db_count = 0
+
+                    entries.append({
+                        'name':        entry.name,
+                        'path':        entry.path,
+                        'is_dir':      True,
+                        'total_files': total,
+                        'db_count':    db_count,
+                    })
+
+                elif entry.is_file() and Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
+                    row = conn.execute(
+                        "SELECT id FROM images WHERE filepath=?", (entry.path,)
+                    ).fetchone()
+                    entries.append({
+                        'name':     entry.name,
+                        'path':     entry.path,
+                        'is_dir':   False,
+                        'in_db':    row is not None,
+                        'image_id': row['id'] if row else None,
+                    })
+            except OSError:
+                continue
+
+        parent = str(target.parent) if str(target.parent) != str(target) else None
+        return {'path': str(target), 'parent': parent, 'entries': entries}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/add")
+async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
+    """
+    Add selected filesystem paths (files or directories) to the DB.
+    Streams SSE events like /api/process/batch.
+    Sets owner_id and visibility on each inserted image record.
+    """
+    s = _state()
+    all_paths = _collect_image_paths(body.paths, body.recursive)
+    total = len(all_paths)
+    vis = body.visibility if body.visibility in ('shared', 'private') else 'shared'
+    owner_id = user.id
+
+    async def event_stream():
+        import asyncio
+        loop = asyncio.get_event_loop()
+        yield f"data: {json.dumps({'total': total, 'started': True})}\n\n"
+        for i, path in enumerate(all_paths):
+            try:
+                # Run blocking process_image in a thread so SSE frames flush between images
+                result = await loop.run_in_executor(
+                    None, lambda p=path: s.engine.process_image(p, s.vlm_provider)
+                )
+                r = result if isinstance(result, dict) else {}
+                image_id = r.get('image_id')
+                if image_id:
+                    try:
+                        conn = _connect(s.db_path)
+                        conn.execute(
+                            'UPDATE images SET owner_id = ?, visibility = ? WHERE id = ?',
+                            (owner_id, vis, image_id),
+                        )
+                        conn.commit()
+                        conn.close()
+                    except Exception as e_upd:
+                        logger.warning(f"Could not set owner/visibility for image {image_id}: {e_upd}")
+                payload = {
+                    'index':  i + 1,
+                    'total':  total,
+                    'path':   path,
+                    'result': {
+                        'faces_detected': r.get('face_count', 0),
+                        'vlm':            r.get('vlm_result'),
+                    },
+                }
+            except Exception as e:
+                logger.error(f"add_to_db error {path}: {e}")
+                payload = {
+                    'index': i + 1,
+                    'total': total,
+                    'path':  path,
+                    'error': str(e),
+                }
+            yield f"data: {json.dumps(payload)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': total})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

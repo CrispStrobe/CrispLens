@@ -1,0 +1,539 @@
+"""
+cloud_drive_manager.py — Unified mount/connect/browse manager for cloud and network drives.
+
+Supported types:
+  smb      — SMB/CIFS network share  (OS-level mount via mount_smbfs / mount.cifs)
+  sftp     — SFTP filesystem          (OS-level mount via sshfs)
+  filen    — Filen encrypted cloud    (bridge to ../filen-python)
+  internxt — Internxt encrypted cloud (bridge to ../internxt-cli)
+
+Credentials are stored Fernet-encrypted in the cloud_drives DB table.
+Active cloud sessions are cached in _sessions (in-memory, cleared on restart).
+"""
+import json
+import logging
+import os
+import platform
+import sqlite3
+import subprocess
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+# ── In-memory session cache ───────────────────────────────────────────────────
+# { drive_id: { 'session': <credentials dict>, 'expires_at': <unix ts> } }
+_sessions: Dict[int, Dict[str, Any]] = {}
+_SESSION_TTL = 23 * 3600   # 23 hours
+
+
+# ── Fernet encryption helper ──────────────────────────────────────────────────
+
+def _get_fernet(db_path: str):
+    """Return a Fernet instance using the app's secret key (shared with ApiKeyManager)."""
+    secret_file = os.path.join(os.path.dirname(db_path), '.api_secret_key')
+    if not os.path.exists(secret_file):
+        secret_file = '.api_secret_key'
+    from cryptography.fernet import Fernet
+    if os.path.exists(secret_file):
+        with open(secret_file, 'rb') as f:
+            key = f.read().strip()
+    else:
+        key = Fernet.generate_key()
+        with open(secret_file, 'wb') as f:
+            f.write(key)
+        os.chmod(secret_file, 0o600)
+    return Fernet(key)
+
+
+def encrypt_config(db_path: str, config: Dict[str, Any]) -> str:
+    return _get_fernet(db_path).encrypt(json.dumps(config).encode()).decode()
+
+
+def decrypt_config(db_path: str, token: str) -> Dict[str, Any]:
+    return json.loads(_get_fernet(db_path).decrypt(token.encode()).decode())
+
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
+def _connect(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL')
+    return conn
+
+
+def ensure_table(db_path: str) -> None:
+    conn = None
+    try:
+        conn = _connect(db_path)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS cloud_drives (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                config_encrypted TEXT NOT NULL DEFAULT '',
+                mount_point TEXT,
+                scope TEXT NOT NULL DEFAULT 'system',
+                owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                allowed_roles TEXT NOT NULL DEFAULT '["admin","medienverwalter"]',
+                auto_mount INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                is_mounted INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+# ── SMB / CIFS ────────────────────────────────────────────────────────────────
+
+def _mount_smb(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
+    from drive_mount import DriveMount
+    return DriveMount.mount_smb(
+        server=cfg['server'],
+        share=cfg['share'],
+        mount_point=mount_point,
+        username=cfg['username'],
+        password=cfg['password'],
+        domain=cfg.get('domain', ''),
+        read_only=cfg.get('read_only', False),
+    )
+
+
+# ── SFTP (sshfs) ─────────────────────────────────────────────────────────────
+
+def _mount_sftp(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
+    server = cfg.get('server', '')
+    port = cfg.get('port', 22)
+    username = cfg.get('username', '')
+    remote_path = cfg.get('remote_path', '/')
+    password = cfg.get('password', '')
+    ssh_key = cfg.get('ssh_key', '')
+
+    if not server or not username:
+        return False, 'server and username are required for SFTP'
+
+    Path(mount_point).mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = subprocess.run(['mount'], capture_output=True, text=True, timeout=5)
+        if mount_point in result.stdout:
+            return True, f'Already mounted at {mount_point}'
+    except Exception:
+        pass
+
+    cmd = ['sshfs', f'{username}@{server}:{remote_path}', mount_point,
+           '-p', str(port), '-o', 'StrictHostKeyChecking=no']
+    if ssh_key:
+        cmd.extend(['-o', f'IdentityFile={ssh_key}'])
+    elif password:
+        cmd = ['sshpass', '-p', password] + cmd
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return True, f'Mounted {server}:{remote_path} at {mount_point}'
+        err = result.stderr.strip() or result.stdout.strip()
+        return False, f'sshfs failed: {err}'
+    except FileNotFoundError:
+        return False, 'sshfs not installed (brew install sshfs / apt install sshfs)'
+    except subprocess.TimeoutExpired:
+        return False, 'SFTP mount timeout'
+    except Exception as e:
+        return False, f'SFTP mount error: {e}'
+
+
+def _unmount_path(mount_point: str, force: bool = False) -> Tuple[bool, str]:
+    system = platform.system()
+    try:
+        if system == 'Darwin':
+            cmd = ['umount'] + (['-f'] if force else []) + [mount_point]
+        else:
+            cmd = ['sudo', 'umount'] + (['-f'] if force else []) + [mount_point]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode == 0:
+            return True, f'Unmounted {mount_point}'
+        err = result.stderr.strip() or result.stdout.strip()
+        return False, f'Unmount failed: {err}'
+    except subprocess.TimeoutExpired:
+        return False, 'Unmount timeout'
+    except Exception as e:
+        return False, f'Unmount error: {e}'
+
+
+def _is_mounted(mount_point: str) -> bool:
+    try:
+        result = subprocess.run(['mount'], capture_output=True, text=True, timeout=5)
+        resolved = str(Path(mount_point).resolve())
+        for line in result.stdout.splitlines():
+            if resolved in line or mount_point in line:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+# ── Cloud session helpers ─────────────────────────────────────────────────────
+
+def _get_cached_session(drive_id: int) -> Optional[Dict[str, Any]]:
+    entry = _sessions.get(drive_id)
+    if entry and entry['expires_at'] > time.time():
+        return entry['session']
+    _sessions.pop(drive_id, None)
+    return None
+
+
+def _cache_session(drive_id: int, session: Dict[str, Any]) -> None:
+    _sessions[drive_id] = {'session': session, 'expires_at': time.time() + _SESSION_TTL}
+
+
+def _connect_filen(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
+    """Authenticate with Filen and cache the session."""
+    # Use cached session if still valid
+    if _get_cached_session(drive_id):
+        return True, 'Already connected (session cached)'
+    try:
+        from cloud.filen_bridge import filen_login
+        session = filen_login(cfg['email'], cfg['password'], cfg.get('tfa_code'))
+        _cache_session(drive_id, session)
+        return True, f"Connected as {session['email']} (root: {session.get('baseFolderUUID', '')[:8]}…)"
+    except ValueError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f'Filen connection error: {e}'
+
+
+def _connect_internxt(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
+    """Authenticate with Internxt and cache the session."""
+    if _get_cached_session(drive_id):
+        return True, 'Already connected (session cached)'
+    try:
+        from cloud.internxt_bridge import internxt_login
+        session = internxt_login(cfg['email'], cfg['password'], cfg.get('tfa_code'))
+        _cache_session(drive_id, session)
+        user = session.get('user', {})
+        return True, f"Connected as {user.get('email', cfg['email'])}"
+    except ValueError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f'Internxt connection error: {e}'
+
+
+# ── Public API — mount / unmount ──────────────────────────────────────────────
+
+def mount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
+    """Mount / connect a drive by ID. Updates is_mounted and last_error in DB."""
+    conn = None
+    try:
+        conn = _connect(db_path)
+        row = conn.execute('SELECT * FROM cloud_drives WHERE id=?', (drive_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+
+    if not row:
+        return False, 'Drive not found'
+
+    drive = dict(row)
+    cfg = decrypt_config(db_path, drive['config_encrypted'])
+    dtype = drive['type']
+    mount_point = drive.get('mount_point') or ''
+
+    try:
+        if dtype == 'smb':
+            ok, msg = _mount_smb(cfg, mount_point) if mount_point else (False, 'Mount point required for SMB')
+        elif dtype == 'sftp':
+            ok, msg = _mount_sftp(cfg, mount_point) if mount_point else (False, 'Mount point required for SFTP')
+        elif dtype == 'filen':
+            ok, msg = _connect_filen(cfg, drive_id)
+        elif dtype == 'internxt':
+            ok, msg = _connect_internxt(cfg, drive_id)
+        else:
+            ok, msg = False, f'Unknown drive type: {dtype}'
+    except Exception as e:
+        ok, msg = False, str(e)
+
+    _update_mount_status(db_path, drive_id, ok, None if ok else msg)
+    return ok, msg
+
+
+def unmount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
+    """Unmount / disconnect a drive by ID."""
+    conn = None
+    try:
+        conn = _connect(db_path)
+        row = conn.execute('SELECT * FROM cloud_drives WHERE id=?', (drive_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+
+    if not row:
+        return False, 'Drive not found'
+
+    drive = dict(row)
+    dtype = drive['type']
+    mount_point = drive.get('mount_point') or ''
+
+    if dtype in ('smb', 'sftp'):
+        ok, msg = _unmount_path(mount_point) if mount_point else (True, 'No mount point set')
+    else:
+        _sessions.pop(drive_id, None)
+        ok, msg = True, 'Disconnected'
+
+    if ok:
+        _update_mount_status(db_path, drive_id, False, None)
+    return ok, msg
+
+
+def get_drive_status(drive: Dict[str, Any]) -> Dict[str, Any]:
+    """Return live mount/connection status for a drive row dict."""
+    dtype = drive.get('type', '')
+    drive_id = drive.get('id')
+    mount_point = drive.get('mount_point') or ''
+
+    if dtype in ('smb', 'sftp') and mount_point:
+        is_live = _is_mounted(mount_point)
+    elif dtype in ('filen', 'internxt'):
+        is_live = bool(_get_cached_session(drive_id)) if drive_id else bool(drive.get('is_mounted'))
+    else:
+        is_live = bool(drive.get('is_mounted'))
+
+    return {**drive, 'is_mounted': is_live, 'config_encrypted': None}
+
+
+# ── Public API — file operations ──────────────────────────────────────────────
+
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm'}
+
+
+def _get_drive(db_path: str, drive_id: int) -> Dict[str, Any]:
+    """Return drive row dict. Raises RuntimeError if not found."""
+    conn = None
+    try:
+        conn = _connect(db_path)
+        row = conn.execute('SELECT * FROM cloud_drives WHERE id=?', (drive_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+    if not row:
+        raise RuntimeError('Drive not found')
+    return dict(row)
+
+
+def _get_session_or_raise(db_path: str, drive_id: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Return (drive_row, session_credentials). Raises RuntimeError if not connected."""
+    drive = _get_drive(db_path, drive_id)
+    session = _get_cached_session(drive_id)
+    if session is None:
+        raise RuntimeError('Drive is not connected. Mount it first.')
+    return drive, session
+
+
+def list_dir(db_path: str, drive_id: int, path: str = '/') -> List[Dict[str, Any]]:
+    """
+    List directory contents for SMB/SFTP (os.listdir) or Filen/Internxt (API).
+    Returns list of {name, is_dir, size, path}.
+    SMB/SFTP do not require a cached session — they use the OS mount point.
+    """
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        if not mount_point:
+            raise RuntimeError('No mount point configured for this drive')
+        if not _is_mounted(mount_point):
+            raise RuntimeError('Drive is not mounted. Mount it first.')
+        full_path = os.path.join(mount_point, path.lstrip('/'))
+        entries = []
+        try:
+            for entry in os.scandir(full_path):
+                entries.append({
+                    'name': entry.name,
+                    'is_dir': entry.is_dir(),
+                    'size': entry.stat().st_size if entry.is_file() else None,
+                    'path': os.path.join(path, entry.name),
+                })
+        except PermissionError as e:
+            raise RuntimeError(f'Permission denied: {e}')
+        entries.sort(key=lambda e: (not e['is_dir'], e['name'].lower()))
+        return entries
+
+    # Filen / Internxt require an active session; auto-reconnect if session was
+    # lost after a server restart but the drive was marked connected in the DB.
+    session = _get_cached_session(drive_id)
+    if session is None:
+        if drive.get('is_mounted'):
+            ok, msg = mount_drive(db_path, drive_id)
+            if ok:
+                session = _get_cached_session(drive_id)
+            if session is None:
+                raise RuntimeError(f'Auto-reconnect failed: {msg}')
+        else:
+            raise RuntimeError('Drive is not connected. Mount it first.')
+
+    if dtype == 'filen':
+        from cloud.filen_bridge import get_filen_drive, list_dir as filen_list, resolve_path
+        drive_svc = get_filen_drive(session)
+        if path in ('/', ''):
+            folder_uuid = session.get('baseFolderUUID', '')
+        else:
+            meta = resolve_path(drive_svc, path)
+            folder_uuid = meta.get('uuid', '')
+        items = filen_list(drive_svc, folder_uuid)
+        for item in items:
+            item['path'] = f"{path.rstrip('/')}/{item['name']}"
+        return items
+
+    elif dtype == 'internxt':
+        from cloud.internxt_bridge import get_internxt_drive, list_dir as internxt_list
+        drive_svc = get_internxt_drive(session)
+        items = internxt_list(drive_svc, path or '/')
+        for item in items:
+            item['path'] = f"{path.rstrip('/')}/{item['name']}"
+        return items
+
+    raise RuntimeError(f'Unsupported drive type: {dtype}')
+
+
+def list_image_files(db_path: str, drive_id: int, path: str,
+                     recursive: bool = True) -> List[Dict[str, Any]]:
+    """
+    Return a flat list of image file entries under 'path'.
+    Each entry: {name, is_dir:False, uuid (cloud types), path, size}.
+    """
+    result = []
+
+    def _walk(cur_path: str) -> None:
+        try:
+            entries = list_dir(db_path, drive_id, cur_path)
+        except Exception:
+            return
+        for e in entries:
+            if e['is_dir']:
+                if recursive:
+                    _walk(e['path'])
+            else:
+                ext = os.path.splitext(e['name'])[1].lower()
+                if ext in IMAGE_EXTENSIONS:
+                    result.append(e)
+
+    _walk(path)
+    return result
+
+
+def download_to_temp(db_path: str, drive_id: int,
+                     item: Dict[str, Any]) -> Tuple[str, bool]:
+    """
+    Resolve an item to a local path the processing engine can read.
+
+    SMB/SFTP: files are already on the local filesystem; returns (abs_path, False).
+    Filen/Internxt: download to a temp file; returns (tmp_path, True).
+    The caller is responsible for deleting the temp file when is_temp=True.
+    """
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        abs_path = os.path.join(mount_point, item['path'].lstrip('/'))
+        return abs_path, False
+
+    # Cloud types — need session; auto-reconnect if session was lost
+    session = _get_cached_session(drive_id)
+    if session is None:
+        if drive.get('is_mounted'):
+            ok, msg = mount_drive(db_path, drive_id)
+            if ok:
+                session = _get_cached_session(drive_id)
+            if session is None:
+                raise RuntimeError(f'Auto-reconnect failed: {msg}')
+        else:
+            raise RuntimeError('Drive is not connected. Mount it first.')
+
+    import tempfile
+    suffix = os.path.splitext(item.get('name', 'file'))[1] or '.jpg'
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    try:
+        if dtype == 'filen':
+            from cloud.filen_bridge import get_filen_drive
+            drive_svc = get_filen_drive(session)
+            drive_svc.download_file(item['uuid'], tmp_path, quiet=True)
+        elif dtype == 'internxt':
+            from cloud.internxt_bridge import get_internxt_drive
+            drive_svc = get_internxt_drive(session)
+            drive_svc.download_file(item['uuid'], tmp_path)
+        else:
+            raise RuntimeError(f'Unsupported drive type: {dtype}')
+        return tmp_path, True
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def make_dir(db_path: str, drive_id: int, path: str) -> bool:
+    """Create a directory. Returns True on success."""
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        full_path = os.path.join(mount_point, path.lstrip('/'))
+        os.makedirs(full_path, exist_ok=True)
+        return True
+
+    session = _get_cached_session(drive_id)
+    if session is None:
+        raise RuntimeError('Drive is not connected. Mount it first.')
+
+    if dtype == 'filen':
+        from cloud.filen_bridge import get_filen_drive, resolve_path
+        drive_svc = get_filen_drive(session)
+        parent_path, name = path.rsplit('/', 1)
+        parent_meta = resolve_path(drive_svc, parent_path or '/')
+        drive_svc.create_folder(name, parent_meta['uuid'])
+        return True
+
+    elif dtype == 'internxt':
+        from cloud.internxt_bridge import get_internxt_drive
+        from cloud.internxt_bridge import _ensure_path
+        _ensure_path()
+        drive_svc = get_internxt_drive(session)
+        # resolve parent
+        parent_path, name = path.rsplit('/', 1)
+        parent_meta = drive_svc.resolve_path(parent_path or '/')
+        drive_svc.api.create_folder({'plainName': name,
+                                     'parentFolderUuid': parent_meta['uuid']})
+        return True
+
+    raise RuntimeError(f'Unsupported drive type: {dtype}')
+
+
+# ── DB update helper ──────────────────────────────────────────────────────────
+
+def _update_mount_status(db_path: str, drive_id: int, is_mounted: bool,
+                          last_error: Optional[str]) -> None:
+    conn = None
+    try:
+        conn = _connect(db_path)
+        conn.execute(
+            'UPDATE cloud_drives SET is_mounted=?, last_error=?, '
+            'updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            (1 if is_mounted else 0, last_error, drive_id),
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()

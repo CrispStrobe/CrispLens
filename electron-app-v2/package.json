@@ -1,0 +1,71 @@
+{
+  "name": "crisplens",
+  "version": "2.0.0",
+  "description": "CrispLens — Svelte + FastAPI Photo Management",
+  "author": "CrispStrobe",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac --win --x64 --arm64",
+    "build:dir": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.crisplens.app",
+    "productName": "CrispLens",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "assets/icon.ico"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "python-manager.js",
+      "loading.html",
+      "setup-wizard.html",
+      "assets/**",
+      "!assets/README.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "app",
+        "filter": [
+          "**/*.py",
+          "routers/**/*.py",
+          "schema_complete.sql",
+          "config.example.yaml",
+          "requirements.txt",
+          "!venv/**",
+          "!**/*.db",
+          "!.api_secret_key",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!electron-app/**",
+          "!electron-app-v2/**",
+          "!logs/**",
+          "!thumbnails/**",
+          "!exports/**",
+          "!datasets/**",
+          "!backups/**",
+          "!bkp/**"
+        ]
+      },
+      {
+        "from": "renderer/dist",
+        "to": "app/renderer/dist"
+      }
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

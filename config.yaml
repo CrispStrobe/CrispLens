@@ -1,0 +1,183 @@
+database:
+  backup:
+    directory: backups
+    enabled: true
+    interval_hours: 24
+    keep_backups: 7
+  faiss_index: face_vectors.index
+  optimization:
+    cache_size: 10000
+    foreign_keys: true
+    journal_mode: WAL
+    synchronous: NORMAL
+  path: face_recognition.db
+export:
+  compress_exports: true
+  default_format: json
+  include_images: false
+face_recognition:
+  backend: insightface
+  dlib:
+    detection_threshold: 0.5
+    model: hog
+    num_jitters: 1
+    recognition_threshold: 0.6
+  insightface:
+    adaptive_det_size: true
+    ctx_id: 0
+    det_size:
+    - 640
+    - 640
+    detection_threshold: 0.7
+    model: buffalo_l
+    recognition_threshold: 0.4
+    use_coreml: true
+  lazy_init: true
+  processing:
+    extract_face_crops: false
+    face_crop_padding: 0.25
+    max_face_size: 0
+    max_faces_per_image: 50
+    min_face_quality: 0.3
+    min_face_size: 60
+features:
+  age_gender_estimation: false
+  duplicate_detection: true
+  emotion_detection: false
+  experimental: false
+  face_clustering: true
+  face_quality_scoring: true
+  face_search: true
+  map_view: true
+  timeline_view: true
+logging:
+  audit_enabled: true
+  audit_file: audit.log
+  file: face_recognition.log
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+  rotation:
+    backup_count: 5
+    max_size_mb: 10
+maintenance:
+  cleanup:
+    interval_hours: 168
+    remove_deleted_files: true
+    remove_orphaned_records: true
+  optimization:
+    analyze_enabled: true
+    analyze_interval_days: 7
+    vacuum_enabled: true
+    vacuum_interval_days: 30
+network:
+  enabled: true
+  max_retries: 3
+  mount_base: /mnt/network
+  retry_delay: 5
+  timeout: 30
+performance:
+  batch_size: 50
+  gpu_devices:
+  - 0
+  max_memory_per_worker: 1024
+  num_workers: 4
+  preprocessing:
+    cache_preprocessed: true
+    cache_size_mb: 512
+    max_dimension: 2048
+    resize_large_images: true
+  use_gpu: false
+security:
+  authentication:
+    enabled: true
+    lockout_duration: 30
+    max_failed_attempts: 5
+    session_timeout: 480
+  paths:
+    allowed_paths:
+    - /home
+    - /mnt
+    - /media
+    blocked_paths:
+    - /etc
+    - /sys
+    - /proc
+    - /root
+    - /boot
+  upload:
+    allowed_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .gif
+    - .bmp
+    - .webp
+    max_file_size_mb: 50
+    scan_uploads: true
+storage:
+  calculate_file_hash: true
+  compression:
+    enabled: true
+    format: JPEG
+    quality: 85
+  generate_thumbnails: true
+  hash_algorithm: sha256
+  metadata_fields:
+  - people_names
+  - face_count
+  - ai_description
+  - ai_tags
+  store_in_db: false
+  store_on_disk: true
+  thumbnail_size:
+  - 200
+  - 200
+  write_metadata: false
+system:
+  config_version: '2.0'
+  updated: '2025-02-13'
+  version: 2.0.0
+training:
+  augmentation:
+    enabled: true
+    techniques:
+    - horizontal_flip
+    - slight_rotation
+    - brightness_adjustment
+    - contrast_adjustment
+  auto_retrain: false
+  max_images_per_person: 100
+  min_images_per_person: 3
+  recommended_images_per_person: 5
+  validation_split: 0.2
+ui:
+  display:
+    max_images_per_page: 50
+    show_confidence: true
+    show_rectangles: true
+    thumbnail_size:
+    - 150
+    - 150
+  language: de
+  server:
+    host: 0.0.0.0
+    port: 7860
+    share: false
+  theme: default
+vlm:
+  api:
+    endpoint: ''
+    max_retries: 3
+    model: ''
+    timeout: 30
+  enabled: true
+  model: qwen/qwen2.5-vl-32b-instruct
+  processing:
+    auto_enrich: false
+    batch_size: 10
+    request_delay: 1.0
+  prompt: "Analyze this image and provide:\n1. A brief description (1-2 sentences)\n\
+    2. Scene type (indoor/outdoor/portrait/group/landscape/event/nature/urban/other)\n\
+    3. 5-10 relevant tags\n\nFormat as JSON:\n{\n  \"description\": \"...\",\n  \"\
+    scene_type\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\", ...]\n}\n"
+  provider: openrouter

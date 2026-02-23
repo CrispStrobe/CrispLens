@@ -1,0 +1,37 @@
+# Example configuration - copy to config.yaml and fill in your values
+# DO NOT commit config.yaml with real API keys!
+
+face_recognition:
+  backend: "insightface"
+  insightface:
+    model: "buffalo_l"
+    detection_threshold: 0.6
+    recognition_threshold: 0.4
+
+database:
+  path: "face_recognition.db"
+  faiss_index: "face_vectors.index"
+
+storage:
+  store_in_db: false
+  store_on_disk: true
+  generate_thumbnails: true
+
+vlm:
+  enabled: false
+  provider: "anthropic"
+  api:
+    key: "YOUR_API_KEY_HERE"  # ⚠️ Never commit real keys!
+    endpoint: ""
+    model: ""
+
+ui:
+  language: "de"
+  server:
+    host: "0.0.0.0"
+    port: 7860
+    share: false
+
+security:
+  authentication:
+    enabled: true

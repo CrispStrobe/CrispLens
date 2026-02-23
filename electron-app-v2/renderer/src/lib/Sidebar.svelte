@@ -1,0 +1,166 @@
+<script>
+  import { sidebarView, allPeople, allTags, allAlbums, stats, t } from '../stores.js';
+  import { fetchStats, fetchPeople, fetchTags } from '../api.js';
+
+  $: navItems = [
+    { id: 'all',      icon: '📷', label: $t('tab_browse') },
+    { id: 'albums',   icon: '📚', label: 'Albums' },
+    { id: 'events',   icon: '🗓', label: 'Events' },
+    { id: 'people',   icon: '👤', label: $t('tab_people') },
+    { id: 'tags',     icon: '🏷', label: $t('tab_tags') },
+    { id: 'dates',    icon: '📅', label: $t('tab_timeline') },
+    { id: 'folders',  icon: '📁', label: $t('tab_folders') },
+  ];
+  $: workItems = [
+    { id: 'identify',      icon: '🔍', label: 'Identify' },
+    { id: 'faceclusters',  icon: '🫂', label: 'Face Clusters' },
+    { id: 'filesystem',    icon: '💾', label: 'Filesystem' },
+    { id: 'watchfolders',  icon: '📡', label: 'Watch Folders' },
+    { id: 'duplicates',    icon: '🔁', label: 'Duplicates' },
+    { id: 'clouddrives',   icon: '☁️', label: $t('cloud_drives') },
+  ];
+  $: toolItems = [
+    { id: 'process',  icon: '⚙', label: $t('tab_batch') },
+    { id: 'train',    icon: '🎓', label: $t('tab_train') },
+    { id: 'settings', icon: '⚙', label: $t('tab_settings') },
+  ];
+
+  async function refreshStats() {
+    try { stats.set(await fetchStats()); } catch {}
+    try { allPeople.set(await fetchPeople()); } catch {}
+    try { allTags.set(await fetchTags()); } catch {}
+  }
+</script>
+
+<aside class="sidebar">
+  <div class="section-label">{$t('tab_browse')}</div>
+  {#each navItems as item}
+    <button
+      class="nav-item"
+      class:active={$sidebarView === item.id}
+      on:click={() => sidebarView.set(item.id)}
+    >
+      {#if !/[\u{1F300}-\u{1F6FF}]/u.test(item.label)}
+        <span class="icon">{item.icon}</span>
+      {/if}
+      <span class="label">{item.label}</span>
+      {#if item.id === 'albums' && $allAlbums.length}
+        <span class="badge">{$allAlbums.length}</span>
+      {/if}
+      {#if item.id === 'people' && $allPeople.length}
+        <span class="badge">{$allPeople.length}</span>
+      {/if}
+      {#if item.id === 'tags' && $allTags.length}
+        <span class="badge">{$allTags.length}</span>
+      {/if}
+    </button>
+  {/each}
+
+  <div class="divider"></div>
+  <div class="section-label">Ingest</div>
+
+  {#each workItems as item}
+    <button
+      class="nav-item"
+      class:active={$sidebarView === item.id}
+      on:click={() => sidebarView.set(item.id)}
+    >
+      <span class="icon">{item.icon}</span>
+      <span class="label">{item.label}</span>
+    </button>
+  {/each}
+
+  <div class="divider"></div>
+  <div class="section-label">{$t('tab_settings')}</div>
+
+  {#each toolItems as item}
+    <button
+      class="nav-item"
+      class:active={$sidebarView === item.id}
+      on:click={() => sidebarView.set(item.id)}
+    >
+      {#if !/[\u{1F300}-\u{1F6FF}]/u.test(item.label)}
+        <span class="icon">{item.icon}</span>
+      {/if}
+      <span class="label">{item.label}</span>
+    </button>
+  {/each}
+
+  <div class="divider"></div>
+  <div class="stat-block">
+    <div class="stat-header">
+      <span class="section-label">{$t('stats_overview')}</span>
+      <button class="refresh-mini" on:click={refreshStats} title={$t('refresh')}>🔄</button>
+    </div>
+    <div class="stat"><span>{$stats.total_images ?? '—'}</span> {$t('stats_total_images')}</div>
+    <div class="stat"><span>{$stats.total_people ?? '—'}</span> {$t('stats_total_people')}</div>
+    <div class="stat"><span>{$stats.total_faces ?? '—'}</span> {$t('stats_total_faces')}</div>
+  </div>
+</aside>
+
+<style>
+  .sidebar {
+    width: 180px;
+    min-width: 160px;
+    background: #16161f;
+    border-right: 1px solid #2a2a3a;
+    padding: 8px 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    user-select: none;
+  }
+  .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #505070;
+    padding: 8px 12px 4px;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 14px;
+    background: transparent;
+    border-radius: 0;
+    font-size: 12.5px;
+    color: #b0b0c8;
+    text-align: left;
+    border: none;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .nav-item:hover { background: #22223a; color: #e0e0f0; }
+  .nav-item.active { background: #282845; color: #a0c4ff; font-weight: 600; }
+  .icon { font-size: 14px; flex-shrink: 0; }
+  .label { flex: 1; }
+  .badge {
+    background: #2e2e50;
+    color: #8090b8;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+  }
+  .divider {
+    border-top: 1px solid #2a2a3a;
+    margin: 6px 10px;
+  }
+  .stat-block {
+    padding: 4px 14px;
+    margin-top: auto;
+  }
+  .stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .stat-header .section-label { padding: 0; }
+  .refresh-mini { background: transparent; padding: 2px; font-size: 10px; opacity: 0.5; }
+  .refresh-mini:hover { opacity: 1; background: #2a2a42; }
+  .stat {
+    font-size: 11px;
+    color: #505070;
+    padding: 2px 0;
+  }
+  .stat span { color: #8090b8; font-weight: 600; }
+</style>

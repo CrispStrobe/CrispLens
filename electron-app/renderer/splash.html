@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Face Recognition System</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #0f1117;
+    --surface: #1a1d27;
+    --border:  #2a2d3a;
+    --accent:  #6366f1;
+    --accent2: #818cf8;
+    --success: #22c55e;
+    --error:   #ef4444;
+    --text:    #e2e8f0;
+    --muted:   #64748b;
+    --log-bg:  #0b0d14;
+  }
+
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px;
+    overflow: hidden; user-select: none; }
+
+  body { -webkit-app-region: drag; }
+  .no-drag { -webkit-app-region: no-drag; }
+
+  /* ── shared header ─────────────────────────────────────────────────────── */
+  .header { display: flex; align-items: center; gap: 14px; padding: 24px 24px 0; }
+  .logo-box { width: 42px; height: 42px; background: linear-gradient(135deg,var(--accent),#a855f7);
+    border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 22px; flex-shrink: 0; box-shadow: 0 4px 14px rgba(99,102,241,.4); }
+  .app-title   { font-size: 17px; font-weight: 700; }
+  .app-subtitle { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     SCREEN 1 — MODE CHOOSER
+  ═══════════════════════════════════════════════════════════════════════ */
+  #screen-choose { display: none; flex-direction: column; height: 100vh; }
+  #screen-choose.active { display: flex; }
+
+  .choose-body { flex: 1; padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+  .choose-heading { font-size: 13px; color: var(--muted); }
+
+  .mode-cards { display: flex; gap: 12px; }
+
+  .mode-card { flex: 1; background: var(--surface); border: 2px solid var(--border);
+    border-radius: 12px; padding: 16px; cursor: pointer; transition: border-color .2s, background .2s;
+    display: flex; flex-direction: column; gap: 8px; }
+  .mode-card:hover { border-color: var(--accent); background: rgba(99,102,241,.07); }
+  .mode-card.selected { border-color: var(--accent); background: rgba(99,102,241,.12); }
+
+  .mode-icon  { font-size: 28px; }
+  .mode-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .mode-desc  { font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+  .remote-url-wrap { display: none; flex-direction: column; gap: 6px; }
+  .remote-url-wrap.visible { display: flex; }
+
+  .remote-url-wrap label { font-size: 11px; color: var(--muted); font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase; }
+  .remote-url-input { background: var(--log-bg); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 10px; color: var(--text); font-size: 12px;
+    outline: none; width: 100%; font-family: 'Cascadia Code','Consolas',monospace; }
+  .remote-url-input:focus { border-color: var(--accent); }
+  .remote-url-input::placeholder { color: var(--muted); }
+
+  .choose-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+
+  .btn { padding: 8px 18px; border-radius: 7px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: opacity .15s; }
+  .btn:hover { opacity: .85; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost   { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  .choose-error { color: var(--error); font-size: 11px; min-height: 16px; }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     SCREEN 2 — SETUP PROGRESS
+  ═══════════════════════════════════════════════════════════════════════ */
+  #screen-setup { display: none; flex-direction: column; height: 100vh; }
+  #screen-setup.active { display: flex; }
+
+  .setup-body { flex: 1; padding: 16px 24px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* step progress */
+  .steps { display: flex; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; }
+  .step { flex: 1; padding: 8px 6px; text-align: center; font-size: 11px; color: var(--muted);
+    border-right: 1px solid var(--border); transition: background .3s, color .3s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step:last-child { border-right: none; }
+  .step.active { background: rgba(99,102,241,.15); color: var(--accent2); font-weight: 600; }
+  .step.done   { color: var(--success); background: rgba(34,197,94,.08); }
+  .step.done::before { content: '✓ '; }
+
+  /* progress bar */
+  .progress-wrap { height: 4px; background: var(--border); border-radius: 99px; overflow: hidden; }
+  .progress-bar  { height: 100%; width: 0%; background: linear-gradient(90deg,var(--accent),var(--accent2));
+    border-radius: 99px; transition: width .6s ease; }
+
+  /* status line */
+  .status { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-text { font-size: 12px; color: var(--muted); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .status-text.error { color: var(--error); }
+  .status-text.done  { color: var(--success); }
+
+  /* log box */
+  .log-wrap { flex: 1; background: var(--log-bg); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .log-header { padding: 5px 10px; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .log-body { flex: 1; overflow-y: auto; padding: 8px 10px;
+    font-family: 'Cascadia Code','Consolas','Courier New',monospace; font-size: 11px;
+    line-height: 1.55; color: #94a3b8; }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  .log-line { word-break: break-all; }
+  .log-line.err { color: var(--error); }
+
+  .setup-footer { font-size: 10px; color: var(--muted); text-align: center; padding: 0 24px 16px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ SCREEN 1: MODE CHOOSER ═══════════ -->
+<div id="screen-choose">
+  <div class="header">
+    <div class="logo-box">🤖</div>
+    <div>
+      <div class="app-title">Face Recognition System</div>
+      <div class="app-subtitle">First-time setup — choose how this device connects</div>
+    </div>
+  </div>
+
+  <div class="choose-body no-drag">
+    <div class="choose-heading">
+      Where should the AI processing (face detection &amp; recognition) happen?
+    </div>
+
+    <div class="mode-cards">
+      <!-- Local card -->
+      <div class="mode-card selected" id="card-local" onclick="selectMode('local')">
+        <div class="mode-icon">🖥️</div>
+        <div class="mode-title">This device</div>
+        <div class="mode-desc">
+          Python + InsightFace run locally.<br>
+          Can share a SQLite DB on a network drive so all instances
+          see the same trained faces.
+        </div>
+      </div>
+
+      <!-- Remote card -->
+      <div class="mode-card" id="card-remote" onclick="selectMode('remote')">
+        <div class="mode-icon">🌐</div>
+        <div class="mode-title">Remote server</div>
+        <div class="mode-desc">
+          A central server runs the AI.<br>
+          This device is a thin client — no Python required here.
+          Just point to your server's URL.
+        </div>
+      </div>
+    </div>
+
+    <!-- Remote URL input (shown only when remote selected) -->
+    <div class="remote-url-wrap" id="remote-url-wrap">
+      <label>Server URL</label>
+      <input class="remote-url-input" id="remote-url" type="url"
+             placeholder="http://192.168.1.100:7860  or  https://facerec.example.com">
+    </div>
+
+    <div class="choose-error" id="choose-error"></div>
+
+    <div class="choose-footer">
+      <button class="btn btn-primary" onclick="confirmMode()">Continue →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ SCREEN 2: SETUP PROGRESS ═══════════ -->
+<div id="screen-setup">
+  <div class="header">
+    <div class="logo-box">🤖</div>
+    <div>
+      <div class="app-title">Face Recognition System</div>
+      <div class="app-subtitle" id="setup-subtitle">Starting up…</div>
+    </div>
+  </div>
+
+  <div class="setup-body">
+    <div class="steps no-drag">
+      <div class="step" id="step-python">Python</div>
+      <div class="step" id="step-deps">Dependencies</div>
+      <div class="step" id="step-db">Database</div>
+      <div class="step" id="step-server">Server</div>
+      <div class="step" id="step-ready">Ready</div>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+
+    <div class="status">
+      <div class="spinner" id="spinner"></div>
+      <div class="status-text" id="status-text">Initialising…</div>
+    </div>
+
+    <div class="log-wrap no-drag">
+      <div class="log-header">Setup Log</div>
+      <div class="log-body" id="log-body"></div>
+    </div>
+  </div>
+
+  <div class="setup-footer">
+    First launch may take several minutes while models download.
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ─── screen switching ─────────────────────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('#screen-choose, #screen-setup')
+    .forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// ─── mode chooser logic ───────────────────────────────────────────────────────
+let selectedMode = 'local';
+
+function selectMode(mode) {
+  selectedMode = mode;
+  document.getElementById('card-local') .classList.toggle('selected', mode === 'local');
+  document.getElementById('card-remote').classList.toggle('selected', mode === 'remote');
+  document.getElementById('remote-url-wrap').classList.toggle('visible', mode === 'remote');
+  document.getElementById('choose-error').textContent = '';
+}
+
+function confirmMode() {
+  const errEl = document.getElementById('choose-error');
+  errEl.textContent = '';
+
+  if (selectedMode === 'remote') {
+    const url = document.getElementById('remote-url').value.trim();
+    if (!url) { errEl.textContent = 'Please enter the server URL.'; return; }
+    try { new URL(url); } catch { errEl.textContent = 'Invalid URL — include http:// or https://'; return; }
+    window.electronAPI.saveSettings({ mode: 'remote', remoteUrl: url }).then(() => {
+      window.electronAPI.sendModeChoice({ mode: 'remote', remoteUrl: url });
+      showScreen('screen-setup');
+      document.getElementById('setup-subtitle').textContent = `Connecting to ${url}…`;
+    });
+  } else {
+    window.electronAPI.saveSettings({ mode: 'local' }).then(() => {
+      window.electronAPI.sendModeChoice({ mode: 'local' });
+      showScreen('screen-setup');
+    });
+  }
+}
+
+// ─── setup progress logic ─────────────────────────────────────────────────────
+const logBody    = document.getElementById('log-body');
+const statusText = document.getElementById('status-text');
+const progressBar = document.getElementById('progress-bar');
+const spinner    = document.getElementById('spinner');
+
+const steps = {
+  python: document.getElementById('step-python'),
+  deps:   document.getElementById('step-deps'),
+  db:     document.getElementById('step-db'),
+  server: document.getElementById('step-server'),
+  ready:  document.getElementById('step-ready'),
+};
+const STEP_KEYS     = ['python', 'deps', 'db', 'server', 'ready'];
+const STEP_PROGRESS = { python: 10, deps: 40, db: 65, server: 80, ready: 100 };
+let currentStep = -1;
+
+function addLog(msg, isErr = false) {
+  const div = document.createElement('div');
+  div.className = 'log-line' + (isErr ? ' err' : '');
+  div.textContent = msg;
+  logBody.appendChild(div);
+  logBody.scrollTop = logBody.scrollHeight;
+}
+
+function setStatus(msg, cls = '') {
+  statusText.textContent = msg;
+  statusText.className = 'status-text' + (cls ? ' ' + cls : '');
+}
+
+function setStep(key) {
+  const idx = STEP_KEYS.indexOf(key);
+  if (idx <= currentStep) return;
+  for (let i = 0; i < idx; i++) steps[STEP_KEYS[i]].className = 'step done';
+  steps[key].className = 'step active';
+  currentStep = idx;
+  progressBar.style.width = STEP_PROGRESS[key] + '%';
+}
+
+function inferStep(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes('python') || m.includes('venv') || m.includes('virtual environment')) return 'python';
+  if (m.includes('install') || m.includes('pip') || m.includes('collect') || m.includes('downloading')) return 'deps';
+  if (m.includes('database') || m.includes('schema') || m.includes('sqlite')) return 'db';
+  if (m.includes('port') || m.includes('backend') || m.includes('face_rec_ui') || m.includes('waiting')) return 'server';
+  if (m.includes('ready!') || m.includes('running on http')) return 'ready';
+  return null;
+}
+
+// ─── IPC listeners ────────────────────────────────────────────────────────────
+if (window.electronAPI) {
+  // Main process asks us to show the mode chooser
+  window.electronAPI.onShowModeChooser(() => showScreen('screen-choose'));
+
+  // During startup main may send straight to setup (if settings already exist)
+  window.electronAPI.onSetupLog(msg => {
+    // If we're still on chooser screen, switch to setup
+    if (!document.getElementById('screen-setup').classList.contains('active')) {
+      showScreen('screen-setup');
+    }
+    addLog(msg);
+    const step = inferStep(msg);
+    if (step) setStep(step);
+    const noise = /^(downloading|installing collected|building|running setup|creating|copying)/i;
+    if (!noise.test(msg)) setStatus(msg.slice(0, 80) + (msg.length > 80 ? '…' : ''));
+  });
+
+  window.electronAPI.onSetupError(msg => {
+    if (!document.getElementById('screen-setup').classList.contains('active')) showScreen('screen-setup');
+    addLog('ERROR: ' + msg, true);
+    setStatus('Error — see log above', 'error');
+    spinner.style.display = 'none';
+  });
+
+  window.electronAPI.onSetupDone(port => {
+    STEP_KEYS.forEach(k => { steps[k].className = 'step done'; });
+    progressBar.style.width = '100%';
+    setStatus(port ? `Opening interface on port ${port}…` : 'Connecting to remote server…', 'done');
+    spinner.style.display = 'none';
+  });
+
+  // Check settings on load — if they exist, show setup directly; else wait for main to send show-mode-chooser
+  window.electronAPI.getSettings().then(s => {
+    if (s && s.mode && s.mode !== 'choose') {
+      showScreen('screen-setup');
+      if (s.mode === 'remote') {
+        document.getElementById('setup-subtitle').textContent = `Connecting to ${s.remoteUrl}…`;
+      }
+    }
+    // else: stay hidden until 'show-mode-chooser' arrives
+  });
+}
+</script>
+</body>
+</html>

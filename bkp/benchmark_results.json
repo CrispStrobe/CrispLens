@@ -1,0 +1,61 @@
+{
+  "benchmark_results": [
+    {
+      "method": "insightface_buffalo_l",
+      "detection_time": 0.3357550621032715,
+      "encoding_time": 0.7834284782409667,
+      "total_time": 1.1278146107991536,
+      "faces_detected": 20,
+      "expected_faces": 20,
+      "memory_peak_mb": 646.9427083333334,
+      "memory_base_mb": 638.2291666666666,
+      "memory_delta_mb": 8.713541666666666,
+      "embedding_dimension": 512,
+      "detection_accuracy": 100.0,
+      "error": null
+    },
+    {
+      "method": "dlib_hog",
+      "detection_time": 0.10314067204793294,
+      "encoding_time": 0.17305405934651694,
+      "total_time": 0.28494970003763836,
+      "faces_detected": 17,
+      "expected_faces": 20,
+      "memory_peak_mb": 712.1979166666666,
+      "memory_base_mb": 691.3020833333334,
+      "memory_delta_mb": 20.895833333333332,
+      "embedding_dimension": 128,
+      "detection_accuracy": 85.0,
+      "error": null
+    }
+  ],
+  "accuracy_results": [
+    {
+      "method": "insightface_buffalo_l",
+      "total_faces_expected": 20,
+      "total_faces_detected": 20,
+      "detection_rate": 100.0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "avg_confidence": 0.9458534121513367,
+      "correctly_identified": 20,
+      "recognition_accuracy": 100.0
+    },
+    {
+      "method": "dlib_hog",
+      "total_faces_expected": 20,
+      "total_faces_detected": 17,
+      "detection_rate": 85.0,
+      "false_positives": 0,
+      "false_negatives": 3,
+      "avg_confidence": 0.7342821066535254,
+      "correctly_identified": 17,
+      "recognition_accuracy": 100.0
+    }
+  ],
+  "config": {
+    "insightface_model": "buffalo_l",
+    "test_image": "datasets/quick_groups/group_1_20people.jpg",
+    "num_runs": 3
+  }
+}
