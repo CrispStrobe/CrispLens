@@ -27,6 +27,7 @@ class SettingsPatch(BaseModel):
     det_threshold:         Optional[float] = None
     rec_threshold:         Optional[float] = None
     det_size:              Optional[int]   = None
+    det_model:             Optional[str]   = None   # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
     vlm_provider:          Optional[str]   = None
     vlm_model:             Optional[str]   = None
     vlm_enabled:           Optional[bool]  = None
@@ -149,6 +150,21 @@ _DE: dict = {
     'search_name': 'Nach Name suchen…', 'operation_cancelled': 'Abgebrochen',
     'people_detected': 'Erkannte Personen', 'process_more_images': 'Weitere Bilder verarbeiten',
     'image_pending': '1 Bild ausstehend', 'images_pending': '{n} Bilder ausstehend',
+    # Detection model
+    'detection_model': 'Erkennungsmodell',
+    'det_model_auto': 'Auto (Standard)',
+    'det_model_retinaface': 'RetinaFace',
+    'det_model_scrfd': 'SCRFD (nicht-frontal)',
+    'det_model_yunet': 'YuNet (CPU)',
+    'det_model_mediapipe': 'MediaPipe (CPU)',
+    'user_detection_prefs': 'Erkennungsmodell-Einstellungen',
+    'det_model_global_hint': 'Systemstandard',
+    # Re-identify modal strings (previously hardcoded English)
+    'also_run_vlm': 'VLM-Beschreibung erneuern',
+    # Rescan mode
+    'rescan_mode_both': 'Beides',
+    'rescan_mode_faces': 'Gesichter',
+    'rescan_mode_vlm': 'VLM',
 }
 
 _TRANSLATIONS: dict[str, dict] = {'de': _DE}
@@ -176,7 +192,7 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
 
     # Face-recognition system settings + global VLM defaults are admin-only
     _admin_fields = (body.backend, body.model, body.det_threshold,
-                     body.rec_threshold, body.det_size,
+                     body.rec_threshold, body.det_size, body.det_model,
                      body.vlm_provider, body.vlm_model, body.vlm_enabled)
     if any(f is not None for f in _admin_fields) and user.role != 'admin':
         raise HTTPException(
@@ -190,7 +206,7 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
 
     if body.backend is not None or body.model is not None or \
        body.det_threshold is not None or body.rec_threshold is not None or \
-       body.det_size is not None:
+       body.det_size is not None or body.det_model is not None:
         fr = config.setdefault('face_recognition', {})
         if body.backend is not None:
             fr['backend'] = body.backend
@@ -203,6 +219,8 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
             isf['recognition_threshold'] = body.rec_threshold
         if body.det_size is not None:
             isf['det_size'] = [body.det_size, body.det_size]
+        if body.det_model is not None:
+            isf['det_model'] = body.det_model
 
     if body.vlm_provider is not None or body.vlm_model is not None or body.vlm_enabled is not None:
         vlm = config.setdefault('vlm', {})
@@ -233,7 +251,7 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
     # Update engine config if face recognition settings changed
     if body.backend is not None or body.model is not None or \
        body.det_threshold is not None or body.rec_threshold is not None or \
-       body.det_size is not None:
+       body.det_size is not None or body.det_model is not None:
         from face_recognition_core import FaceRecognitionConfig
         new_face_cfg = FaceRecognitionConfig(config.get('face_recognition', {}))
         # If backend or model changed, we must re-init. 
@@ -347,6 +365,59 @@ def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
         conn.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return {'ok': True}
+
+
+# ── Per-user detection model preferences ─────────────────────────────────────
+
+_VALID_DET_MODELS = {'auto', 'retinaface', 'scrfd', 'yunet', 'mediapipe'}
+
+
+def get_effective_det_model(user, state) -> str:
+    """
+    Resolve the detection model for a given user.
+
+    Priority: user personal override → global config.yaml default → 'auto'.
+    Returns a model key string ('auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe').
+    """
+    global_isf = (state.config or {}).get('face_recognition', {}).get('insightface', {})
+    return user.det_model or global_isf.get('det_model', 'auto') or 'auto'
+
+
+class UserDetPrefs(BaseModel):
+    det_model: Optional[str] = None   # None = reset to global default
+
+
+@router.get("/user-detection")
+def get_user_detection(user=Depends(get_current_user)):
+    """Return current user's personal detection model preference + global default."""
+    s = _state()
+    global_isf = (s.config or {}).get('face_recognition', {}).get('insightface', {})
+    global_det = global_isf.get('det_model', 'auto') or 'auto'
+    return {
+        'user': {'det_model': user.det_model},
+        'global': {'det_model': global_det},
+        'effective': {'det_model': user.det_model or global_det},
+    }
+
+
+@router.put("/user-detection")
+def put_user_detection(body: UserDetPrefs, user=Depends(get_current_user)):
+    """Save current user's personal detection model preference."""
+    if body.det_model is not None and body.det_model not in _VALID_DET_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid det_model: {body.det_model!r}")
+    s = _state()
+    import sqlite3 as _sqlite3
+    conn = None
+    try:
+        conn = _sqlite3.connect(s.db_path)
+        conn.execute('UPDATE users SET det_model = ? WHERE id = ?', (body.det_model, user.id))
+        conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save detection preferences: {e}")
     finally:
         if conn:
             conn.close()

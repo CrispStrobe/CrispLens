@@ -337,6 +337,19 @@ TRANSLATIONS = {
         'zoom_in':                  'Vergrößern',
         'zoom_out':                 'Verkleinern',
         'conf_short':               'Konf.',
+        # Detection model
+        'detection_model':          'Erkennungsmodell',
+        'det_model_auto':           'Auto (Standard)',
+        'det_model_retinaface':     'RetinaFace',
+        'det_model_scrfd':          'SCRFD (nicht-frontal)',
+        'det_model_yunet':          'YuNet (CPU)',
+        'det_model_mediapipe':      'MediaPipe (CPU)',
+        'user_detection_prefs':     'Erkennungsmodell-Einstellungen',
+        'det_model_global_hint':    'Systemstandard',
+        'also_run_vlm':             'VLM-Beschreibung erneuern',
+        'rescan_mode_both':         'Beides',
+        'rescan_mode_faces':        'Gesichter',
+        'rescan_mode_vlm':          'VLM',
 
         # ====================================================================
         # FACE CLUSTER VIEW
@@ -752,6 +765,19 @@ Formatieren Sie als JSON:
         'zoom_in':                  'Zoom in',
         'zoom_out':                 'Zoom out',
         'conf_short':               'conf',
+        # Detection model
+        'detection_model':          'Detection Model',
+        'det_model_auto':           'Auto (Default)',
+        'det_model_retinaface':     'RetinaFace',
+        'det_model_scrfd':          'SCRFD (non-frontal)',
+        'det_model_yunet':          'YuNet (CPU)',
+        'det_model_mediapipe':      'MediaPipe (CPU)',
+        'user_detection_prefs':     'Detection Model Settings',
+        'det_model_global_hint':    'System default',
+        'also_run_vlm':             'Also refresh VLM description',
+        'rescan_mode_both':         'Both',
+        'rescan_mode_faces':        'Faces',
+        'rescan_mode_vlm':          'VLM',
 
         # ====================================================================
         # FACE CLUSTER VIEW

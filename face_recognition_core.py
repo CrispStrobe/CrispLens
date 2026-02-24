@@ -39,6 +39,15 @@ except (ImportError, SystemExit, Exception):
     FACE_RECOGNITION_AVAILABLE = False
     logging.warning("face_recognition (dlib) not available")
 
+try:
+    import mediapipe as _mp_module
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+
+# YuNet is part of OpenCV ≥ 4.5.4 — detected lazily at first use.
+YUNET_AVAILABLE = hasattr(cv2, 'FaceDetectorYN')
+
 # Embedding dimensionality per backend.
 # FAISS indices are NOT cross-compatible between backends —
 # switching backend requires clearing all embeddings and re-training.
@@ -868,15 +877,19 @@ class FaceRecognitionEngine:
             logger.error(f"Face detection failed (Dlib): {e}")
             return []
     
-    def detect_faces(self, image: np.ndarray, det_thresh: Optional[float] = None, min_face_size: Optional[int] = None) -> List[Face]:
+    def detect_faces(self, image: np.ndarray, det_thresh: Optional[float] = None,
+                     min_face_size: Optional[int] = None, det_model: str = 'auto') -> List[Face]:
         """
         Detect faces in image.
-        
+
         Args:
             image: Image array (BGR format)
             det_thresh: Optional detection threshold override
             min_face_size: Optional minimum face size override
-        
+            det_model: Detection model override — 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'.
+                       'auto' and 'retinaface' use the standard InsightFace pipeline with
+                       threshold-sweep retries.  Other values jump directly to that detector.
+
         Returns:
             List of detected faces
         """
@@ -907,6 +920,21 @@ class FaceRecognitionEngine:
                 return result
 
             # ── Initial detection ──────────────────────────────────────────────────
+            # When a specific model is requested, jump straight to it (no retry sweep).
+            if det_model == 'scrfd':
+                logger.info("  🔬 Using SCRFD detector (explicit override)")
+                faces = self._detect_faces_scrfd(image, det_thresh=det_thresh)
+                return _apply_filters(faces)
+            elif det_model == 'yunet':
+                logger.info("  🔬 Using YuNet detector (explicit override)")
+                faces = self._detect_faces_yunet(image)
+                return _apply_filters(faces)
+            elif det_model == 'mediapipe':
+                logger.info("  🔬 Using MediaPipe detector (explicit override)")
+                faces = self._detect_faces_mediapipe(image)
+                return _apply_filters(faces)
+
+            # 'auto' and 'retinaface' → standard InsightFace pipeline
             if self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE:
                 faces = self._detect_faces_insightface(image, det_thresh=det_thresh)
             else:
@@ -921,23 +949,23 @@ class FaceRecognitionEngine:
                     and det_thresh is None
                     and self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE):
 
-                for retry_thresh in [0.40, 0.30]:
+                # Descend to progressively lower thresholds
+                for retry_thresh in [0.30, 0.20, 0.10]:
                     logger.info(f"  🔄 No faces at default threshold — retrying at {retry_thresh:.2f}")
                     raw = self._detect_faces_insightface(image, det_thresh=retry_thresh)
                     filtered_faces = _apply_filters(raw)
                     if filtered_faces:
                         break
 
-                # ── Scale-retry: downsample image if all threshold attempts failed ──
-                # InsightFace anchor-based detectors sometimes find faces at a
-                # different spatial scale.  Normalised bboxes are scale-invariant so
-                # no coordinate adjustment is needed.
+                # ── Scale-retry: downsample when all threshold attempts failed ──
+                # Thresholds must go DOWN (not up) from the last attempt: the whole
+                # point is to find faces the model rates as low-confidence.
                 if not filtered_faces:
                     for scale in [0.75, 0.50]:
                         sh, sw = int(height * scale), int(width * scale)
                         scaled = cv2.resize(image, (sw, sh), interpolation=cv2.INTER_AREA)
                         logger.info(f"  🔍 Scale-retry at {int(scale * 100)}% ({sw}×{sh}px)")
-                        for retry_thresh in [0.50, 0.40, 0.30]:
+                        for retry_thresh in [0.20, 0.10]:
                             raw = self._detect_faces_insightface(scaled, det_thresh=retry_thresh)
                             filtered_faces = _apply_filters(raw)
                             if filtered_faces:
@@ -945,6 +973,46 @@ class FaceRecognitionEngine:
                                 break
                         if filtered_faces:
                             break
+
+            # ── Last-resort: accept best large-area candidate at near-noise level ─
+            # This catches faces that InsightFace's detector rates very low (e.g.
+            # extreme pose, unusual lighting) but that are clearly face-sized regions.
+            # Applied regardless of whether det_thresh was explicitly supplied so
+            # manual re-detects at low thresholds also benefit.
+            # We require ≥ 150 px in each dimension (much larger than min_face_size)
+            # and take only the single highest-scoring candidate to limit false positives.
+            if not filtered_faces and self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE:
+                raw_lr = self._detect_faces_insightface(image, det_thresh=0.04)
+                large = [
+                    f for f in raw_lr
+                    if (f.bbox.right - f.bbox.left) * width  >= 150
+                    and (f.bbox.bottom - f.bbox.top) * height >= 150
+                ]
+                if large:
+                    best_lr = max(large, key=lambda f: f.detection_confidence)
+                    logger.warning(
+                        f"  ⚠️  Last-resort: accepting best large candidate "
+                        f"({int((best_lr.bbox.right - best_lr.bbox.left)*width)}×"
+                        f"{int((best_lr.bbox.bottom - best_lr.bbox.top)*height)}px, "
+                        f"score={best_lr.detection_confidence:.4f})"
+                    )
+                    filtered_faces = [best_lr]
+
+            # ── Alternative detector fallbacks ────────────────────────────────
+            # Last-resort failed OR was not applicable (dlib backend).
+            # Try YuNet then MediaPipe — both return Face objects with ArcFace
+            # embeddings so they're immediately usable by recognize_face().
+            if not filtered_faces and self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE:
+                for label, fallback_fn in [
+                    ('YuNet',      self._detect_faces_yunet),
+                    ('MediaPipe',  self._detect_faces_mediapipe),
+                ]:
+                    raw_fb = fallback_fn(image)
+                    filtered_fb = _apply_filters(raw_fb)
+                    if filtered_fb:
+                        logger.info(f"  ✓ {label} fallback accepted {len(filtered_fb)} face(s)")
+                        filtered_faces = filtered_fb
+                        break
 
             # Limit number of faces
             if self.config.max_faces_per_image > 0:
@@ -1045,7 +1113,8 @@ class FaceRecognitionEngine:
     def process_image(self, image_path: str, vlm_provider=None, force: bool = False,
                      det_thresh: Optional[float] = None, min_face_size: Optional[int] = None,
                      rec_thresh: Optional[float] = None,
-                     skip_faces: bool = False, skip_vlm: bool = False) -> Dict[str, Any]:
+                     skip_faces: bool = False, skip_vlm: bool = False,
+                     det_model: str = 'auto') -> Dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
 
@@ -1130,7 +1199,7 @@ class FaceRecognitionEngine:
             faces: List = []
             recognitions_by_face: List = []
             if not skip_faces:
-                faces = self.detect_faces(image, det_thresh=det_thresh, min_face_size=min_face_size)
+                faces = self.detect_faces(image, det_thresh=det_thresh, min_face_size=min_face_size, det_model=det_model)
                 logger.info(f"  👤 Detected {len(faces)} faces")
                 h_img, w_img = image.shape[:2]
                 for i, face in enumerate(faces):
@@ -1929,6 +1998,209 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.warning(f"Direct crop embedding extraction failed: {e}")
         return None
+
+    # ── Fallback face detectors ────────────────────────────────────────────────
+    # Used when InsightFace RetinaFace returns 0 confident detections.
+    # Both extract embeddings via the existing ArcFace model so the vectors
+    # are directly comparable with FAISS index entries.
+
+    def _embed_crop(self, image: np.ndarray, bbox: 'BoundingBox',
+                    landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """
+        Return an ArcFace embedding for the given bbox region.
+        If ``landmarks`` is a (5, 2) array compatible with InsightFace's
+        face_align.norm_crop, use it for proper 112×112 alignment (best
+        quality).  Otherwise fall back to a simple resize.
+        """
+        h, w = image.shape[:2]
+        if landmarks is not None:
+            try:
+                from insightface.utils import face_align
+                aligned = face_align.norm_crop(image, landmark=landmarks, image_size=112)
+                rec_model = getattr(self.face_analyzer, 'models', {}).get('recognition')
+                if rec_model is not None:
+                    feat = rec_model.get_feat([aligned])
+                    if feat is not None and len(feat):
+                        emb = feat[0].astype(np.float32)
+                        norm = np.linalg.norm(emb)
+                        if norm > 0:
+                            emb /= norm
+                        return emb
+            except Exception as e:
+                logger.debug(f"norm_crop alignment failed, falling back to simple crop: {e}")
+        # Simple crop resize fallback
+        y1, x2, y2, x1 = bbox.to_pixels(w, h)
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+        return self._extract_embedding_from_crop(crop)
+
+    def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
+        """
+        Face detector using InsightFace SCRFD model (scrfd_10g_bnkps).
+        SCRFD is better than RetinaFace for non-frontal and occluded faces.
+        Downloads model automatically via InsightFace model zoo on first use.
+        Returns Face objects with ArcFace embeddings (5-point landmark aligned).
+        """
+        if not INSIGHTFACE_AVAILABLE:
+            logger.warning("SCRFD: InsightFace not available")
+            return []
+        try:
+            from insightface.model_zoo import get_model
+
+            if not hasattr(self, '_scrfd_model') or self._scrfd_model is None:
+                logger.info("  📥 Loading SCRFD model (scrfd_10g_bnkps)…")
+                try:
+                    self._scrfd_model = get_model('scrfd_10g_bnkps', download=True)
+                    self._scrfd_model.prepare(ctx_id=0, input_size=(640, 640), det_thresh=0.05)
+                    logger.info("  ✅ SCRFD model loaded")
+                except Exception as e:
+                    logger.error(f"  ❌ Failed to load SCRFD model: {e}")
+                    self._scrfd_model = None
+                    return []
+
+            threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
+            h, w = image.shape[:2]
+
+            bboxes, kpss = self._scrfd_model.detect(image, thresh=0.05)
+            detected_faces = []
+            for i, (bbox, kps) in enumerate(zip(bboxes, kpss if kpss is not None else [None] * len(bboxes))):
+                x1, y1, x2, y2, conf = bbox
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                conf = float(conf)
+                if conf < threshold:
+                    logger.info(f"    SCRFD candidate {i}: score={conf:.4f} < {threshold:.2f} — skipped")
+                    continue
+                norm_bbox = BoundingBox(
+                    top=max(0.0, y1 / h), right=min(1.0, x2 / w),
+                    bottom=min(1.0, y2 / h), left=max(0.0, x1 / w),
+                )
+                if not norm_bbox.is_valid():
+                    continue
+                landmarks_np = np.array(kps, dtype=np.float32) if kps is not None else None
+                embedding = self._embed_crop(image, norm_bbox, landmarks=landmarks_np)
+                if embedding is None:
+                    continue
+                logger.info(f"    SCRFD candidate {i}: score={conf:.4f}  bbox=[{x1},{y1},{x2},{y2}]  ✓")
+                detected_faces.append(Face(
+                    bbox=norm_bbox,
+                    detection_confidence=conf,
+                    embedding=embedding,
+                    quality=conf,
+                    landmarks=landmarks_np,
+                ))
+            return detected_faces
+        except Exception as e:
+            logger.warning(f"SCRFD detection failed: {e}")
+            return []
+
+    def _detect_faces_yunet(self, image: np.ndarray) -> List['Face']:
+        """
+        Fallback face detector using OpenCV YuNet (FaceDetectorYN).
+        Requires OpenCV ≥ 4.5.4.  Downloads the model file (231 KB) on first
+        use into the same directory as the database.
+        Returns Face objects with ArcFace embeddings (aligned via landmarks).
+        """
+        if not YUNET_AVAILABLE:
+            return []
+        try:
+            import urllib.request
+            YUNET_URL = (
+                'https://github.com/opencv/opencv_zoo/raw/main/'
+                'models/face_detection_yunet/face_detection_yunet_2023mar.onnx'
+            )
+            model_path = Path(self.db_path).parent / 'face_detection_yunet_2023mar.onnx'
+            if not model_path.exists():
+                logger.info(f"Downloading YuNet model → {model_path}")
+                urllib.request.urlretrieve(YUNET_URL, str(model_path))
+
+            h, w = image.shape[:2]
+            detector = cv2.FaceDetectorYN.create(
+                str(model_path), '', (w, h),
+                score_threshold=0.3, nms_threshold=0.3, top_k=100,
+            )
+            _, results = detector.detect(image)
+            if results is None or len(results) == 0:
+                return []
+
+            faces = []
+            for det in results:
+                # det layout: [x, y, bw, bh, re_x, re_y, le_x, le_y,
+                #              nose_x, nose_y, rm_x, rm_y, lm_x, lm_y, score]
+                x, y, bw, bh = float(det[0]), float(det[1]), float(det[2]), float(det[3])
+                score = float(det[14])
+                bbox = BoundingBox(
+                    top=max(0.0, y / h),
+                    right=min(1.0, (x + bw) / w),
+                    bottom=min(1.0, (y + bh) / h),
+                    left=max(0.0, x / w),
+                )
+                if not bbox.is_valid():
+                    continue
+                # Landmarks as (5, 2) float32: right_eye, left_eye, nose, right_mouth, left_mouth
+                lm = det[4:14].reshape(5, 2).astype(np.float32)
+                embedding = self._embed_crop(image, bbox, landmarks=lm)
+                if embedding is None:
+                    continue
+                faces.append(Face(
+                    bbox=bbox,
+                    detection_confidence=score,
+                    embedding=embedding,
+                    quality=score,
+                ))
+            logger.info(f"  YuNet fallback: {len(faces)} face(s) found")
+            return faces
+        except Exception as e:
+            logger.warning(f"YuNet fallback failed: {e}")
+            return []
+
+    def _detect_faces_mediapipe(self, image: np.ndarray) -> List['Face']:
+        """
+        Fallback face detector using Google MediaPipe BlazeFace.
+        Requires ``pip install mediapipe``.
+        Handles unusual head poses and lighting conditions well.
+        Returns Face objects with ArcFace embeddings (simple crop).
+        """
+        if not MEDIAPIPE_AVAILABLE:
+            return []
+        try:
+            import mediapipe as mp
+            h, w = image.shape[:2]
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            # model_selection=1 covers full-range distances (better for portraits)
+            with mp.solutions.face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.3
+            ) as detector:
+                results = detector.process(rgb)
+
+            if not results or not results.detections:
+                return []
+
+            faces = []
+            for det in results.detections:
+                bb = det.location_data.relative_bounding_box
+                x1 = max(0.0, bb.xmin)
+                y1 = max(0.0, bb.ymin)
+                x2 = min(1.0, bb.xmin + bb.width)
+                y2 = min(1.0, bb.ymin + bb.height)
+                bbox = BoundingBox(top=y1, right=x2, bottom=y2, left=x1)
+                if not bbox.is_valid():
+                    continue
+                score = float(det.score[0]) if det.score else 0.5
+                embedding = self._embed_crop(image, bbox)
+                if embedding is None:
+                    continue
+                faces.append(Face(
+                    bbox=bbox,
+                    detection_confidence=score,
+                    embedding=embedding,
+                    quality=score,
+                ))
+            logger.info(f"  MediaPipe fallback: {len(faces)} face(s) found")
+            return faces
+        except Exception as e:
+            logger.warning(f"MediaPipe fallback failed: {e}")
+            return []
 
     def add_manual_face(self, image_id: int, bbox_dict: Dict[str, float], rec_thresh: Optional[float] = None) -> Dict[str, Any]:
         """

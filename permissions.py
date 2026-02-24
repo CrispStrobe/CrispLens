@@ -33,6 +33,8 @@ class User:
     vlm_enabled: Optional[int] = None
     vlm_provider: Optional[str] = None
     vlm_model: Optional[str] = None
+    # Per-user detection model override (NULL = use global default from config.yaml)
+    det_model: Optional[str] = None
 
 
 class PermissionManager:
@@ -320,6 +322,7 @@ class PermissionManager:
                     vlm_enabled=rd.get('vlm_enabled'),
                     vlm_provider=rd.get('vlm_provider'),
                     vlm_model=rd.get('vlm_model'),
+                    det_model=rd.get('det_model'),
                 )
 
             return None
@@ -686,6 +689,7 @@ class PermissionManager:
                     vlm_enabled=rd.get('vlm_enabled'),
                     vlm_provider=rd.get('vlm_provider'),
                     vlm_model=rd.get('vlm_model'),
+                    det_model=rd.get('det_model'),
                 )
             return None
         except Exception as e:

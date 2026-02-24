@@ -82,9 +82,9 @@
       <button on:click={() => showEditModal = true}>✏️ {$t('edit')}</button>
       <div class="rescan-group" on:click|stopPropagation>
         <div class="rescan-mode-tabs">
-          <button class="mode-tab" class:active={rescanMode === 'both'}  on:click={() => rescanMode = 'both'}>Both</button>
-          <button class="mode-tab" class:active={rescanMode === 'faces'} on:click={() => rescanMode = 'faces'}>Faces</button>
-          <button class="mode-tab" class:active={rescanMode === 'vlm'}   on:click={() => rescanMode = 'vlm'}>VLM</button>
+          <button class="mode-tab" class:active={rescanMode === 'both'}  on:click={() => rescanMode = 'both'}>{$t('rescan_mode_both')}</button>
+          <button class="mode-tab" class:active={rescanMode === 'faces'} on:click={() => rescanMode = 'faces'}>{$t('rescan_mode_faces')}</button>
+          <button class="mode-tab" class:active={rescanMode === 'vlm'}   on:click={() => rescanMode = 'vlm'}>{$t('rescan_mode_vlm')}</button>
         </div>
         <button class="rescan-btn" on:click={batchRescan}>🔄</button>
       </div>

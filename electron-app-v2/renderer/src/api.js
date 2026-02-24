@@ -64,7 +64,7 @@ export function fetchImageFaces(id) { return get(`/images/${id}/faces`); }
 export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
 export function clearIdentifications(imageId) { return post(`/images/${imageId}/clear-identifications`, {}); }
 export function reDetectFaces(imageId, params = {}) {
-  const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true };
+  const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true, det_model: 'auto' };
   return post(`/images/${imageId}/re-detect`, { ...defaults, ...params });
 }
 export function addManualFace(imageId, bbox, rec_thresh = null) {
@@ -88,8 +88,8 @@ export function searchImages(q, limit = 50) {
 
 // ── Processing ────────────────────────────────────────────────────────────────
 
-export function processSingle(filepath, force = false, skipFaces = false, skipVlm = false) {
-  return post('/process/single', { filepath, force, skip_faces: skipFaces, skip_vlm: skipVlm });
+export function processSingle(filepath, force = false, skipFaces = false, skipVlm = false, detModel = 'auto') {
+  return post('/process/single', { filepath, force, skip_faces: skipFaces, skip_vlm: skipVlm, det_model: detModel });
 }
 
 export function trainPerson(person_name, image_paths) {
@@ -217,6 +217,8 @@ export function checkCredentials(username, password){ return post('/settings/che
 export function fetchDbStatus()                     { return get('/settings/db-status'); }
 export function fetchUserVlmPrefs()                 { return get('/settings/user-vlm'); }
 export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }
+export function fetchUserDetPrefs()                 { return get('/settings/user-detection'); }
+export function saveUserDetPrefs(prefs)             { return put('/settings/user-detection', prefs); }
 export function changePassword(current_password, new_password) {
   return post('/auth/change-password', { current_password, new_password });
 }

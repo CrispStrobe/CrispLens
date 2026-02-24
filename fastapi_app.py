@@ -255,6 +255,8 @@ def startup():
             'ALTER TABLE users ADD COLUMN vlm_enabled INTEGER',
             'ALTER TABLE users ADD COLUMN vlm_provider TEXT',
             'ALTER TABLE users ADD COLUMN vlm_model TEXT',
+            # Per-user detection model override (NULL = use global default from config.yaml)
+            'ALTER TABLE users ADD COLUMN det_model TEXT',
             # Cloud / network drive configurations
             '''CREATE TABLE IF NOT EXISTS cloud_drives (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

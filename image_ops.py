@@ -518,6 +518,7 @@ def re_detect_faces(
     rec_thresh: float = 0.4,
     engine: Optional[Any] = None,
     vlm_provider: Optional[Any] = None,
+    det_model: str = 'auto',
 ) -> Tuple[bool, str, Any]:
     """
     Clear existing faces for an image and re-run detection with new parameters.
@@ -551,12 +552,13 @@ def re_detect_faces(
 
         # 4. Re-run process_image with force=True and overrides
         result = engine.process_image(
-            filepath, 
-            vlm_provider=vlm_provider, 
-            force=True, 
-            det_thresh=det_thresh, 
+            filepath,
+            vlm_provider=vlm_provider,
+            force=True,
+            det_thresh=det_thresh,
             min_face_size=min_face_size,
-            rec_thresh=rec_thresh
+            rec_thresh=rec_thresh,
+            det_model=det_model,
         )
         
         if result.get('success'):

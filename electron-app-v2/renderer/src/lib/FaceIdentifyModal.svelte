@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
   import { allPeople, t } from '../stores.js';
-  import { fetchImageFaces, fetchPeople, previewUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications } from '../api.js';
+  import { fetchImageFaces, fetchPeople, previewUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
 
   export let imageId;
 
@@ -84,8 +84,17 @@
   let minFaceSize = 60;
   let recThresh = 0.4;
   let alsoRunVlm = false;   // when true, also re-runs VLM enrichment after face detection
+  let detModel = 'auto';    // detection model override
   let showParams = false;
   let reDetecting = false;
+
+  const DET_MODELS = [
+    { value: 'auto',       label: 'det_model_auto' },
+    { value: 'retinaface', label: 'det_model_retinaface' },
+    { value: 'scrfd',      label: 'det_model_scrfd' },
+    { value: 'yunet',      label: 'det_model_yunet' },
+    { value: 'mediapipe',  label: 'det_model_mediapipe' },
+  ];
 
   async function onSvgMouseUp() {
     if (!isDrawing) return;
@@ -216,12 +225,15 @@
 
   async function onReDetect() {
     reDetecting = true;
+    // Persist the chosen model as the user's default (best-effort, silent on failure)
+    saveUserDetPrefs({ det_model: detModel }).catch(() => {});
     try {
       await reDetectFaces(imageId, {
         det_thresh:    detThresh,
         min_face_size: minFaceSize,
         rec_thresh:    recThresh,
         skip_vlm:      !alsoRunVlm,
+        det_model:     detModel,
       });
       anyChanged = true;
       await loadFaces();
@@ -278,6 +290,10 @@
     loadFaces();
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', recalcSize);
+    // Load user's preferred detection model
+    fetchUserDetPrefs().then(p => {
+      detModel = p.effective?.det_model || 'auto';
+    }).catch(() => {});
   });
 
   onDestroy(() => {
@@ -419,9 +435,17 @@
             <label for="id-rec-thresh-e">{$t('recognition_certainty')}: {recThresh}</label>
             <input id="id-rec-thresh-e" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
           </div>
+          <div class="param-row">
+            <label for="id-det-model-e">{$t('detection_model')}</label>
+            <select id="id-det-model-e" bind:value={detModel}>
+              {#each DET_MODELS as m}
+                <option value={m.value}>{$t(m.label)}</option>
+              {/each}
+            </select>
+          </div>
           <label class="vlm-toggle">
             <input type="checkbox" bind:checked={alsoRunVlm} />
-            Also refresh VLM description
+            {$t('also_run_vlm')}
           </label>
           <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
             {reDetecting ? $t('scanning') : $t('run_detection')}

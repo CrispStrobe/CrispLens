@@ -3,6 +3,7 @@
   import {
     fetchSettings, saveSettings,
     fetchUserVlmPrefs, saveUserVlmPrefs,
+    fetchUserDetPrefs, saveUserDetPrefs,
     fetchProviders, fetchKeyStatus, saveApiKey, deleteApiKey, testApiKey,
     login, logout, fetchMe, fetchVlmModels,
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
@@ -31,10 +32,19 @@
   let vlmProvider  = 'anthropic';
   let vlmModel     = '';
   let uploadMaxDim = 0; // 0 = keep full resolution
+  let detModel     = 'auto';   // detection model (system default or user override)
+  let globalDetModelHint = null; // for non-admin hint
 
-  const BACKENDS  = ['insightface', 'dlib_hog', 'dlib_cnn'];
-  const IF_MODELS = ['buffalo_l', 'buffalo_m', 'buffalo_s', 'buffalo_sc'];
-  const LANGUAGES = [{ code: 'en', label: 'English' }, { code: 'de', label: 'Deutsch' }];
+  const BACKENDS   = ['insightface', 'dlib_hog', 'dlib_cnn'];
+  const IF_MODELS  = ['buffalo_l', 'buffalo_m', 'buffalo_s', 'buffalo_sc'];
+  const LANGUAGES  = [{ code: 'en', label: 'English' }, { code: 'de', label: 'Deutsch' }];
+  const DET_MODELS = [
+    { value: 'auto',       label: 'det_model_auto' },
+    { value: 'retinaface', label: 'det_model_retinaface' },
+    { value: 'scrfd',      label: 'det_model_scrfd' },
+    { value: 'yunet',      label: 'det_model_yunet' },
+    { value: 'mediapipe',  label: 'det_model_mediapipe' },
+  ];
 
   // ── Auto-load server settings when backend becomes ready ──────────────────
   $: if ($backendReady && !cfg) {
@@ -53,6 +63,7 @@
         vlmEnabled  = c?.vlm?.enabled ?? false;
         vlmProvider = c?.vlm?.provider ?? 'anthropic';
         vlmModel    = c?.vlm?.model ?? '';
+        detModel    = c?.face_recognition?.insightface?.det_model ?? 'auto';
       }
     }).catch(() => {});
     // Non-admin: load personal VLM prefs (shows effective = override || global fallback)
@@ -62,6 +73,11 @@
         vlmProvider = p.effective.vlm_provider ?? 'anthropic';
         vlmModel    = p.effective.vlm_model    ?? '';
         globalVlmHint = p.global;
+      }).catch(() => {});
+      // Load personal detection model pref
+      fetchUserDetPrefs().then(p => {
+        detModel = p.effective?.det_model ?? 'auto';
+        globalDetModelHint = p.global?.det_model ?? 'auto';
       }).catch(() => {});
     }
     fetchProviders().then(p => { providers = p; }).catch(() => {});
@@ -201,6 +217,7 @@
           vlmEnabled  = cfg?.vlm?.enabled ?? false;
           vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
           vlmModel    = cfg?.vlm?.model ?? '';
+          detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
         }
       } catch (e) { saveMsg = '⚠ Could not load server settings: ' + e.message; }
       if ($currentUser?.role !== 'admin') {
@@ -210,6 +227,11 @@
           vlmProvider = p.effective.vlm_provider ?? 'anthropic';
           vlmModel    = p.effective.vlm_model    ?? '';
           globalVlmHint = p.global;
+        } catch { /* ignore */ }
+        try {
+          const dp = await fetchUserDetPrefs();
+          detModel = dp.effective?.det_model ?? 'auto';
+          globalDetModelHint = dp.global?.det_model ?? 'auto';
         } catch { /* ignore */ }
       }
       try { providers = await fetchProviders(); } catch { /* ignore */ }
@@ -258,6 +280,7 @@
             det_threshold: detThreshold,
             rec_threshold: recThreshold,
             det_size: detSize,
+            det_model: detModel || 'auto',
             vlm_enabled: vlmEnabled,
             vlm_provider: vlmProvider,
             vlm_model: vlmModel || null,
@@ -272,6 +295,8 @@
             vlm_provider: vlmProvider,
             vlm_model:    vlmModel || null,
           });
+          // Personal detection model preference
+          await saveUserDetPrefs({ det_model: detModel || null });
         }
         saveMsg = '✓ All settings saved';
       } else {
@@ -947,6 +972,21 @@
         <span class="size-hint">Larger finds smaller faces but is slower.</span>
       </div>
       {/if}
+
+      <!-- Detection model: admin = global default, non-admin = personal override -->
+      <label for="setting-det-model">{$t('detection_model')}</label>
+      <div>
+        {#if !isAdmin && globalDetModelHint}
+          <p class="hint" style="margin-bottom:4px;">
+            {$t('det_model_global_hint')}: {$t('det_model_' + (globalDetModelHint || 'auto').replace('-',''))}
+          </p>
+        {/if}
+        <select id="setting-det-model" bind:value={detModel}>
+          {#each DET_MODELS as m}
+            <option value={m.value}>{$t(m.label)}</option>
+          {/each}
+        </select>
+      </div>
     </div>
   </section>
 

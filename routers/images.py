@@ -76,6 +76,7 @@ class ReDetectRequest(BaseModel):
     min_face_size: int   = 20
     rec_thresh:    float = 0.4
     skip_vlm:      bool  = True   # default: re-detect faces only, don't re-run VLM
+    det_model:     str   = 'auto' # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
 
 class ManualAddFaceRequest(BaseModel):
     bbox: Dict[str, float]  # top, right, bottom, left
@@ -548,6 +549,7 @@ def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_
         rec_thresh=body.rec_thresh,
         engine=s.engine,
         vlm_provider=vlm_prov,
+        det_model=body.det_model,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
