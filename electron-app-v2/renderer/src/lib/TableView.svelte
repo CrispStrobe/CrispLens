@@ -90,7 +90,7 @@
         <th>{$t('search_by_date')}</th>
         <th>{$t('camera_model')}</th>
         <th>{$t('details')} / {$t('tags')}</th>
-        <th>{$t('folder_path')}</th>
+        <th>Paths</th>
       </tr>
     </thead>
     <tbody>

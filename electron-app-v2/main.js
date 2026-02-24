@@ -280,6 +280,21 @@ ipcMain.handle('read-local-file', (_e, filePath) => {
   }
 });
 
+// ─── Trash local files (duplicate local cleanup) ─────────────────────────────
+
+ipcMain.handle('trash-items', async (_e, paths) => {
+  const results = [];
+  for (const p of paths) {
+    try {
+      await shell.trashItem(p);
+      results.push({ path: p, ok: true });
+    } catch (err) {
+      results.push({ path: p, ok: false, error: err.message });
+    }
+  }
+  return results;
+});
+
 // ─── Tiny SPA static-file server (remote/client mode) ────────────────────────
 // Serves renderer/dist/ over plain HTTP so the page has a real http://127.0.0.1
 // origin. This is necessary because Chromium's CORS stack doesn't reliably set

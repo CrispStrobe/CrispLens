@@ -270,6 +270,19 @@ async def scan_watch_folder(folder_id: int, _=Depends(require_admin_or_mediamana
             try:
                 result = s.engine.process_image(path, s.vlm_provider)
                 added += 1
+                # Set origin_path = server_path for watch-folder scanned files
+                image_id = result.get('image_id') if isinstance(result, dict) else None
+                if image_id:
+                    try:
+                        conn_lp = _connect(s.db_path)
+                        conn_lp.execute(
+                            'UPDATE images SET local_path = filepath WHERE id = ? AND local_path IS NULL',
+                            (image_id,),
+                        )
+                        conn_lp.commit()
+                        conn_lp.close()
+                    except Exception as e_lp:
+                        logger.warning(f"watchfolder: could not set local_path for {path}: {e_lp}")
                 payload = {
                     'index':  i + 1,
                     'total':  total,

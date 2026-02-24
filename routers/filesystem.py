@@ -192,6 +192,18 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
                         conn.close()
                     except Exception as e_upd:
                         logger.warning(f"Could not set owner/visibility for image {image_id}: {e_upd}")
+                    # Set origin_path = server_path for files added directly from the server FS
+                    # (local_path is NULL by default; for FS-browser adds origin == server path)
+                    try:
+                        conn2 = _connect(s.db_path)
+                        conn2.execute(
+                            'UPDATE images SET local_path = filepath WHERE id = ? AND local_path IS NULL',
+                            (image_id,),
+                        )
+                        conn2.commit()
+                        conn2.close()
+                    except Exception as e_lp:
+                        logger.warning(f"Could not set local_path for image {image_id}: {e_lp}")
                 payload = {
                     'index':  i + 1,
                     'total':  total,

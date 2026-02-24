@@ -18,8 +18,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from routers.deps import require_admin_or_mediamanager
@@ -71,10 +73,15 @@ def _image_details(conn, image_id: int) -> Optional[Dict]:
     """Load key fields for one image."""
     row = conn.execute("""
         SELECT id, filepath, filename, file_hash, file_size, face_count,
-               taken_at, created_at, width, height, phash
+               taken_at, created_at, width, height, phash, local_path
         FROM images WHERE id=?
     """, (image_id,)).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    d = dict(row)
+    d['server_path'] = d['filepath']
+    d['origin_path'] = d['local_path']
+    return d
 
 
 def _bbox_iou(a_top, a_right, a_bottom, a_left,
@@ -241,6 +248,12 @@ class ResolveBatchRequest(BaseModel):
     groups:      List[BatchGroupItem]
     action:      str  = 'delete_file'
     merge_faces: bool = True
+
+class CleanupScriptRequest(BaseModel):
+    # Each entry is {origin_path, server_path, filename} — paths collected in the
+    # frontend before resolve (DB records are deleted by then, so no ID lookup possible).
+    files:  List[Dict[str, Any]]
+    format: str = 'bash'   # 'bash' | 'powershell' | 'json'
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -547,6 +560,103 @@ def resolve_duplicate(body: ResolveRequest, _=Depends(require_admin_or_mediamana
     if body.action not in valid_actions:
         raise HTTPException(status_code=400, detail=f"action must be one of {valid_actions}")
     return _do_resolve(s.db_path, body.keep_id, body.delete_ids, body.action, body.merge_faces)
+
+
+@router.post("/cleanup-script")
+def cleanup_script(body: CleanupScriptRequest, _=Depends(require_admin_or_mediamanager)):
+    """
+    Generate a downloadable script to remove origin files on the source machine.
+    Only includes files where origin_path is set and differs from server_path
+    (same-path means the server already deleted it via delete_file action).
+    Formats: bash (.sh) | powershell (.ps1) | json
+    """
+    now = datetime.datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+
+    # Filter to files that need separate local cleanup
+    to_remove = [
+        f for f in body.files
+        if f.get('origin_path') and f.get('origin_path') != f.get('server_path')
+    ]
+
+    if body.format == 'json':
+        import json as _json
+        content = _json.dumps({
+            'version':   1,
+            'action':    'trash_files',
+            'generated': now,
+            'files': [
+                {
+                    'origin_path': f['origin_path'],
+                    'server_path': f.get('server_path', ''),
+                    'filename':    f.get('filename', ''),
+                    'reason':      'duplicate_resolved',
+                }
+                for f in to_remove
+            ],
+        }, indent=2)
+        media_type   = 'application/json'
+        ext          = 'json'
+
+    elif body.format == 'powershell':
+        lines = [
+            '# CrispLens duplicate cleanup script',
+            f'# Generated: {now}',
+            '# Sends origin files to the Windows Recycle Bin.',
+            '# Review carefully before running!',
+            '',
+            'Add-Type -AssemblyName Microsoft.VisualBasic',
+            '',
+        ]
+        for f in to_remove:
+            p = f['origin_path'].replace("'", "''")
+            lines.append(f"# {f.get('filename', '')}  (server copy: {f.get('server_path', '')})")
+            lines.append(
+                f"[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("
+                f"'{p}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
+            )
+            lines.append('')
+        lines.append("Write-Host 'Done. Check Recycle Bin.'")
+        content    = '\r\n'.join(lines)
+        media_type = 'text/plain'
+        ext        = 'ps1'
+
+    else:  # bash (default)
+        lines = [
+            '#!/usr/bin/env bash',
+            '# CrispLens duplicate cleanup script',
+            f'# Generated: {now}',
+            '# Moves origin files to Trash / deletes them on the source machine.',
+            '# Review carefully before running!',
+            '',
+            'set -euo pipefail',
+            '',
+            '# _trash: uses trash-cli if available, macOS ~/.Trash fallback, else rm',
+            '_trash() {',
+            '  if command -v trash &>/dev/null; then',
+            "    trash -- \"$1\"",
+            "  elif [[ \"$(uname)\" == 'Darwin' ]]; then",
+            "    mv -- \"$1\" ~/.Trash/",
+            '  else',
+            "    rm -- \"$1\"",
+            '  fi',
+            '}',
+            '',
+        ]
+        for f in to_remove:
+            p = f['origin_path'].replace("'", "'\\''")
+            lines.append(f"# {f.get('filename', '')}  (server copy: {f.get('server_path', '')})")
+            lines.append(f"_trash '{p}'")
+            lines.append('')
+        lines.append("echo 'Done. Check Trash before emptying.'")
+        content    = '\n'.join(lines)
+        media_type = 'text/plain'
+        ext        = 'sh'
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={'Content-Disposition': f'attachment; filename="crisp_cleanup.{ext}"'},
+    )
 
 
 @router.post("/resolve-batch")

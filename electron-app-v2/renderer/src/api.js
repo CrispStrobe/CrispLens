@@ -298,6 +298,33 @@ export function scanPhash(onEvent) {
   return { close: () => ctrl.abort() };
 }
 
+/**
+ * Request a cleanup script from the server and trigger a browser download.
+ * files: [{origin_path, server_path, filename}] — collected before resolve (DB records deleted by then)
+ * format: 'bash' | 'powershell' | 'json'
+ */
+export async function downloadCleanupScript(files, format = 'bash') {
+  const resp = await fetch(`${BASE}/duplicates/cleanup-script`, {
+    method:      'POST',
+    headers:     { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body:         JSON.stringify({ files, format }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    throw new Error(`cleanup-script → ${resp.status}: ${text}`);
+  }
+  const blob = await resp.blob();
+  const ext  = { bash: 'sh', powershell: 'ps1', json: 'json' }[format] ?? 'txt';
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href:     url,
+    download: `crisp_cleanup.${ext}`,
+  });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function scanHashes(onEvent) {
   const ctrl = new AbortController();
   fetch(`${BASE}/duplicates/scan-hashes`, {

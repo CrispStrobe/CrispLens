@@ -56,4 +56,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── App lifecycle ────────────────────────────────────────────────────────
   relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
   switchDb:    (dbPath) => ipcRenderer.invoke('switch-db', dbPath),
+
+  // ── Duplicate local cleanup: send origin files to OS Trash ──────────────
+  trashItems: (paths) => ipcRenderer.invoke('trash-items', paths),
 });

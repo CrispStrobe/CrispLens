@@ -256,6 +256,8 @@ def get_image_record(db_path: str, image_id: int) -> Optional[Dict[str, Any]]:
             conn.close()
             return None
         record = dict(row)
+        record['server_path'] = record.get('filepath')
+        record['origin_path'] = record.get('local_path')
 
         people_rows = conn.execute("""
             SELECT 
@@ -885,6 +887,8 @@ def browse_images_filtered(
         results = []
         for r in rows:
             d = dict(r)
+            d['server_path'] = d.get('filepath')
+            d['origin_path'] = d.get('local_path')
             # Parse ai_tags into a list for convenience
             raw_tags = d.get('ai_tags') or ''
             try:
