@@ -8,6 +8,7 @@
     scanPhash,
     scanHashes,
     thumbnailUrl,
+    downloadCleanupScript,
   } from '../api.js';
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -36,6 +37,16 @@
   let batchResolving = false;
   let batchDone      = false;
   let batchResult    = null;
+
+  // Local cleanup panel (shown after resolve when origin_path differs from server_path)
+  let pendingCleanupFiles = [];   // [{origin_path, server_path, filename}]
+  let cleanupFormat       = 'bash';
+  let cleanupBusy         = false;
+  let cleanupResult       = null; // null | {trashed: int, errors: [{path, error}]}
+
+  // Context detection
+  let isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+  let isRemote   = false;
 
   // pHash scan state
   let scanning    = false;
@@ -113,8 +124,14 @@
 
     resolving = { ...resolving, [group.key]: true };
     try {
+      // Collect origin files before resolve deletes the DB records
+      const newCleanup = collectCleanupFiles(group.images, keepId);
       await resolveDuplicate(keepId, deleteIds, action, mergeFaces);
       resolved = { ...resolved, [group.key]: 'ok' };
+      if (newCleanup.length > 0) {
+        pendingCleanupFiles = [...pendingCleanupFiles, ...newCleanup];
+        cleanupResult = null;
+      }
       groups = groups.filter(g => g.key !== group.key);
       selectedGroups.delete(group.key);
       selectedGroups = new Set(selectedGroups);
@@ -239,7 +256,97 @@
     return parts.slice(0, -1).join('/') || '/';
   }
 
+  // ── Local cleanup helpers ─────────────────────────────────────────────────
+  function collectCleanupFiles(groupImages, keepId) {
+    return groupImages
+      .filter(img => img.id !== keepId)
+      .filter(img => img.origin_path && img.origin_path !== (img.server_path ?? img.filepath))
+      .map(img => ({
+        origin_path: img.origin_path,
+        server_path: img.server_path ?? img.filepath ?? '',
+        filename:    img.filename,
+      }));
+  }
+
+  async function doElectronTrash() {
+    if (cleanupBusy) return;
+    cleanupBusy  = true;
+    cleanupResult = null;
+    try {
+      const paths   = pendingCleanupFiles.map(f => f.origin_path);
+      const results = await window.electronAPI.trashItems(paths);
+      const trashed = results.filter(r => r.ok).length;
+      const errors  = results.filter(r => !r.ok).map(r => ({ path: r.path, error: r.error }));
+      cleanupResult = { trashed, errors };
+      if (errors.length === 0) pendingCleanupFiles = [];
+    } catch (e) {
+      alert(`Trash error: ${e.message}`);
+    } finally {
+      cleanupBusy = false;
+    }
+  }
+
+  async function doScriptDownload(fmt) {
+    if (cleanupBusy) return;
+    cleanupBusy = true;
+    try {
+      await downloadCleanupScript(pendingCleanupFiles, fmt ?? cleanupFormat);
+    } catch (e) {
+      alert(`Script download error: ${e.message}`);
+    } finally {
+      cleanupBusy = false;
+    }
+  }
+
+  async function doBrowserDelete() {
+    if (cleanupBusy) return;
+    cleanupBusy  = true;
+    cleanupResult = null;
+    let trashed = 0;
+    const errors = [];
+    // Group by parent directory so we request one picker per directory
+    const byDir = {};
+    for (const f of pendingCleanupFiles) {
+      const normalized = f.origin_path.replace(/\\/g, '/');
+      const dir  = normalized.substring(0, normalized.lastIndexOf('/')) || '/';
+      const name = normalized.substring(normalized.lastIndexOf('/') + 1);
+      (byDir[dir] = byDir[dir] || []).push({ name, fullPath: f.origin_path });
+    }
+    try {
+      for (const [dir, files] of Object.entries(byDir)) {
+        let handle;
+        try {
+          handle = await window.showDirectoryPicker({ startIn: 'pictures' });
+        } catch (e) {
+          if (e.name === 'AbortError') break;
+          errors.push({ path: dir, error: e.message });
+          continue;
+        }
+        for (const { name } of files) {
+          try {
+            await handle.removeEntry(name);
+            trashed++;
+          } catch (e) {
+            errors.push({ path: `${dir}/${name}`, error: e.message });
+          }
+        }
+      }
+      cleanupResult = { trashed, errors };
+      if (errors.length === 0) pendingCleanupFiles = [];
+    } catch (e) {
+      alert(`Browser delete error: ${e.message}`);
+    } finally {
+      cleanupBusy = false;
+    }
+  }
+
   onMount(async () => {
+    if (isElectron) {
+      try {
+        const s = await window.electronAPI.getSettings();
+        isRemote = s?.client?.connectTo === 'remote';
+      } catch { isRemote = false; }
+    }
     await loadStats();
     await loadGroups();
   });

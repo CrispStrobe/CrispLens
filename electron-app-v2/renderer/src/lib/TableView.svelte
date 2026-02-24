@@ -95,11 +95,9 @@
     </thead>
     <tbody>
       {#each $galleryImages as img}
-        {@const lp = img.local_path || ''}
-        {@const origName = lp
-          ? lp.replace(/\\/g, '/').split('/').pop()
-          : (img.filename ?? img.filepath?.split('/').pop() ?? '')}
-        {@const isFullPath = lp.includes('/') || lp.includes('\\')}
+        {@const originPath = img.origin_path ?? img.local_path ?? ''}
+        {@const serverPath = img.server_path ?? img.filepath ?? ''}
+        {@const originDiffers = originPath && originPath !== serverPath}
         <tr
           class:selected={$selectedItems.has(img.id)}
           on:click={(e) => handleSelect(e, img)}
@@ -128,11 +126,17 @@
             </div>
           </td>
           <td class="path">
-            <div class="path-filename" title={origName}>{origName}</div>
-            {#if isFullPath}
-              <div class="path-origin" title={lp}>{lp}</div>
+            <div class="path-filename" title={img.filename}>{img.filename ?? serverPath.split('/').pop()}</div>
+            {#if originPath}
+              <div class="path-origin" title={originPath}>
+                <span class="path-label">origin</span>{originPath}
+              </div>
             {/if}
-            <div class="path-vps" title={img.filepath}>→ {img.filepath}</div>
+            {#if originDiffers}
+              <div class="path-vps" title={serverPath}>
+                <span class="path-label">server</span>{serverPath}
+              </div>
+            {/if}
           </td>
         </tr>
       {/each}
@@ -169,6 +173,10 @@
   .path-filename {
     font-size: 12px; font-weight: 600; color: #a0b0cc;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
+  }
+  .path-label {
+    font-size: 8px; color: #3a3a58; text-transform: uppercase;
+    margin-right: 4px; letter-spacing: 0.5px;
   }
   .path-origin {
     font-size: 10px; color: #607090; margin-top: 2px;
