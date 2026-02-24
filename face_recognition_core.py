@@ -2327,33 +2327,34 @@ class FaceRecognitionEngine:
             # Write detection image to a temp file and use create_from_file() —
             # this matches the official example exactly and avoids any numpy-array
             # format/contiguity issues with the mp.Image() constructor.
+            # Keep the temp file alive until after detector.detect() returns.
             tmp_path = None
+            result = None
             try:
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
                     tmp_path = tmp.name
-                # Save as JPEG (already EXIF-corrected since _load_image applied exif_transpose)
                 from PIL import Image as _PILImage
                 rgb = cv2.cvtColor(det_image, cv2.COLOR_BGR2RGB)
                 _PILImage.fromarray(rgb).save(tmp_path, 'JPEG', quality=95)
 
                 mp_image = mp.Image.create_from_file(tmp_path)
+
+                base_opts = _mp_py.BaseOptions(model_asset_path=str(model_path))
+                opts = _mp_vis.FaceDetectorOptions(
+                    base_options=base_opts,
+                    min_detection_confidence=min_conf,
+                )
+                detector = _mp_vis.FaceDetector.create_from_options(opts)
+                try:
+                    result = detector.detect(mp_image)
+                finally:
+                    detector.close()
             finally:
-                if tmp_path and os.path.exists(tmp_path):
+                if tmp_path:
                     try:
                         os.unlink(tmp_path)
                     except OSError:
                         pass
-
-            base_opts = _mp_py.BaseOptions(model_asset_path=str(model_path))
-            opts = _mp_vis.FaceDetectorOptions(
-                base_options=base_opts,
-                min_detection_confidence=min_conf,
-            )
-            detector = _mp_vis.FaceDetector.create_from_options(opts)
-            try:
-                result = detector.detect(mp_image)
-            finally:
-                detector.close()
 
             n_raw = len(result.detections) if result and result.detections else 0
             logger.info(f"  MediaPipe: {n_raw} raw detection(s) (min_conf={min_conf:.2f})")
