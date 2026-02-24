@@ -163,8 +163,8 @@
   $: {
     // Recompute whenever image or imgVersion changes; also resets any error fallback
     imgSrc = image
-      ? (isElectron && image.local_path
-          ? `localfile://${image.local_path}`
+      ? (isElectron && (image.origin_path ?? image.local_path)
+          ? `localfile://${image.origin_path ?? image.local_path}`
           : previewUrl(image.id) + (imgVersion > 0 ? `?v=${imgVersion}` : ''))
       : '';
   }
@@ -223,7 +223,7 @@
           <button class="nav-overlay left"  on:click={() => navigate(-1)} title={$t('previous')}>‹</button>
           <button class="nav-overlay right" on:click={() => navigate(1)}  title={$t('next')}>›</button>
 
-          {#if !isElectron && image?.local_path}
+          {#if !isElectron && (image?.origin_path ?? image?.local_path)}
             <div class="local-only-warn">⚠ Full resolution only available in the desktop app</div>
           {/if}
         </div>

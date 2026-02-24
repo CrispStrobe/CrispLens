@@ -151,11 +151,14 @@
     batchDone = false;
     batchResult = null;
 
+    // Collect cleanup candidates BEFORE resolve (DB records deleted afterward)
+    const newCleanup = [];
     const groupsToResolve = groups
       .filter(g => selectedGroups.has(g.key))
       .map(g => {
-        const keepId   = keepMap[g.key];
+        const keepId    = keepMap[g.key];
         const deleteIds = g.images.map(i => i.id).filter(id => id !== keepId);
+        newCleanup.push(...collectCleanupFiles(g.images, keepId));
         return { keep_id: keepId, delete_ids: deleteIds };
       })
       .filter(g => g.keep_id && g.delete_ids.length > 0);
@@ -164,10 +167,10 @@
       const result = await resolveDuplicateBatch(groupsToResolve, batchAction, mergeFaces);
       batchResult = result;
       batchDone = true;
-      // Remove resolved groups from list
-      const resolvedKeys = new Set(
-        groupsToResolve.map((_, i) => groups.find(g => selectedGroups.has(g.key))?.key).filter(Boolean)
-      );
+      if (newCleanup.length > 0) {
+        pendingCleanupFiles = [...pendingCleanupFiles, ...newCleanup];
+        cleanupResult = null;
+      }
       await loadGroups();
       await loadStats();
     } catch (e) {
@@ -546,7 +549,10 @@
                 />
                 <div class="img-meta">
                   <div class="img-name" title={img.filename}>{img.filename}</div>
-                  <div class="img-path" title={img.filepath}>{folderOf(img.filepath)}</div>
+                  <div class="img-path" title={img.server_path ?? img.filepath}>{folderOf(img.server_path ?? img.filepath)}</div>
+                  {#if img.origin_path && img.origin_path !== (img.server_path ?? img.filepath)}
+                    <div class="img-origin" title={img.origin_path}>origin: {img.origin_path}</div>
+                  {/if}
                   <div class="img-stats">
                     {fmtBytes(img.file_size)}
                     {#if img.face_count} · {img.face_count} face{img.face_count === 1 ? '' : 's'}{/if}
@@ -577,6 +583,81 @@
       {/each}
     {/if}
   </div>
+
+  <!-- ── Local cleanup panel ── -->
+  {#if pendingCleanupFiles.length > 0}
+    <div class="cleanup-panel">
+      <div class="cleanup-header">
+        <span class="cleanup-title">Clean up source files</span>
+        <span class="cleanup-count">
+          {pendingCleanupFiles.length} file{pendingCleanupFiles.length === 1 ? '' : 's'} on source machine
+        </span>
+        <button class="btn-sm" on:click={() => { pendingCleanupFiles = []; cleanupResult = null; }}>
+          Dismiss
+        </button>
+      </div>
+      <div class="cleanup-hint">
+        These originals live outside the server copy — the server-side file was already handled.
+        Choose how to remove them from their source location:
+      </div>
+
+      <!-- Path 1 — Shell script (always available) -->
+      <div class="cleanup-row">
+        <select bind:value={cleanupFormat} class="fmt-sel">
+          <option value="bash">Bash (.sh) — macOS / Linux</option>
+          <option value="powershell">PowerShell (.ps1) — Windows</option>
+          <option value="json">JSON — custom / Electron import</option>
+        </select>
+        <button class="btn-sm primary" disabled={cleanupBusy} on:click={() => doScriptDownload(cleanupFormat)}>
+          Download script
+        </button>
+        <span class="cleanup-hint-sm">Review before running</span>
+      </div>
+
+      <!-- Path 2 — File System Access API (browser, local server only) -->
+      {#if typeof window !== 'undefined' && 'showDirectoryPicker' in window && !isRemote}
+        <div class="cleanup-row">
+          <button class="btn-sm" disabled={cleanupBusy} on:click={doBrowserDelete}>
+            Delete via browser
+          </button>
+          <span class="cleanup-hint-sm">Grants per-folder permission — local files only</span>
+        </div>
+      {/if}
+
+      <!-- Path 3a — Electron local: direct IPC trash -->
+      {#if isElectron && !isRemote}
+        <div class="cleanup-row">
+          <button class="btn-sm primary" disabled={cleanupBusy} on:click={doElectronTrash}>
+            Move to Trash
+          </button>
+          <span class="cleanup-hint-sm">Sends files to your OS Trash (reversible)</span>
+        </div>
+      {/if}
+
+      <!-- Path 3b — Electron remote: JSON download for local Electron to import -->
+      {#if isElectron && isRemote}
+        <div class="cleanup-row">
+          <button class="btn-sm" disabled={cleanupBusy} on:click={() => doScriptDownload('json')}>
+            Download JSON list
+          </button>
+          <span class="cleanup-hint-sm">Import into your local Electron client to trash files there</span>
+        </div>
+      {/if}
+
+      <!-- Result -->
+      {#if cleanupResult}
+        <div class="cleanup-result" class:has-errors={cleanupResult.errors?.length > 0}>
+          Moved {cleanupResult.trashed} file{cleanupResult.trashed === 1 ? '' : 's'} to Trash.
+          {#if cleanupResult.errors?.length > 0}
+            <span class="cleanup-err-count">{cleanupResult.errors.length} error{cleanupResult.errors.length === 1 ? '' : 's'}:</span>
+            {#each cleanupResult.errors as err}
+              <div class="cleanup-err-item">{err.path}: {err.error}</div>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- ── Stats footer ── -->
   {#if stats}
@@ -739,6 +820,7 @@
   .img-meta { flex: 1; min-width: 0; }
   .img-name { font-size: 11px; color: #c0c0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .img-path { font-size: 9px; color: #505070; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .img-origin { font-size: 9px; color: #40607a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; font-style: italic; }
   .img-stats { font-size: 9px; color: #404060; margin-top: 2px; }
 
   .keep-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; min-width: 58px; }
@@ -768,4 +850,26 @@
   .hint code { background: #2a2a40; padding: 1px 4px; border-radius: 3px; }
 
   .btn-sm { font-size: 11px; padding: 3px 10px; }
+
+  /* ── Cleanup panel ── */
+  .cleanup-panel {
+    border-top: 1px solid #2a2a3a;
+    background: #0f0f1c;
+    padding: 8px 14px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cleanup-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cleanup-title { font-size: 12px; font-weight: 600; color: #c0a840; }
+  .cleanup-count { font-size: 11px; color: #806840; flex: 1; }
+  .cleanup-hint { font-size: 10px; color: #505068; }
+  .cleanup-hint-sm { font-size: 9px; color: #404058; }
+  .cleanup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .fmt-sel { font-size: 11px; padding: 2px 5px; background: #1e1e30; color: #a0a0c0; border: 1px solid #3a3a5a; border-radius: 4px; }
+  .cleanup-result { font-size: 11px; color: #50c878; padding: 3px 0; }
+  .cleanup-result.has-errors { color: #e05050; }
+  .cleanup-err-count { font-size: 10px; margin-left: 6px; }
+  .cleanup-err-item { font-size: 10px; color: #c04040; margin-left: 10px; }
 </style>
