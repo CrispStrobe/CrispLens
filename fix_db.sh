@@ -171,6 +171,11 @@ else
         apply_migration "images.owner_id"     "ALTER TABLE images ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;"
         apply_migration "images.visibility"   "ALTER TABLE images ADD COLUMN visibility TEXT DEFAULT 'shared';"
 
+        # users table — per-user VLM preferences (added 2026-02-24)
+        apply_migration "users.vlm_enabled"   "ALTER TABLE users ADD COLUMN vlm_enabled INTEGER;"
+        apply_migration "users.vlm_provider"  "ALTER TABLE users ADD COLUMN vlm_provider TEXT;"
+        apply_migration "users.vlm_model"     "ALTER TABLE users ADD COLUMN vlm_model TEXT;"
+
         # faces table
         apply_migration "faces.face_quality"  "ALTER TABLE faces ADD COLUMN face_quality REAL DEFAULT 1.0;"
 
@@ -183,6 +188,14 @@ else
             "CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_id);"
         apply_migration "idx_images_visibility" \
             "CREATE INDEX IF NOT EXISTS idx_images_visibility ON images(visibility);"
+
+        # file_hash composite index (replaces the old column-level UNIQUE constraint)
+        # NOTE: The full table-recreation migration (removing the UNIQUE from file_hash)
+        # runs automatically in fastapi_app.py on service startup — no manual SQL needed.
+        # After the service starts, this index will exist. We just try to create it here
+        # for DBs that have already been migrated by the service but haven't had this run.
+        apply_migration "idx_images_file_hash_owner" \
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_images_file_hash_owner ON images(file_hash, owner_id) WHERE file_hash IS NOT NULL;"
 
         # watch_folders table (added in watchfolders router)
         run_sql "
@@ -231,19 +244,53 @@ else
             CREATE INDEX IF NOT EXISTS idx_album_shares_user  ON album_shares(user_id);
         " 2>/dev/null && info "album_shares table ensured" || true
 
+        # cloud_drives table (added 2026-02-22)
+        run_sql "
+            CREATE TABLE IF NOT EXISTS cloud_drives (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                name         TEXT NOT NULL,
+                type         TEXT NOT NULL,
+                config       TEXT NOT NULL,
+                mount_point  TEXT,
+                status       TEXT DEFAULT 'disconnected',
+                owner_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_cloud_drives_owner  ON cloud_drives(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_cloud_drives_status ON cloud_drives(status);
+        " 2>/dev/null && info "cloud_drives table ensured" || true
+
         info "All migrations complete"
     fi
 fi
 
 # Quick sanity check
 IMAGES_COLS=$(run_sql "PRAGMA table_info(images);" 2>/dev/null | awk -F'|' '{print $2}' | tr '\n' ' ' || true)
-for _col in local_path owner_id visibility; do
+for _col in local_path owner_id visibility phash; do
     if echo "$IMAGES_COLS" | grep -q "$_col"; then
         info "Verified: images.${_col} column exists"
     else
         warn "images.${_col} column NOT found — check DB manually"
     fi
 done
+
+USERS_COLS=$(run_sql "PRAGMA table_info(users);" 2>/dev/null | awk -F'|' '{print $2}' | tr '\n' ' ' || true)
+for _col in vlm_enabled vlm_provider vlm_model; do
+    if echo "$USERS_COLS" | grep -q "$_col"; then
+        info "Verified: users.${_col} column exists"
+    else
+        warn "users.${_col} column NOT found — check DB manually"
+    fi
+done
+
+# Verify file_hash composite index (created by service on startup after table migration)
+FILE_HASH_IDX=$(run_sql "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_images_file_hash_owner';" 2>/dev/null || true)
+if [[ -n "$FILE_HASH_IDX" ]]; then
+    info "Verified: idx_images_file_hash_owner composite index exists"
+else
+    warn "idx_images_file_hash_owner not yet present — will be created on first service start"
+fi
 
 # =============================================================================
 # STEP 3b — Sync pre-built Svelte frontend (renderer/dist/)

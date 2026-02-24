@@ -61,17 +61,20 @@ See the [root README](../README.md) for complete environment variable, config.ya
 | **Description** | Free-text description of image content |
 | **Auto-tagging** | AI-generated keyword tags |
 | **Providers** | Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama |
+| **Per-user VLM** | Non-admins can override provider, model, and enable/disable for their own processing via Settings (personal VLM section) or `PUT /api/settings/user-vlm`. Resolves as: user override → global `config.yaml` → disabled |
 
 ### Settings & Auth
 
 | Feature | Description |
 |---|---|
-| **API key manager** | Per-provider Fernet-encrypted keys; system (admin) or user scope |
-| **Config** | Backend, model, thresholds, VLM settings |
+| **API key manager** | Per-provider Fernet-encrypted keys; system (admin) or user scope; Test button per key |
+| **Config** | Backend/model/thresholds (admin only); VLM settings, language, upload size (any user) |
 | **Auth** | Cookie-based sessions; admin / mediamanager / user roles; image ownership + visibility; per-image sharing |
 | **User management** | Admin UI: create/edit/delete users, reset lockout; `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}` |
+| **Password management** | Any user: change own password. Admin: set any user's password via 🔑 button in Users table |
 | **Upload size limit** | Settings → Storage: optionally resize uploaded images to a max dimension before saving on server |
-| **i18n** | German and English |
+| **Duplicate upload** | Same user re-uploading same file → instant dedup by SHA-256 + owner (no re-processing). Different user uploading same content → separate record per user with full hash stored (composite partial index `UNIQUE(file_hash, owner_id)` per user). Missing hashes can be backfilled via Duplicates → Fill Hashes |
+| **i18n** | German and English (server-authoritative; client-side instant switch) |
 
 ---
 
@@ -250,12 +253,15 @@ Mode C — local_process
                           ▼  SQLite (WAL mode)  — path configurable
 ┌──────────────────────────────────────────────────────────────────┐
 │  face_recognition.db                                             │
-│  ├── images      filepath, local_path, EXIF, VLM, face_count    │
+│  ├── images      filepath, local_path, owner_id, EXIF, VLM      │
 │  ├── faces       bbox (0–1 normalised), quality, age, gender     │
 │  ├── face_embeddings  embedding vector, person_id, confidence    │
 │  ├── people      name, appearance count, first/last seen         │
+│  ├── users       username, role, vlm_enabled/provider/model      │
 │  ├── tags / image_tags                                           │
+│  ├── image_shares / album_shares  per-item access grants         │
 │  ├── watch_folders   path, schedule, last_scan stats             │
+│  ├── cloud_drives    SMB/SFTP/Filen/Internxt mount configs       │
 │  └── settings    key-value config                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -457,6 +463,9 @@ ui:
 
 | Symptom | Fix |
 |---|---|
+| `PUT /settings → 403` as non-admin | Expected: recognition settings (backend, thresholds) are admin-only. VLM, language, storage save fine |
+| Upload 422 `faces.image_id NOT NULL` | Schema not yet migrated — restart the service; `fastapi_app.py` migrates the DB automatically on startup (replaces old `file_hash UNIQUE` with a per-user composite partial index) |
+| Non-admin can't delete image | Image may be owned by another user. You can only delete images you own or unowned (legacy) images |
 | Wizard loops after completion | Delete `electron-settings.json` from app data dir; tray → Reset settings |
 | `localfile://` images don't load | macOS Full Disk Access: System Preferences → Privacy → Full Disk Access → add CrispLens |
 | Mode C subprocess crash | Check Python path in Settings; run `python local_processor.py` manually to see error |

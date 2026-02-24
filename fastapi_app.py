@@ -251,6 +251,10 @@ def startup():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (shared_by) REFERENCES users(id) ON DELETE CASCADE
             )''',
+            # Per-user VLM overrides (NULL = use global default from config.yaml)
+            'ALTER TABLE users ADD COLUMN vlm_enabled INTEGER',
+            'ALTER TABLE users ADD COLUMN vlm_provider TEXT',
+            'ALTER TABLE users ADD COLUMN vlm_model TEXT',
             # Cloud / network drive configurations
             '''CREATE TABLE IF NOT EXISTS cloud_drives (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,6 +278,106 @@ def startup():
             except _sqlite3.OperationalError:
                 pass  # column / index already exists — silently skip
         _mig_conn.commit()
+
+        # ── Schema migration: fix file_hash uniqueness (idempotent) ──────────
+        # Old schema had `file_hash TEXT UNIQUE` which prevented different users
+        # from storing their own copy of identical content with the hash intact.
+        # New schema: plain `file_hash TEXT` + composite partial unique index
+        # UNIQUE(file_hash, owner_id) WHERE file_hash IS NOT NULL, which allows
+        # different users to each have a row for the same content (with the hash
+        # stored), while still preventing same-user hash duplicates at DB level.
+        _has_composite_idx = _mig_conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='idx_images_file_hash_owner'"
+        ).fetchone()
+        if not _has_composite_idx:
+            _has_images = _mig_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='images'"
+            ).fetchone()
+            if _has_images:
+                try:
+                    # Get actual column list in DB order (includes ALTERed columns)
+                    _cols = [r[1] for r in _mig_conn.execute(
+                        "PRAGMA table_info(images)"
+                    ).fetchall()]
+                    _cols_sql = ', '.join(_cols)
+                    # Recreate table without the column-level UNIQUE on file_hash
+                    _mig_conn.executescript(f"""
+                        PRAGMA foreign_keys = OFF;
+                        BEGIN;
+                        CREATE TABLE images_fix (
+                            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                            filepath         TEXT NOT NULL UNIQUE,
+                            filename         TEXT NOT NULL,
+                            file_hash        TEXT,
+                            file_size        INTEGER,
+                            width            INTEGER,
+                            height           INTEGER,
+                            format           TEXT,
+                            local_path       TEXT,
+                            image_blob       BLOB,
+                            thumbnail_blob   BLOB,
+                            taken_at         TIMESTAMP,
+                            location_lat     REAL,
+                            location_lng     REAL,
+                            location_name    TEXT,
+                            camera_make      TEXT,
+                            camera_model     TEXT,
+                            iso              INTEGER,
+                            aperture         REAL,
+                            shutter_speed    TEXT,
+                            focal_length     REAL,
+                            ai_description   TEXT,
+                            ai_scene_type    TEXT,
+                            ai_tags          TEXT,
+                            ai_confidence    REAL,
+                            ai_provider      TEXT,
+                            processed        INTEGER DEFAULT 0,
+                            processing_error TEXT,
+                            face_count       INTEGER DEFAULT 0,
+                            metadata_written INTEGER DEFAULT 0,
+                            rating           INTEGER DEFAULT 0,
+                            flag             TEXT,
+                            description      TEXT,
+                            phash            TEXT,
+                            owner_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                            visibility       TEXT DEFAULT 'shared',
+                            created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            processed_at     TIMESTAMP
+                        );
+                        INSERT INTO images_fix ({_cols_sql})
+                            SELECT {_cols_sql} FROM images;
+                        DROP TABLE images;
+                        ALTER TABLE images_fix RENAME TO images;
+                        CREATE INDEX IF NOT EXISTS idx_images_processed   ON images(processed);
+                        CREATE INDEX IF NOT EXISTS idx_images_filename    ON images(filename);
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath);
+                        CREATE INDEX IF NOT EXISTS idx_images_file_hash   ON images(file_hash);
+                        CREATE INDEX IF NOT EXISTS idx_images_local_path  ON images(local_path);
+                        CREATE INDEX IF NOT EXISTS idx_images_taken_at    ON images(taken_at);
+                        CREATE INDEX IF NOT EXISTS idx_images_face_count  ON images(face_count DESC);
+                        CREATE INDEX IF NOT EXISTS idx_images_scene_type  ON images(ai_scene_type);
+                        CREATE INDEX IF NOT EXISTS idx_images_created     ON images(created_at DESC);
+                        CREATE INDEX IF NOT EXISTS idx_images_phash       ON images(phash);
+                        CREATE INDEX IF NOT EXISTS idx_images_description ON images(ai_description);
+                        CREATE INDEX IF NOT EXISTS idx_images_tags        ON images(ai_tags);
+                        CREATE INDEX IF NOT EXISTS idx_images_owner       ON images(owner_id);
+                        CREATE INDEX IF NOT EXISTS idx_images_visibility  ON images(visibility);
+                        CREATE UNIQUE INDEX idx_images_file_hash_owner
+                            ON images(file_hash, owner_id)
+                            WHERE file_hash IS NOT NULL;
+                        COMMIT;
+                        PRAGMA foreign_keys = ON;
+                    """)
+                    logger.info("Schema migration: removed file_hash UNIQUE constraint, "
+                                "added composite partial index (file_hash, owner_id)")
+                except Exception as _mig_err:
+                    logger.error(f"file_hash schema migration failed: {_mig_err}")
+                    try:
+                        _mig_conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
     finally:
         _mig_conn.close()
 

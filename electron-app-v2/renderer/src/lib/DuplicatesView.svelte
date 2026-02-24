@@ -6,6 +6,7 @@
     resolveDuplicate,
     resolveDuplicateBatch,
     scanPhash,
+    scanHashes,
     thumbnailUrl,
   } from '../api.js';
 
@@ -41,6 +42,12 @@
   let scanStream  = null;
   let scanProg    = { total: 0, done: 0 };
   let scanDone    = false;
+
+  // SHA-256 hash scan state
+  let hashScanning = false;
+  let hashStream   = null;
+  let hashProg     = { total: 0, done: 0 };
+  let hashScanDone = false;
 
   // ── Data loading ──────────────────────────────────────────────────────────
   async function loadStats() {
@@ -185,6 +192,33 @@
     scanning = false;
   }
 
+  // ── SHA-256 hash scan ─────────────────────────────────────────────────────
+  function startHashScan() {
+    if (hashScanning) return;
+    hashScanning = true;
+    hashScanDone = false;
+    hashProg = { total: 0, done: 0 };
+
+    hashStream = scanHashes(event => {
+      if (event.started) {
+        hashProg = { total: event.total, done: 0 };
+      } else if (event.done) {
+        hashScanning = false;
+        hashScanDone = true;
+        hashStream = null;
+        loadStats();
+        if (method === 'hash') loadGroups();
+      } else {
+        hashProg = { ...hashProg, done: event.index };
+      }
+    });
+  }
+
+  function cancelHashScan() {
+    if (hashStream) { hashStream.close(); hashStream = null; }
+    hashScanning = false;
+  }
+
   // ── Formatting helpers ────────────────────────────────────────────────────
   function fmtBytes(b) {
     if (!b) return '0 B';
@@ -254,6 +288,30 @@
       </button>
     </div>
   </div>
+
+  <!-- ── SHA-256 hash scan bar (shown when there are missing hashes) ── -->
+  {#if stats?.hash_missing > 0 || hashScanning || hashScanDone}
+    <div class="scan-bar">
+      {#if hashScanning}
+        <div class="scan-prog">
+          Computing hashes… {hashProg.done}/{hashProg.total}
+          <div class="prog-wrap">
+            <div class="prog-fill"
+              style="width: {hashProg.total ? (hashProg.done/hashProg.total)*100 : 0}%"></div>
+          </div>
+          <button class="btn-sm" on:click={cancelHashScan}>Cancel</button>
+        </div>
+      {:else if hashScanDone}
+        <span class="scan-ok">✅ Hash scan complete — duplicates updated</span>
+      {:else}
+        <span class="scan-hint">
+          {stats.hash_missing} image{stats.hash_missing === 1 ? '' : 's'} missing SHA-256 hash
+          (won't appear in hash duplicate groups)
+        </span>
+        <button class="primary btn-sm" on:click={startHashScan}>Fill Hashes</button>
+      {/if}
+    </div>
+  {/if}
 
   <!-- ── pHash scan bar ── -->
   {#if method === 'visual' && stats?.phash_available}

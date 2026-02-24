@@ -10,7 +10,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from routers.deps import require_admin
+from routers.deps import require_admin, get_current_user
 
 router = APIRouter()
 
@@ -170,9 +170,20 @@ def get_settings():
 
 
 @router.put("")
-def put_settings(body: SettingsPatch, _admin=Depends(require_admin)):
+def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
     s = _state()
     config = dict(s.config or {})
+
+    # Face-recognition system settings + global VLM defaults are admin-only
+    _admin_fields = (body.backend, body.model, body.det_threshold,
+                     body.rec_threshold, body.det_size,
+                     body.vlm_provider, body.vlm_model, body.vlm_enabled)
+    if any(f is not None for f in _admin_fields) and user.role != 'admin':
+        raise HTTPException(
+            status_code=403,
+            detail="Recognition settings and global VLM defaults require admin access. "
+                   "Use PUT /api/settings/user-vlm to set your personal VLM preferences.",
+        )
 
     if body.language is not None:
         config.setdefault('ui', {})['language'] = body.language
@@ -251,6 +262,95 @@ def put_settings(body: SettingsPatch, _admin=Depends(require_admin)):
             s.vlm_provider = None
 
     return {"ok": True}
+
+
+# ── Per-user VLM preferences ──────────────────────────────────────────────────
+
+def get_effective_vlm_provider(user, state):
+    """
+    Resolve the VLM provider for a given user.
+
+    Priority: user personal override → global config.yaml default.
+    Returns a VLM provider instance or None if VLM is disabled/unconfigured.
+    """
+    from vlm_providers import create_vlm_provider, VLMConfig
+
+    global_vlm = (state.config or {}).get('vlm', {})
+
+    # Enabled: user override wins over global
+    user_enabled = user.vlm_enabled   # None = no override
+    if user_enabled is not None:
+        enabled = bool(user_enabled)
+    else:
+        enabled = global_vlm.get('enabled', False)
+
+    if not enabled:
+        return None
+
+    provider = user.vlm_provider or global_vlm.get('provider', 'anthropic')
+    model    = user.vlm_model    or global_vlm.get('model') or None
+
+    api_key  = state.api_key_manager.get_effective_key(provider, user.username)
+    endpoint = global_vlm.get('api', {}).get('endpoint') or None
+
+    return create_vlm_provider(
+        provider=provider, api_key=api_key,
+        endpoint=endpoint, model=model, config=VLMConfig(),
+    )
+
+
+class UserVlmPrefs(BaseModel):
+    vlm_enabled:  Optional[bool] = None   # None = reset to global default
+    vlm_provider: Optional[str]  = None   # None = reset to global default
+    vlm_model:    Optional[str]  = None   # None = reset to global default
+
+
+@router.get("/user-vlm")
+def get_user_vlm(user=Depends(get_current_user)):
+    """Return the current user's personal VLM preferences + global defaults."""
+    s = _state()
+    global_vlm = (s.config or {}).get('vlm', {})
+    return {
+        'user': {
+            'vlm_enabled':  user.vlm_enabled,
+            'vlm_provider': user.vlm_provider,
+            'vlm_model':    user.vlm_model,
+        },
+        'global': {
+            'vlm_enabled':  global_vlm.get('enabled', False),
+            'vlm_provider': global_vlm.get('provider', 'anthropic'),
+            'vlm_model':    global_vlm.get('model'),
+        },
+        'effective': {
+            'vlm_enabled':  bool(user.vlm_enabled) if user.vlm_enabled is not None
+                            else global_vlm.get('enabled', False),
+            'vlm_provider': user.vlm_provider or global_vlm.get('provider', 'anthropic'),
+            'vlm_model':    user.vlm_model or global_vlm.get('model'),
+        },
+    }
+
+
+@router.put("/user-vlm")
+def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
+    """Save current user's personal VLM preferences (any authenticated user)."""
+    s = _state()
+    import sqlite3 as _sqlite3
+    # Encode: True→1, False→0, None→NULL (reset to global)
+    enabled_val = (1 if body.vlm_enabled else 0) if body.vlm_enabled is not None else None
+    conn = None
+    try:
+        conn = _sqlite3.connect(s.db_path)
+        conn.execute(
+            'UPDATE users SET vlm_enabled = ?, vlm_provider = ?, vlm_model = ? WHERE id = ?',
+            (enabled_val, body.vlm_provider, body.vlm_model, user.id),
+        )
+        conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return {'ok': True}
 
 
 class CheckCredentialsRequest(BaseModel):

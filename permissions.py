@@ -29,6 +29,10 @@ class User:
     allowed_folders: List[str]  # Empty list = all folders for admins
     created_at: str
     is_active: bool = True
+    # Per-user VLM overrides (NULL = use global default from config.yaml)
+    vlm_enabled: Optional[int] = None
+    vlm_provider: Optional[str] = None
+    vlm_model: Optional[str] = None
 
 
 class PermissionManager:
@@ -304,6 +308,7 @@ class PermissionManager:
             conn.close()
             
             if row:
+                rd = dict(row)
                 return User(
                     id=row['id'],
                     username=row['username'],
@@ -311,18 +316,21 @@ class PermissionManager:
                     role=row['role'],
                     allowed_folders=json.loads(row['allowed_folders'] or '[]'),
                     created_at=row['created_at'],
-                    is_active=bool(row['is_active'])
+                    is_active=bool(row['is_active']),
+                    vlm_enabled=rd.get('vlm_enabled'),
+                    vlm_provider=rd.get('vlm_provider'),
+                    vlm_model=rd.get('vlm_model'),
                 )
-            
+
             return None
-            
+
         except sqlite3.Error as e:
             logger.error(f"Database error getting user '{username}': {e}")
             return None
         except Exception as e:
             logger.error(f"Error getting user '{username}': {e}")
             return None
-    
+
     def authenticate(self, username: str, password: str) -> tuple[bool, str, Optional[User]]:
         """
         Authenticate user with rate limiting and lockout.
@@ -666,6 +674,7 @@ class PermissionManager:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             conn.close()
             if row:
+                rd = dict(row)
                 return User(
                     id=row['id'],
                     username=row['username'],
@@ -674,6 +683,9 @@ class PermissionManager:
                     allowed_folders=json.loads(row['allowed_folders'] or '[]'),
                     created_at=row['created_at'],
                     is_active=bool(row['is_active']),
+                    vlm_enabled=rd.get('vlm_enabled'),
+                    vlm_provider=rd.get('vlm_provider'),
+                    vlm_model=rd.get('vlm_model'),
                 )
             return None
         except Exception as e:

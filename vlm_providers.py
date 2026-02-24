@@ -607,6 +607,17 @@ _ANTHROPIC_MODELS = [
     "claude-3-haiku-20240307",
 ]
 
+# Mistral: hardcoded list of vision-capable models (avoids live API dependency).
+# Source: https://docs.mistral.ai/capabilities/vision/
+_MISTRAL_VLM_MODELS = [
+    "mistral-large-2512",    # Mistral Large 3
+    "mistral-medium-2508",   # Mistral Medium 3.1
+    "mistral-small-2506",    # Mistral Small 3.2
+    "ministral-14b-2512",    # Ministral 3 14B
+    "ministral-8b-2512",     # Ministral 3 8B
+    "ministral-3b-2512",     # Ministral 3 3B
+]
+
 # Groq: /models endpoint requires elevated API permissions (403 for standard keys).
 # List vision-capable models explicitly.
 _GROQ_VLM_MODELS = [
@@ -695,6 +706,10 @@ def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
     if provider == 'anthropic':
         return _ANTHROPIC_MODELS, None
 
+    if provider == 'mistral':
+        logger.info(f"Mistral: returning {len(_MISTRAL_VLM_MODELS)} hardcoded vision models")
+        return _MISTRAL_VLM_MODELS, None
+
     if provider == 'groq':
         # Groq's /models endpoint returns 403 for standard API keys.
         # Return the known vision model list directly.
@@ -708,9 +723,9 @@ def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
         'nebius':     ('https://api.tokenfactory.nebius.com/v1/models',   True),
         'scaleway':   ('https://api.scaleway.ai/v1/models',               True),
         'openrouter': ('https://openrouter.ai/api/v1/models',             False),  # public
-        'mistral':    ('https://api.mistral.ai/v1/models',                True),
         'poe':        ('https://api.poe.com/v1/models',                   True),
         'ollama':     ('http://localhost:11434/api/tags',                  False),
+        # mistral handled above via hardcoded list — not here
     }
 
     if provider not in _endpoints:
@@ -758,31 +773,13 @@ def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
             logger.info(f"Poe: {len(all_models)} total, "
                         f"{len(all_ids)} accept image input and output text")
 
-        elif provider == 'mistral':
-            # Mistral returns a capabilities object with an explicit "vision" boolean —
-            # use it instead of keyword guessing so new vision models are caught automatically.
-            all_models = data.get('data', [])
-            vision_ids = [
-                m['id'] for m in all_models
-                if m.get('capabilities', {}).get('vision', False)
-            ]
-            if vision_ids:
-                all_ids = vision_ids
-            else:
-                # Fallback: keyword filter (e.g. if capabilities field is absent)
-                all_ids = [m['id'] for m in all_models]
-                vision_ids = [mid for mid in all_ids if _is_vision_model(provider, mid)]
-                all_ids = vision_ids if vision_ids else all_ids
-            logger.info(f"Mistral: {len(data.get('data', []))} total, "
-                        f"{len(all_ids)} with capabilities.vision=true")
-
         else:
             # Standard OpenAI format: {"data": [{"id": "...", ...}]}
             # (openai, nebius, scaleway, poe-compat — these return bare model objects)
             all_ids = [m['id'] for m in data.get('data', [])]
 
         # Providers already filtered by native metadata above — skip keyword filter
-        _metadata_filtered = {'openrouter', 'poe', 'mistral'}
+        _metadata_filtered = {'openrouter', 'poe'}
 
         if provider in _metadata_filtered:
             pass  # already filtered

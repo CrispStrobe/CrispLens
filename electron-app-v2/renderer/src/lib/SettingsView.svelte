@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     fetchSettings, saveSettings,
+    fetchUserVlmPrefs, saveUserVlmPrefs,
     fetchProviders, fetchKeyStatus, saveApiKey, deleteApiKey, testApiKey,
     login, logout, fetchMe, fetchVlmModels,
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
@@ -15,6 +16,9 @@
   let cfg = null;
   let saving = false;
   let saveMsg = '';
+
+  // Convenience shorthand
+  $: isAdmin = $currentUser?.role === 'admin';
 
   // Editable fields
   let language     = 'de';
@@ -43,11 +47,23 @@
       recThreshold = c?.face_recognition?.insightface?.recognition_threshold ?? 0.4;
       const ds     = c?.face_recognition?.insightface?.det_size ?? [640, 640];
       detSize      = Array.isArray(ds) ? ds[0] : ds;
-      vlmEnabled   = c?.vlm?.enabled ?? false;
-      vlmProvider  = c?.vlm?.provider ?? 'anthropic';
-      vlmModel     = c?.vlm?.model ?? '';
       uploadMaxDim = c?.storage?.upload_max_dimension ?? 0;
+      if ($currentUser?.role === 'admin') {
+        // Admin edits global VLM defaults directly
+        vlmEnabled  = c?.vlm?.enabled ?? false;
+        vlmProvider = c?.vlm?.provider ?? 'anthropic';
+        vlmModel    = c?.vlm?.model ?? '';
+      }
     }).catch(() => {});
+    // Non-admin: load personal VLM prefs (shows effective = override || global fallback)
+    if ($currentUser?.role !== 'admin') {
+      fetchUserVlmPrefs().then(p => {
+        vlmEnabled  = p.effective.vlm_enabled  ?? false;
+        vlmProvider = p.effective.vlm_provider ?? 'anthropic';
+        vlmModel    = p.effective.vlm_model    ?? '';
+        globalVlmHint = p.global;
+      }).catch(() => {});
+    }
     fetchProviders().then(p => { providers = p; }).catch(() => {});
     fetchKeyStatus().then(k => { keyStatus = k; }).catch(() => {});
     if ($currentUser?.role === 'admin') {
@@ -63,6 +79,7 @@
   // ── VLM Models ─────────────────────────────────────────────────────────────
   let vlmModels = [];
   let fetchingModels = false;
+  let globalVlmHint = null;  // { vlm_enabled, vlm_provider, vlm_model } — for non-admin hint
 
   async function doFetchModels() {
     fetchingModels = true;
@@ -180,10 +197,21 @@
         recThreshold = cfg?.face_recognition?.insightface?.recognition_threshold ?? 0.4;
         const ds = cfg?.face_recognition?.insightface?.det_size ?? [640, 640];
         detSize = Array.isArray(ds) ? ds[0] : ds;
-        vlmEnabled   = cfg?.vlm?.enabled ?? false;
-        vlmProvider  = cfg?.vlm?.provider ?? 'anthropic';
-        vlmModel     = cfg?.vlm?.model ?? '';
+          if ($currentUser?.role === 'admin') {
+          vlmEnabled  = cfg?.vlm?.enabled ?? false;
+          vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
+          vlmModel    = cfg?.vlm?.model ?? '';
+        }
       } catch (e) { saveMsg = '⚠ Could not load server settings: ' + e.message; }
+      if ($currentUser?.role !== 'admin') {
+        try {
+          const p = await fetchUserVlmPrefs();
+          vlmEnabled  = p.effective.vlm_enabled  ?? false;
+          vlmProvider = p.effective.vlm_provider ?? 'anthropic';
+          vlmModel    = p.effective.vlm_model    ?? '';
+          globalVlmHint = p.global;
+        } catch { /* ignore */ }
+      }
       try { providers = await fetchProviders(); } catch { /* ignore */ }
       try { keyStatus = await fetchKeyStatus(); } catch { /* ignore */ }
     }
@@ -222,16 +250,29 @@
 
       // Only try to save server settings when backend is reachable
       if ($backendReady) {
-        await saveSettings({
-          language, backend, model,
-          det_threshold: detThreshold,
-          rec_threshold: recThreshold,
-          det_size: detSize,
-          vlm_enabled: vlmEnabled,
-          vlm_provider: vlmProvider,
-          vlm_model: vlmModel || null,
-          upload_max_dimension: uploadMaxDim,
-        });
+        if (isAdmin) {
+          // Admin saves language + face-rec + global VLM defaults + upload settings
+          await saveSettings({
+            language,
+            backend, model,
+            det_threshold: detThreshold,
+            rec_threshold: recThreshold,
+            det_size: detSize,
+            vlm_enabled: vlmEnabled,
+            vlm_provider: vlmProvider,
+            vlm_model: vlmModel || null,
+            upload_max_dimension: uploadMaxDim,
+          });
+        } else {
+          // Non-admin saves language + upload settings to global config
+          await saveSettings({ language, upload_max_dimension: uploadMaxDim });
+          // Personal VLM preferences go to the user-vlm endpoint
+          await saveUserVlmPrefs({
+            vlm_enabled:  vlmEnabled,
+            vlm_provider: vlmProvider,
+            vlm_model:    vlmModel || null,
+          });
+        }
         saveMsg = '✓ All settings saved';
       } else {
         saveMsg = isElectron
@@ -865,6 +906,7 @@
         {/each}
       </select>
 
+      {#if isAdmin}
       <label for="setting-backend">{$t('backend')}</label>
       <select id="setting-backend" bind:value={backend}>
         {#each BACKENDS as b}
@@ -904,12 +946,19 @@
         </select>
         <span class="size-hint">Larger finds smaller faces but is slower.</span>
       </div>
+      {/if}
     </div>
   </section>
 
   <!-- VLM settings -->
   <section class="card">
     <h3>{$t('ai_enrichment')}</h3>
+    {#if !isAdmin && globalVlmHint}
+      <p class="hint" style="margin-bottom:8px;">
+        Personal override — global default: {globalVlmHint.vlm_enabled ? 'enabled' : 'disabled'}
+        ({globalVlmHint.vlm_provider ?? 'anthropic'}{globalVlmHint.vlm_model ? ' / ' + globalVlmHint.vlm_model : ''}).
+      </p>
+    {/if}
     <div class="form-grid">
       <label for="setting-vlm-enabled">{$t('enable_vlm')}</label>
       <input id="setting-vlm-enabled" type="checkbox" bind:checked={vlmEnabled} />

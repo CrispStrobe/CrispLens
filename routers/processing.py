@@ -11,6 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from folder_training import FolderTrainer
+from routers.deps import get_current_user
+from routers.settings import get_effective_vlm_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,12 +76,13 @@ def _get_image_paths(folder: str, recursive: bool) -> List[str]:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/single")
-def process_single(body: SingleRequest):
+def process_single(body: SingleRequest, user=Depends(get_current_user)):
     s = _state_with_engine()
     if not Path(body.filepath).exists():
         raise HTTPException(status_code=404, detail="File not found")
     try:
-        result = s.engine.process_image(body.filepath, s.vlm_provider, force=body.force)
+        vlm = get_effective_vlm_provider(user, s)
+        result = s.engine.process_image(body.filepath, vlm, force=body.force)
         return {"ok": True, "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -102,7 +105,7 @@ def _build_payload(i, total, path, result=None, error=None):
     }
 
 
-async def _stream_paths(paths, s):
+async def _stream_paths(paths, s, vlm_provider):
     """Shared SSE generator: process a list of paths and yield SSE events."""
     import asyncio
     total = len(paths)
@@ -111,7 +114,7 @@ async def _stream_paths(paths, s):
     for i, path in enumerate(paths, 1):
         try:
             result = await loop.run_in_executor(
-                None, lambda p=path: s.engine.process_image(p, s.vlm_provider)
+                None, lambda p=path: s.engine.process_image(p, vlm_provider)
             )
             payload = _build_payload(i, total, path, result=result)
         except Exception as e:
@@ -129,21 +132,23 @@ def scan_folder(body: ScanFolderRequest):
 
 
 @router.post("/batch")
-async def process_batch(body: BatchRequest):
+async def process_batch(body: BatchRequest, user=Depends(get_current_user)):
     s = _state_with_engine()
     paths = _get_image_paths(body.folder, body.recursive)
-    return StreamingResponse(_stream_paths(paths, s), media_type="text/event-stream")
+    vlm = get_effective_vlm_provider(user, s)
+    return StreamingResponse(_stream_paths(paths, s, vlm), media_type="text/event-stream")
 
 
 @router.post("/batch-files")
-async def process_batch_files(body: BatchFilesRequest):
+async def process_batch_files(body: BatchFilesRequest, user=Depends(get_current_user)):
     """Process an explicit list of file paths (multi-file drop)."""
     s = _state_with_engine()
     paths = [
         p for p in body.paths
         if Path(p).is_file() and Path(p).suffix.lower() in IMAGE_EXTENSIONS
     ]
-    return StreamingResponse(_stream_paths(paths, s), media_type="text/event-stream")
+    vlm = get_effective_vlm_provider(user, s)
+    return StreamingResponse(_stream_paths(paths, s, vlm), media_type="text/event-stream")
 
 
 @router.post("/train")

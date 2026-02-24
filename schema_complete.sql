@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS images (
     -- File information
     filepath TEXT NOT NULL UNIQUE,
     filename TEXT NOT NULL,
-    file_hash TEXT UNIQUE,
+    file_hash TEXT,
     file_size INTEGER CHECK(file_size >= 0),
     width INTEGER CHECK(width > 0),
     height INTEGER CHECK(height > 0),
@@ -97,6 +97,12 @@ CREATE INDEX IF NOT EXISTS idx_images_processed ON images(processed);
 CREATE INDEX IF NOT EXISTS idx_images_filename ON images(filename);
 CREATE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath);
 CREATE INDEX IF NOT EXISTS idx_images_file_hash ON images(file_hash);
+-- Composite partial unique index: allows same content for different users,
+-- but prevents same user from having hash-identical rows.
+-- NULL owner_id rows (freshly inserted, ownership set after) are exempt via NULL != NULL uniqueness.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_images_file_hash_owner
+    ON images(file_hash, owner_id)
+    WHERE file_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_images_local_path ON images(local_path);
 CREATE INDEX IF NOT EXISTS idx_images_taken_at ON images(taken_at);
 CREATE INDEX IF NOT EXISTS idx_images_face_count ON images(face_count DESC);

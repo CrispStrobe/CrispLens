@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from routers.deps import get_current_user
+from routers.settings import get_effective_vlm_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -121,12 +122,27 @@ async def upload_local(
         except Exception:
             pass  # fall back to original if PIL fails
 
+    # ── Same-user duplicate check (before writing to disk) ───────────────────
+    import hashlib as _hashlib
+    file_hash = _hashlib.sha256(data).hexdigest()
+    _dedup_conn = _connect(s.db_path)
+    try:
+        _dup = _dedup_conn.execute(
+            "SELECT id, face_count FROM images WHERE file_hash = ? AND owner_id = ? AND processed = 1 LIMIT 1",
+            (file_hash, user.id),
+        ).fetchone()
+    finally:
+        _dedup_conn.close()
+    if _dup:
+        return {'image_id': _dup['id'], 'face_count': _dup['face_count'], 'skipped': True}
+
     with open(perm_path, 'wb') as fh:
         fh.write(data)
 
     try:
         # Normal VPS processing (filepath stored in DB = perm_path — stays on disk)
-        result = await _run_in_executor(s, perm_path)
+        vlm = get_effective_vlm_provider(user, s)
+        result = await _run_in_executor(s, perm_path, vlm)
 
         if not result.get('success'):
             try:
@@ -137,16 +153,19 @@ async def upload_local(
 
         image_id = result['image_id']
 
-        # Record original local path and write thumbnail blob to disk
+        # Record original local path and ownership — only when image has no owner yet or is ours
         conn = None
         try:
             conn = _connect(s.db_path)
             vis = visibility if visibility in ('shared', 'private') else 'shared'
-            conn.execute(
-                'UPDATE images SET local_path = ?, owner_id = ?, visibility = ? WHERE id = ?',
-                (local_path, user.id, vis, image_id),
-            )
-            conn.commit()
+            cur_row = conn.execute("SELECT owner_id FROM images WHERE id = ?", (image_id,)).fetchone()
+            cur_owner = cur_row['owner_id'] if cur_row else None
+            if cur_owner is None or cur_owner == user.id:
+                conn.execute(
+                    'UPDATE images SET local_path = ?, owner_id = ?, visibility = ? WHERE id = ?',
+                    (local_path, user.id, vis, image_id),
+                )
+                conn.commit()
 
             # Write thumbnail blob to disk so GET /api/images/{id}/thumbnail works
             thumb_row = conn.execute(
@@ -176,12 +195,12 @@ async def upload_local(
         raise
 
 
-async def _run_in_executor(s, path: str):
+async def _run_in_executor(s, path: str, vlm_provider=None):
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
-        lambda: s.engine.process_image(path),
+        lambda: s.engine.process_image(path, vlm_provider),
     )
 
 

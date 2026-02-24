@@ -291,6 +291,11 @@ def get_stats():
             )
         """).fetchone()[0] or 0
 
+        # How many images are missing file_hash (need scan-hashes)
+        hash_missing = conn.execute(
+            "SELECT COUNT(*) FROM images WHERE processed=1 AND (file_hash IS NULL OR file_hash='')"
+        ).fetchone()[0]
+
         # phash: how many images need scanning
         phash_missing = conn.execute(
             "SELECT COUNT(*) FROM images WHERE processed=1 AND phash IS NULL"
@@ -312,6 +317,7 @@ def get_stats():
             "hash_groups":      hash_count,
             "visual_groups":    phash_groups,
             "wasted_bytes":     wasted_row,
+            "hash_missing":     hash_missing,
             "phash_available":  PHASH_AVAILABLE,
             "phash_missing":    phash_missing,
         }
@@ -425,6 +431,68 @@ def get_groups(
     finally:
         if conn:
             conn.close()
+
+
+@router.post("/scan-hashes")
+async def scan_hashes(_=Depends(require_admin_or_mediamanager)):
+    """
+    SSE: compute SHA-256 file_hash for all processed images that don't have one.
+
+    Rows with file_hash = NULL or '' can arise from:
+    - Files added before hash computation was implemented
+    - Legacy cross-user same-content uploads (before the schema migration fixed the
+      UNIQUE constraint; after the migration these rows should get their hashes filled in)
+
+    Only fills hashes for files that are readable on disk.
+    """
+    import hashlib as _hashlib
+
+    s = _state()
+    conn_r = _connect(s.db_path)
+    rows = conn_r.execute("""
+        SELECT id, filepath FROM images
+        WHERE processed=1 AND (file_hash IS NULL OR file_hash='')
+        ORDER BY id
+    """).fetchall()
+    conn_r.close()
+
+    todo = [(r['id'], r['filepath']) for r in rows]
+    total = len(todo)
+
+    async def event_stream():
+        import asyncio
+        loop = asyncio.get_event_loop()
+        yield f"data: {json.dumps({'total': total, 'started': True})}\n\n"
+        done = 0
+        for image_id, filepath in todo:
+            try:
+                # Compute hash in a thread pool executor so we don't block the event loop
+                def _compute(p=filepath, iid=image_id):
+                    sha256 = _hashlib.sha256()
+                    with open(p, 'rb') as fh:
+                        while chunk := fh.read(65536):
+                            sha256.update(chunk)
+                    return sha256.hexdigest()
+
+                h = await loop.run_in_executor(None, _compute)
+                conn_w = _connect(s.db_path)
+                try:
+                    conn_w.execute(
+                        "UPDATE images SET file_hash=? WHERE id=?", (h, image_id)
+                    )
+                    conn_w.commit()
+                except Exception as _upd_err:
+                    logger.warning(f"scan-hashes: could not store hash for {filepath}: {_upd_err}")
+                finally:
+                    conn_w.close()
+                done += 1
+                yield f"data: {json.dumps({'index': done, 'total': total, 'path': filepath})}\n\n"
+            except Exception as e:
+                logger.warning(f"scan-hashes error {filepath}: {e}")
+                yield f"data: {json.dumps({'index': done, 'total': total, 'path': filepath, 'error': str(e)})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': total, 'computed': done})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/scan-phash")

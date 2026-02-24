@@ -214,6 +214,8 @@ export function saveSettings(body)                  { return put('/settings', bo
 export function fetchTranslations()                 { return get('/settings/i18n'); }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { return get('/settings/db-status'); }
+export function fetchUserVlmPrefs()                 { return get('/settings/user-vlm'); }
+export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }
 export function changePassword(current_password, new_password) {
   return post('/auth/change-password', { current_password, new_password });
 }
@@ -292,6 +294,36 @@ export function scanPhash(onEvent) {
     }
   }).catch(err => {
     if (err.name !== 'AbortError') console.error('scanPhash SSE error:', err);
+  });
+  return { close: () => ctrl.abort() };
+}
+
+export function scanHashes(onEvent) {
+  const ctrl = new AbortController();
+  fetch(`${BASE}/duplicates/scan-hashes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    signal: ctrl.signal,
+  }).then(async res => {
+    const reader = res.body.getReader();
+    const dec    = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        for (const dataLine of part.split('\n')) {
+          if (dataLine.startsWith('data: '))
+            try { onEvent(JSON.parse(dataLine.slice(6))); } catch { /* ignore */ }
+        }
+      }
+    }
+  }).catch(err => {
+    if (err.name !== 'AbortError') console.error('scanHashes SSE error:', err);
   });
   return { close: () => ctrl.abort() };
 }

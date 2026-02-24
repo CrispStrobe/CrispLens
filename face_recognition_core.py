@@ -1072,11 +1072,11 @@ class FaceRecognitionEngine:
             # Store image in database
             image_id = self._store_image(image_path, metadata, image if self.config.store_in_db else None, thumbnail)
             if image_id is None:
-                raise ValueError(f"Failed to store image record (duplicate file_hash with no retrievable row): {image_path}")
+                raise ValueError(f"Failed to store image record (filepath collision with no retrievable row): {image_path}")
             logger.info(f"  💾 Stored/Reused image record (id={image_id})")
 
-            # If the stored row's filepath differs from image_path, the insert hit a UNIQUE
-            # violation (most likely file_hash) and we recovered an existing row.
+            # If the stored row's filepath differs from image_path, the insert hit a filepath
+            # UNIQUE violation and we recovered an existing row (same file processed twice).
             # If that row is already fully processed, return the cached result to avoid
             # inserting duplicate faces.
             if not force:
@@ -1225,15 +1225,14 @@ class FaceRecognitionEngine:
                 return image_id
 
             except sqlite3.IntegrityError:
-                # UNIQUE violation on filepath or file_hash — find the existing row
-                # Must check both columns: file_hash violation leaves a different filepath
-                query = "SELECT id FROM images WHERE filepath = ?"
-                params: list = [filepath]
-                if metadata.file_hash:
-                    query += " OR file_hash = ?"
-                    params.append(metadata.file_hash)
-                cursor2 = conn.execute(query, params)
-                row = cursor2.fetchone()
+                # filepath collision (same physical path already in DB) — return existing row id.
+                # file_hash collisions no longer occur here: after the schema migration, the
+                # column-level UNIQUE on file_hash was removed and replaced with a composite
+                # partial index UNIQUE(file_hash, owner_id) WHERE file_hash IS NOT NULL, which
+                # allows different users to each store their own copy of the same content.
+                row = conn.execute(
+                    "SELECT id FROM images WHERE filepath = ?", (filepath,)
+                ).fetchone()
                 return row['id'] if row else None
 
             except Exception as e:

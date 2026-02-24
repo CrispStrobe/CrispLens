@@ -32,7 +32,9 @@ def _state():
 
 
 def _check_modify(image_id: int, user, db_path: str):
-    """Raise 403 if user can't modify this image (must be owner, admin, or mediamanager)."""
+    """Raise 403 if user can't modify this image (must be owner or admin/mediamanager).
+    Images with owner_id = NULL (legacy / server-processed) are modifiable by any user.
+    """
     if user.role in ('admin', 'mediamanager'):
         return
     conn = sqlite3.connect(db_path, timeout=5.0)
@@ -41,7 +43,10 @@ def _check_modify(image_id: int, user, db_path: str):
         if row is None:
             raise HTTPException(status_code=404, detail="Image not found")
         owner_id = row[0]
-        if owner_id != user.id:
+        # owner_id IS NULL  → unowned / legacy image, any user may modify
+        # owner_id == user.id → user owns it
+        # owner_id != user.id → another user's image → forbidden
+        if owner_id is not None and owner_id != user.id:
             raise HTTPException(status_code=403, detail="You don't have permission to modify this image")
     finally:
         conn.close()
@@ -342,6 +347,7 @@ def delete_image(image_id: int, user=Depends(get_current_user)):
 
         conn = sqlite3.connect(s.db_path, timeout=10.0)
         conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA foreign_keys = ON")  # cascade face_embeddings on face delete
         conn.execute("DELETE FROM image_tags WHERE image_id = ?", (image_id,))
         conn.execute("DELETE FROM faces WHERE image_id = ?", (image_id,))
         conn.execute("DELETE FROM images WHERE id = ?", (image_id,))

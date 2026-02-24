@@ -129,8 +129,10 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 │  ├── face_embeddings  embedding vector, person_id, confidence     │
 │  ├── people       name, appearance count, first/last seen         │
 │  ├── tags / image_tags                                            │
+│  ├── users        username, role, vlm_enabled/provider/model      │
 │  ├── image_shares / album_shares  per-item access grants          │
 │  ├── watch_folders    path, schedule, last_scan stats             │
+│  ├── cloud_drives     SMB/SFTP/Filen/Internxt mount configs       │
 │  └── settings     key-value config                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -720,15 +722,17 @@ Keys are **never stored in plaintext** — encrypted with Fernet (AES-128-CBC + 
 **Setup:** Settings → API Key Management → select provider → enter key → Save.
 Then: Settings → VLM Activation → select provider + model → Activate.
 
+**Per-user overrides:** Non-admin users can override the global VLM provider, model, and enable/disable status for their own processing requests via Settings (personal VLM section) or `PUT /api/settings/user-vlm`. The effective provider resolves as: user override → global `config.yaml` default → disabled. Admins manage global defaults; each user can tailor VLM to their own API keys and preferences.
+
 | Provider | Model discovery |
 |---|---|
-| Anthropic | hardcoded list |
+| Anthropic | hardcoded list (claude-opus/sonnet/haiku 4.x, claude-3.5) |
 | OpenAI | keyword filter (`gpt-4o`, `gpt-4-turbo`, …) |
 | Nebius AI | keyword (`vl`, `gemma-3`, `nemotron-nano-v2`) |
 | Scaleway | keyword (`pixtral`, `gemma-3`, `mistral-small-3`, `holo2`) |
 | OpenRouter | `architecture.modality` contains `image` |
-| Mistral AI | `capabilities.vision == true` |
-| Groq | hardcoded list |
+| Mistral AI | hardcoded list — Large 3, Medium 3.1, Small 3.2, Ministral 3/8/14B |
+| Groq | hardcoded list (llama-4-scout/maverick, llama-3.2 vision) |
 | Poe | `image ∈ input_modalities` + `text ∈ output_modalities` |
 | Ollama | keyword (`llava`, `vision`, `vl`, `gemma3`, `mistral-small3`, …) |
 
@@ -738,11 +742,21 @@ Then: Settings → VLM Activation → select provider + model → Activate.
 
 | Role | Capabilities |
 |---|---|
-| `admin` | All images, all API providers, system API keys, user CRUD, DB health, clear embeddings |
+| `admin` | All images, all API providers, system API keys, user CRUD, DB health, clear embeddings, face-rec settings |
 | `mediamanager` | Shared + own private images, all API providers, server API keys |
 | `user` | Shared + own private + explicitly-shared images, EU providers only, personal API keys |
 
 Images have **visibility** (`shared` / `private`) and an **owner**. Private images are visible to their owner, explicit share recipients, and admins only. Per-image and per-album sharing is supported via `image_shares` / `album_shares` tables.
+
+**Settings permissions:** Face-recognition settings (backend, model, thresholds, detection size) and global VLM defaults (`config.yaml`) are admin-only. Any authenticated user can set **personal VLM overrides** (provider, model, enable/disable) via Settings or `PUT /api/settings/user-vlm` — these take precedence over the global config for that user's processing requests. UI language and upload size limit are also user-editable.
+
+**Password management:** Any user can change their own password (Settings → Change Password). Admins can set passwords for other accounts via the Users table (🔑 button).
+
+**Duplicate upload behaviour:**
+- Same user uploads the same file twice → deduplicated by SHA-256 hash + owner; second upload returns the existing image immediately (no re-processing).
+- Different users upload the same file content → each gets their own independent image record; the full SHA-256 hash is stored for every row (a per-user composite partial index `UNIQUE(file_hash, owner_id)` prevents same-user re-uploads while allowing cross-user same-content).
+- Image deleted in the UI → hard-deleted from DB; subsequent upload is treated as new.
+- Rows with a missing hash (legacy data from before the schema migration) can be backfilled via Duplicates → **Fill Hashes** (`POST /api/duplicates/scan-hashes`).
 
 Passwords use bcrypt (PBKDF2 fallback). Accounts lock after `max_failed_attempts` failures.
 
@@ -899,6 +913,8 @@ face_rec/
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `PUT /settings → 403` | Non-admin tried to save recognition settings | Only VLM/language/storage settings are available to non-admins; recognition settings require admin |
+| Upload returns 422 `NOT NULL constraint failed: faces.image_id` | Schema not yet migrated | Restart the service — `fastapi_app.py` migrates the `images` table on startup, replacing the old `file_hash UNIQUE` constraint with a per-user composite partial index |
 | Startup takes >60 s | `buffalo_l` loading on CPU | `use_coreml: true` or switch to `buffalo_s` |
 | `CUDAExecutionProvider` warning | No CUDA (normal on macOS) | CoreML is used instead — ignore |
 | Login locked | 5 failed attempts | Admin resets via DB or `reset_failed_attempts()` |
