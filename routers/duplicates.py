@@ -250,10 +250,11 @@ class ResolveBatchRequest(BaseModel):
     merge_faces: bool = True
 
 class CleanupScriptRequest(BaseModel):
-    # Each entry is {origin_path, server_path, filename} — paths collected in the
-    # frontend before resolve (DB records are deleted by then, so no ID lookup possible).
+    # Each entry is {origin_path, server_path, kept_origin_path, filename} —
+    # paths collected in the frontend before resolve (DB records deleted by then).
     files:  List[Dict[str, Any]]
     format: str = 'bash'   # 'bash' | 'powershell' | 'json'
+    action: str = 'trash'  # 'trash' | 'delete' | 'symlink'
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -578,18 +579,22 @@ def cleanup_script(body: CleanupScriptRequest, _=Depends(require_admin_or_mediam
         if f.get('origin_path') and f.get('origin_path') != f.get('server_path')
     ]
 
+    action = body.action if body.action in ('trash', 'delete', 'symlink') else 'trash'
+
     if body.format == 'json':
         import json as _json
+        json_action = 'symlink_files' if action == 'symlink' else ('delete_files' if action == 'delete' else 'trash_files')
         content = _json.dumps({
             'version':   1,
-            'action':    'trash_files',
+            'action':    json_action,
             'generated': now,
             'files': [
                 {
-                    'origin_path': f['origin_path'],
-                    'server_path': f.get('server_path', ''),
-                    'filename':    f.get('filename', ''),
-                    'reason':      'duplicate_resolved',
+                    'origin_path':      f['origin_path'],
+                    'server_path':      f.get('server_path', ''),
+                    'kept_origin_path': f.get('kept_origin_path', ''),
+                    'filename':         f.get('filename', ''),
+                    'reason':           'duplicate_resolved',
                 }
                 for f in to_remove
             ],
@@ -598,56 +603,90 @@ def cleanup_script(body: CleanupScriptRequest, _=Depends(require_admin_or_mediam
         ext          = 'json'
 
     elif body.format == 'powershell':
+        if action == 'symlink':
+            header_comment = '# Replaces origin duplicate with a symbolic link to the kept file.'
+            action_note    = 'symlinks created'
+        elif action == 'delete':
+            header_comment = '# Permanently deletes origin duplicate files.'
+            action_note    = 'files deleted'
+        else:
+            header_comment = '# Sends origin files to the Windows Recycle Bin.'
+            action_note    = 'files trashed'
         lines = [
             '# CrispLens duplicate cleanup script',
             f'# Generated: {now}',
-            '# Sends origin files to the Windows Recycle Bin.',
+            header_comment,
             '# Review carefully before running!',
             '',
-            'Add-Type -AssemblyName Microsoft.VisualBasic',
-            '',
         ]
+        if action == 'trash':
+            lines += ['Add-Type -AssemblyName Microsoft.VisualBasic', '']
         for f in to_remove:
             p = f['origin_path'].replace("'", "''")
+            k = f.get('kept_origin_path', '').replace("'", "''")
             lines.append(f"# {f.get('filename', '')}  (server copy: {f.get('server_path', '')})")
-            lines.append(
-                f"[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("
-                f"'{p}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
-            )
+            if action == 'symlink' and k:
+                lines.append(f"Remove-Item -Force '{p}' -ErrorAction SilentlyContinue")
+                lines.append(f"New-Item -ItemType SymbolicLink -Path '{p}' -Target '{k}'")
+            elif action == 'delete':
+                lines.append(f"Remove-Item -Force '{p}'")
+            else:
+                lines.append(
+                    f"[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("
+                    f"'{p}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
+                )
             lines.append('')
-        lines.append("Write-Host 'Done. Check Recycle Bin.'")
+        lines.append(f"Write-Host 'Done. {action_note.capitalize()}.'")
         content    = '\r\n'.join(lines)
         media_type = 'text/plain'
         ext        = 'ps1'
 
     else:  # bash (default)
+        if action == 'symlink':
+            header_comment = '# Replaces origin duplicates with symbolic links to the kept file.'
+            action_note    = 'Done. Symlinks created.'
+        elif action == 'delete':
+            header_comment = '# Permanently deletes origin duplicate files.'
+            action_note    = 'Done. Files deleted.'
+        else:
+            header_comment = '# Moves origin files to Trash / deletes them on the source machine.'
+            action_note    = 'Done. Check Trash before emptying.'
         lines = [
             '#!/usr/bin/env bash',
             '# CrispLens duplicate cleanup script',
             f'# Generated: {now}',
-            '# Moves origin files to Trash / deletes them on the source machine.',
+            header_comment,
             '# Review carefully before running!',
             '',
             'set -euo pipefail',
             '',
-            '# _trash: uses trash-cli if available, macOS ~/.Trash fallback, else rm',
-            '_trash() {',
-            '  if command -v trash &>/dev/null; then',
-            "    trash -- \"$1\"",
-            "  elif [[ \"$(uname)\" == 'Darwin' ]]; then",
-            "    mv -- \"$1\" ~/.Trash/",
-            '  else',
-            "    rm -- \"$1\"",
-            '  fi',
-            '}',
-            '',
         ]
+        if action == 'trash':
+            lines += [
+                '# _trash: uses trash-cli if available, macOS ~/.Trash fallback, else rm',
+                '_trash() {',
+                '  if command -v trash &>/dev/null; then',
+                "    trash -- \"$1\"",
+                "  elif [[ \"$(uname)\" == 'Darwin' ]]; then",
+                "    mv -- \"$1\" ~/.Trash/",
+                '  else',
+                "    rm -- \"$1\"",
+                '  fi',
+                '}',
+                '',
+            ]
         for f in to_remove:
             p = f['origin_path'].replace("'", "'\\''")
+            k = f.get('kept_origin_path', '').replace("'", "'\\''")
             lines.append(f"# {f.get('filename', '')}  (server copy: {f.get('server_path', '')})")
-            lines.append(f"_trash '{p}'")
+            if action == 'symlink' and k:
+                lines.append(f"rm -f '{p}' && ln -sf '{k}' '{p}'")
+            elif action == 'delete':
+                lines.append(f"rm -f '{p}'")
+            else:
+                lines.append(f"_trash '{p}'")
             lines.append('')
-        lines.append("echo 'Done. Check Trash before emptying.'")
+        lines.append(f"echo '{action_note}'")
         content    = '\n'.join(lines)
         media_type = 'text/plain'
         ext        = 'sh'

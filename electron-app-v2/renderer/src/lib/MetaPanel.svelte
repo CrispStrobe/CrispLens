@@ -1,10 +1,15 @@
 <script>
   import { createEventDispatcher } from 'svelte';
   import { patchMetadata, renameImage, deleteImage, openInOs, fetchPeople, renamePerson, reassignFace, fetchImage, deleteFace } from '../api.js';
-  import { t, allPeople } from '../stores.js';
+  import { t, allPeople, currentUser } from '../stores.js';
   import FaceIdentifyModal from './FaceIdentifyModal.svelte';
 
   export let image = null;  // full image record
+
+  $: canDelete = $currentUser?.role === 'admin'
+    || $currentUser?.role === 'mediamanager'
+    || image?.owner_id == null
+    || image?.owner_id === $currentUser?.id;
 
   const dispatch = createEventDispatcher();
 
@@ -227,7 +232,11 @@
   <!-- Actions -->
   <div class="action-row">
     <button on:click={doOpen}>🖼 {$t('view')}</button>
-    <button class="danger" on:click={doDelete}>🗑 {$t('delete')}</button>
+    {#if canDelete}
+      <button class="danger" on:click={doDelete}>🗑 {$t('delete')}</button>
+    {:else}
+      <button class="danger" disabled title="You don't own this image">🗑 {$t('delete')}</button>
+    {/if}
   </div>
 </div>
 

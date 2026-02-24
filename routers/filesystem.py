@@ -173,7 +173,24 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
         import asyncio
         loop = asyncio.get_event_loop()
         yield f"data: {json.dumps({'total': total, 'started': True})}\n\n"
+        skipped = 0
+        errors = 0
+        added = 0
         for i, path in enumerate(all_paths):
+            # Pre-check: skip paths already in DB to avoid re-processing
+            try:
+                _ck = _connect(s.db_path)
+                _existing = _ck.execute(
+                    "SELECT id FROM images WHERE filepath = ?", (path,)
+                ).fetchone()
+                _ck.close()
+            except Exception:
+                _existing = None
+            if _existing:
+                skipped += 1
+                yield f"data: {json.dumps({'index': i + 1, 'total': total, 'path': path, 'skipped': True})}\n\n"
+                continue
+
             try:
                 # Run blocking process_image in a thread so SSE frames flush between images
                 result = await loop.run_in_executor(
@@ -193,7 +210,6 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
                     except Exception as e_upd:
                         logger.warning(f"Could not set owner/visibility for image {image_id}: {e_upd}")
                     # Set origin_path = server_path for files added directly from the server FS
-                    # (local_path is NULL by default; for FS-browser adds origin == server path)
                     try:
                         conn2 = _connect(s.db_path)
                         conn2.execute(
@@ -204,6 +220,7 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
                         conn2.close()
                     except Exception as e_lp:
                         logger.warning(f"Could not set local_path for image {image_id}: {e_lp}")
+                added += 1
                 payload = {
                     'index':  i + 1,
                     'total':  total,
@@ -214,6 +231,7 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
                     },
                 }
             except Exception as e:
+                errors += 1
                 logger.error(f"add_to_db error {path}: {e}")
                 payload = {
                     'index': i + 1,
@@ -222,6 +240,6 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
                     'error': str(e),
                 }
             yield f"data: {json.dumps(payload)}\n\n"
-        yield f"data: {json.dumps({'done': True, 'total': total})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': total, 'added': added, 'skipped': skipped, 'errors': errors})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

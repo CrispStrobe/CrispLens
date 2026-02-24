@@ -10,6 +10,10 @@
     thumbnailUrl,
     downloadCleanupScript,
   } from '../api.js';
+  import { currentUser } from '../stores.js';
+
+  // Role guard: only admin and mediamanager may resolve duplicates
+  $: canResolve = $currentUser?.role === 'admin' || $currentUser?.role === 'mediamanager';
 
   // ── State ──────────────────────────────────────────────────────────────────
   let stats    = null;
@@ -39,10 +43,15 @@
   let batchResult    = null;
 
   // Local cleanup panel (shown after resolve when origin_path differs from server_path)
-  let pendingCleanupFiles = [];   // [{origin_path, server_path, filename}]
+  let pendingCleanupFiles = [];   // [{origin_path, server_path, kept_origin_path, filename}]
   let cleanupFormat       = 'bash';
+  let cleanupAction       = 'trash';  // 'trash' | 'delete' | 'symlink'
   let cleanupBusy         = false;
   let cleanupResult       = null; // null | {trashed: int, errors: [{path, error}]}
+
+  // JSON import (Electron only — execute a previously-downloaded cleanup JSON locally)
+  let importBusy   = false;
+  let importResult = null;  // null | {trashed: int, errors: [{path, error}]}
 
   // Context detection
   let isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -261,13 +270,16 @@
 
   // ── Local cleanup helpers ─────────────────────────────────────────────────
   function collectCleanupFiles(groupImages, keepId) {
+    const keepImg = groupImages.find(img => img.id === keepId);
+    const keptOrigin = keepImg?.origin_path ?? keepImg?.server_path ?? keepImg?.filepath ?? '';
     return groupImages
       .filter(img => img.id !== keepId)
       .filter(img => img.origin_path && img.origin_path !== (img.server_path ?? img.filepath))
       .map(img => ({
-        origin_path: img.origin_path,
-        server_path: img.server_path ?? img.filepath ?? '',
-        filename:    img.filename,
+        origin_path:      img.origin_path,
+        server_path:      img.server_path ?? img.filepath ?? '',
+        kept_origin_path: keptOrigin,
+        filename:         img.filename,
       }));
   }
 
@@ -289,11 +301,15 @@
     }
   }
 
-  async function doScriptDownload(fmt) {
+  async function doScriptDownload(fmt, action) {
     if (cleanupBusy) return;
     cleanupBusy = true;
     try {
-      await downloadCleanupScript(pendingCleanupFiles, fmt ?? cleanupFormat);
+      await downloadCleanupScript(
+        pendingCleanupFiles,
+        fmt ?? cleanupFormat,
+        action ?? cleanupAction,
+      );
     } catch (e) {
       alert(`Script download error: ${e.message}`);
     } finally {
@@ -343,12 +359,52 @@
     }
   }
 
+  async function doImportJson() {
+    if (importBusy) return;
+    importBusy   = true;
+    importResult = null;
+    try {
+      const paths = await window.electronAPI.openFileDialog({
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        multiple: false,
+      });
+      if (!paths?.length) { importBusy = false; return; }
+      const raw     = await window.electronAPI.readLocalFile(paths[0]);
+      const text    = new TextDecoder().decode(raw);
+      const data    = JSON.parse(text);
+      if (data.version !== 1 || !Array.isArray(data.files)) {
+        throw new Error('Invalid cleanup JSON format — version must be 1 and files must be an array.');
+      }
+      const validActions = ['trash_files', 'delete_files', 'symlink_files'];
+      if (!validActions.includes(data.action)) {
+        throw new Error(`Unknown action "${data.action}". Expected: ${validActions.join(', ')}`);
+      }
+      const filePaths = data.files.map(f => f.origin_path).filter(Boolean);
+      if (filePaths.length === 0) { importResult = { trashed: 0, errors: [] }; importBusy = false; return; }
+      const results = await window.electronAPI.trashItems(filePaths);
+      const trashed = results.filter(r => r.ok).length;
+      const errors  = results.filter(r => !r.ok).map(r => ({ path: r.path, error: r.error }));
+      importResult  = { trashed, errors, total: filePaths.length };
+    } catch (e) {
+      importResult = { trashed: 0, errors: [{ path: '', error: e.message }], total: 0 };
+    } finally {
+      importBusy = false;
+    }
+  }
+
   onMount(async () => {
     if (isElectron) {
       try {
         const s = await window.electronAPI.getSettings();
         isRemote = s?.client?.connectTo === 'remote';
       } catch { isRemote = false; }
+    }
+    // Auto-select script format based on client OS
+    const platform = navigator.userAgentData?.platform ?? navigator.platform ?? '';
+    if (/win/i.test(platform)) {
+      cleanupFormat = 'powershell';
+    } else {
+      cleanupFormat = 'bash'; // macOS, Linux
     }
     await loadStats();
     await loadGroups();
@@ -457,19 +513,23 @@
   {#if selectedGroups.size > 0}
     <div class="batch-bar">
       <span class="batch-label">{selectedGroups.size} group{selectedGroups.size === 1 ? '' : 's'} selected</span>
-      <label class="ctrl-label">Action</label>
-      <select bind:value={batchAction}>
-        <option value="delete_file">Delete from disk</option>
-        <option value="db_only">Remove from DB only</option>
-        <option value="symlink">Replace with symlink</option>
-      </select>
-      <label class="toggle-label">
-        <input type="checkbox" bind:checked={mergeFaces} />
-        Merge face assignments
-      </label>
-      <button class="primary" on:click={resolveBatch} disabled={batchResolving}>
-        {batchResolving ? 'Resolving…' : 'Resolve selected'}
-      </button>
+      {#if canResolve}
+        <label class="ctrl-label">Action</label>
+        <select bind:value={batchAction}>
+          <option value="delete_file">Delete from disk</option>
+          <option value="db_only">Remove from DB only</option>
+          <option value="symlink">Replace with symlink</option>
+        </select>
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={mergeFaces} />
+          Merge face assignments
+        </label>
+        <button class="primary" on:click={resolveBatch} disabled={batchResolving}>
+          {batchResolving ? 'Resolving…' : 'Resolve selected'}
+        </button>
+      {:else}
+        <span class="role-guard-hint">Resolving duplicates requires mediamanager or admin access</span>
+      {/if}
       <button class="btn-sm" on:click={deselectAll}>Deselect</button>
     </div>
   {/if}
@@ -521,7 +581,7 @@
                   <span class="resolving-text">Resolving…</span>
                 {:else if isResolved === 'ok'}
                   <span class="resolved-ok">✓ Resolved</span>
-                {:else}
+                {:else if canResolve}
                   <button class="btn-sm primary"
                     on:click={() => resolveGroup(group, batchAction)}>
                     Resolve
@@ -531,6 +591,8 @@
                     <option value="db_only">Remove from DB</option>
                     <option value="symlink">Symlink</option>
                   </select>
+                {:else}
+                  <span class="role-guard-hint">View only</span>
                 {/if}
               </div>
             </div>
@@ -598,7 +660,17 @@
       </div>
       <div class="cleanup-hint">
         These originals live outside the server copy — the server-side file was already handled.
-        Choose how to remove them from their source location:
+        Choose what to do with the originals on their source machine:
+      </div>
+
+      <!-- Action selector (applies to script download) -->
+      <div class="cleanup-row">
+        <label class="cleanup-label">Action</label>
+        <select bind:value={cleanupAction} class="fmt-sel">
+          <option value="trash">Move to Trash (reversible)</option>
+          <option value="delete">Delete permanently</option>
+          <option value="symlink">Replace with symlink to kept file</option>
+        </select>
       </div>
 
       <!-- Path 1 — Shell script (always available) -->
@@ -608,7 +680,7 @@
           <option value="powershell">PowerShell (.ps1) — Windows</option>
           <option value="json">JSON — custom / Electron import</option>
         </select>
-        <button class="btn-sm primary" disabled={cleanupBusy} on:click={() => doScriptDownload(cleanupFormat)}>
+        <button class="btn-sm primary" disabled={cleanupBusy} on:click={() => doScriptDownload(cleanupFormat, cleanupAction)}>
           Download script
         </button>
         <span class="cleanup-hint-sm">Review before running</span>
@@ -655,6 +727,28 @@
             {/each}
           {/if}
         </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ── Import cleanup JSON (Electron only) ── -->
+  {#if isElectron}
+    <div class="import-json-bar">
+      <button class="btn-sm" disabled={importBusy} on:click={doImportJson}>
+        {importBusy ? '…' : '📥 Import cleanup JSON'}
+      </button>
+      <span class="cleanup-hint-sm">
+        Execute a previously downloaded cleanup JSON on this machine
+      </span>
+      {#if importResult}
+        <span class:import-ok={importResult.errors.length === 0} class:import-err={importResult.errors.length > 0}>
+          {importResult.trashed}/{importResult.total} trashed
+          {#if importResult.errors.length > 0}
+            · {importResult.errors.length} failed:
+            {importResult.errors.map(e => `${e.path}: ${e.error}`).join(', ')}
+          {/if}
+        </span>
+        <button class="btn-sm" on:click={() => importResult = null}>✕</button>
       {/if}
     </div>
   {/if}
@@ -866,10 +960,27 @@
   .cleanup-count { font-size: 11px; color: #806840; flex: 1; }
   .cleanup-hint { font-size: 10px; color: #505068; }
   .cleanup-hint-sm { font-size: 9px; color: #404058; }
+  .cleanup-label { font-size: 10px; color: #706880; white-space: nowrap; }
   .cleanup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .fmt-sel { font-size: 11px; padding: 2px 5px; background: #1e1e30; color: #a0a0c0; border: 1px solid #3a3a5a; border-radius: 4px; }
   .cleanup-result { font-size: 11px; color: #50c878; padding: 3px 0; }
   .cleanup-result.has-errors { color: #e05050; }
   .cleanup-err-count { font-size: 10px; margin-left: 6px; }
   .cleanup-err-item { font-size: 10px; color: #c04040; margin-left: 10px; }
+
+  /* ── Role guard ── */
+  .role-guard-hint { font-size: 10px; color: #504858; font-style: italic; }
+
+  /* ── Import JSON bar ── */
+  .import-json-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #0f0f1c;
+    border-top: 1px solid #1e1e30;
+    flex-wrap: wrap;
+  }
+  .import-ok { font-size: 10px; color: #50a050; }
+  .import-err { font-size: 10px; color: #e05050; }
 </style>

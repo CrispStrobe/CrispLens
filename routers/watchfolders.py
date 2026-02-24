@@ -266,6 +266,7 @@ async def scan_watch_folder(folder_id: int, _=Depends(require_admin_or_mediamana
     async def event_stream():
         yield f"data: {json.dumps({'total': total, 'all_found': all_found, 'started': True})}\n\n"
         added = 0
+        errors = 0
         for i, path in enumerate(new_paths):
             try:
                 result = s.engine.process_image(path, s.vlm_provider)
@@ -290,6 +291,7 @@ async def scan_watch_folder(folder_id: int, _=Depends(require_admin_or_mediamana
                     'result': {'faces_detected': result.get('face_count', 0)},
                 }
             except Exception as e:
+                errors += 1
                 logger.error(f"scan_watch_folder error {path}: {e}")
                 payload = {
                     'index': i + 1,
@@ -300,6 +302,6 @@ async def scan_watch_folder(folder_id: int, _=Depends(require_admin_or_mediamana
             yield f"data: {json.dumps(payload)}\n\n"
 
         update_scan_stats(s.db_path, folder_id, all_found, added)
-        yield f"data: {json.dumps({'done': True, 'total': total, 'added': added})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': total, 'added': added, 'errors': errors})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

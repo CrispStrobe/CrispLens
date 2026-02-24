@@ -127,13 +127,15 @@
   let totalCount = 0;
   let doneCount = 0;
   let errorCount = 0;
+  let skippedCount = 0;      // same-user duplicate (already uploaded by this user)
+  let sharedDupCount = 0;    // cross-user shared duplicate (another user uploaded the same content)
   let finished = false;
   let cancelled = false;
   let visibility = 'shared'; // 'shared' | 'private'
 
   $: pendingItems    = queue.filter(q => q.status === 'pending');
   $: processingItem  = queue.find(q => q.status === 'processing');
-  $: doneItems       = queue.filter(q => q.status === 'done' || q.status === 'error');
+  $: doneItems       = queue.filter(q => q.status === 'done' || q.status === 'error' || q.status === 'skipped');
   $: progressPct     = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0;
 
   function startProcessing() {
@@ -146,7 +148,7 @@
     const pending = queue.filter(q => q.status === 'pending');
     if (!pending.length) return;
     running = true; finished = false; cancelled = false;
-    errorCount = 0; doneCount = 0; totalCount = pending.length;
+    errorCount = 0; skippedCount = 0; sharedDupCount = 0; doneCount = 0; totalCount = pending.length;
 
     for (const item of pending) {
       if (cancelled) break;
@@ -157,9 +159,23 @@
           : await window.electronAPI.readLocalFile(item.path);
         const pathForServer = item.file ? item.file.name : item.path;
         const resp   = await uploadLocal(buffer, pathForServer, visibility);
-        queue = queue.map(q => q.id === item.id
-          ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? 0 }
-          : q);
+        if (resp.skipped) {
+          if (resp.shared_duplicate) {
+            sharedDupCount++;
+            queue = queue.map(q => q.id === item.id
+              ? { ...q, status: 'skipped', imageId: resp.image_id, skipReason: 'shared' }
+              : q);
+          } else {
+            skippedCount++;
+            queue = queue.map(q => q.id === item.id
+              ? { ...q, status: 'skipped', imageId: resp.image_id, skipReason: 'own' }
+              : q);
+          }
+        } else {
+          queue = queue.map(q => q.id === item.id
+            ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? 0 }
+            : q);
+        }
       } catch (e) {
         errorCount++;
         queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: e.message } : q);
@@ -433,6 +449,8 @@
       <div class="progress-label">
         {doneCount} / {totalCount}
         {#if errorCount > 0}<span class="err-count"> · {errorCount} {$t('failed')}</span>{/if}
+        {#if skippedCount > 0}<span class="skip-count"> · {skippedCount} already uploaded</span>{/if}
+        {#if sharedDupCount > 0}<span class="shared-count"> · {sharedDupCount} shared by others</span>{/if}
         {#if finished} · {$t('batch_complete')} ✓{/if}
         {#if cancelled} · {$t('operation_cancelled')}{/if}
         <span class="pct">{progressPct}%</span>
@@ -471,6 +489,13 @@
                 {/if}
                 {#if item.people?.length > 0}
                   <span class="badge people">{item.people.join(', ')}</span>
+                {/if}
+              {/if}
+              {#if item.status === 'skipped'}
+                {#if item.skipReason === 'shared'}
+                  <span class="badge shared-dup" title="Same content already uploaded by another user">↩ shared</span>
+                {:else}
+                  <span class="badge skipped" title="Already uploaded by you">↩ duplicate</span>
                 {/if}
               {/if}
               {#if item.status === 'error'}<span class="badge error">error</span>{/if}
@@ -592,7 +617,9 @@
     gap: 4px;
   }
   .progress-label .pct { margin-left: auto; color: #5070a0; }
-  .err-count { color: #d07070; }
+  .err-count    { color: #d07070; }
+  .skip-count   { color: #8090b0; }
+  .shared-count { color: #b09040; }
 
   /* ── Results list ── */
   .results-list {
@@ -679,6 +706,8 @@
   .badge.error      { background: #3a1a1a; color: #c05050; }
   .badge.faces      { background: #1e2a40; color: #6090c0; }
   .badge.people     { background: #2a1e3a; color: #9070c0; }
+  .badge.skipped    { background: #252535; color: #707090; }
+  .badge.shared-dup { background: #2e2a18; color: #b09040; }
 
   .desc {
     font-size: 10px;

@@ -136,6 +136,20 @@ async def upload_local(
     if _dup:
         return {'image_id': _dup['id'], 'face_count': _dup['face_count'], 'skipped': True}
 
+    # Check for cross-user shared duplicate (same content, another user uploaded as shared)
+    _dedup_conn2 = _connect(s.db_path)
+    try:
+        _shared = _dedup_conn2.execute(
+            "SELECT id, face_count FROM images"
+            " WHERE file_hash = ? AND owner_id != ? AND visibility = 'shared' AND processed = 1 LIMIT 1",
+            (file_hash, user.id),
+        ).fetchone()
+    finally:
+        _dedup_conn2.close()
+    if _shared:
+        return {'image_id': _shared['id'], 'face_count': _shared['face_count'],
+                'skipped': True, 'shared_duplicate': True}
+
     with open(perm_path, 'wb') as fh:
         fh.write(data)
 

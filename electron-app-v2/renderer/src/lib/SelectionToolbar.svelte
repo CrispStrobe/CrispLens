@@ -1,10 +1,17 @@
 <script>
-  import { selectedItems, galleryImages, allAlbums, t } from '../stores.js';
+  import { selectedItems, galleryImages, allAlbums, t, currentUser } from '../stores.js';
   import { deleteImage, processSingle, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
   import BatchEditModal from './BatchEditModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
 
   $: count = $selectedItems.size;
+  // Allow delete only for admin/mediamanager, or if all selected images are owned by current user
+  $: canDelete = $currentUser?.role === 'admin'
+    || $currentUser?.role === 'mediamanager'
+    || [...$selectedItems].every(id => {
+        const img = $galleryImages.find(i => i.id === id);
+        return !img || img.owner_id == null || img.owner_id === $currentUser?.id;
+      });
 
   let showEditModal = false;
   let showConvertModal = false;
@@ -93,7 +100,11 @@
         {/if}
       </div>
 
-      <button class="danger" on:click={batchDelete}>🗑 {$t('delete')}</button>
+      {#if canDelete}
+        <button class="danger" on:click={batchDelete}>🗑 {$t('delete')}</button>
+      {:else}
+        <button class="danger" disabled title="You can only delete images you own">🗑 {$t('delete')} (limited)</button>
+      {/if}
       <button on:click={clearSelection} title={$t('cancel')}>✕</button>
     {/if}
   </div>

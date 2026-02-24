@@ -34,7 +34,7 @@
 
   // Add-to-DB / upload / ingest progress
   let adding = false;
-  let addProgress = { total: 0, done: 0, errors: 0, current: '' };
+  let addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '' };
   let addDone = false;
   let addStream = null;
   let addErrorList = []; // [{name, error}] for upload failures
@@ -277,9 +277,18 @@
         adding = false;
         addDone = true;
         addStream = null;
+        addProgress = { ...addProgress, skipped: event.skipped ?? 0 };
         backgroundTask.set(null);
         galleryRefreshTick.update(n => n + 1);
         browse(currentPath);
+      } else if (event.skipped) {
+        addProgress = {
+          ...addProgress,
+          done:    event.index,
+          current: event.path?.split('/').pop() || '',
+          skipped: addProgress.skipped + 1,
+        };
+        backgroundTask.set({ label: 'Adding to DB', done: event.index, total: addProgress.total });
       } else {
         addProgress = {
           ...addProgress,
@@ -948,8 +957,9 @@
       {:else if addDone}
         <div class="done-block">
           <span class="done-msg">
-            ✅ {addProgress.done - addProgress.errors} image{(addProgress.done - addProgress.errors) === 1 ? '' : 's'}
+            ✅ {addProgress.done - addProgress.errors - addProgress.skipped} image{(addProgress.done - addProgress.errors - addProgress.skipped) === 1 ? '' : 's'}
             {cloudMode ? 'fetched from cloud' : localMode ? 'uploaded' : 'processed'} OK.
+            {#if addProgress.skipped > 0}<span class="skip-count">{addProgress.skipped} already in DB.</span>{/if}
             {#if addProgress.errors > 0}<span class="err-count">{addProgress.errors} failed.</span>{/if}
           </span>
           {#if addErrorList.length > 0}
@@ -1283,6 +1293,7 @@
   }
   .prog-bar { height: 100%; background: #4a6fa5; transition: width 0.2s; }
   .err-count  { color: #e06060; margin-left: 4px; }
+  .skip-count { color: #8090b0; margin-left: 4px; }
   .done-block { display: flex; flex-direction: column; gap: 6px; flex: 1; }
   .done-msg   { font-size: 12px; color: #50c878; }
   .btn-sm     { font-size: 11px; padding: 4px 10px; align-self: flex-start; }

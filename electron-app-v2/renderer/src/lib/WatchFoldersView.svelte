@@ -94,6 +94,15 @@
       } else if (event.done) {
         scanStreams = { ...scanStreams, [folder.id]: null };
         scanDone    = { ...scanDone,   [folder.id]: true };
+        // Store final added/errors counts from done event (authoritative)
+        scanProgress = {
+          ...scanProgress,
+          [folder.id]: {
+            ...scanProgress[folder.id],
+            done:   event.added ?? scanProgress[folder.id]?.done ?? 0,
+            errors: event.errors ?? scanProgress[folder.id]?.errors ?? 0,
+          },
+        };
         load();  // refresh stats
       } else {
         scanProgress = {

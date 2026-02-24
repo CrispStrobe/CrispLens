@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { t, allAlbums } from '../stores.js';
+  import { t, allAlbums, currentUser } from '../stores.js';
 
   export let x = 0;
   export let y = 0;
@@ -14,6 +14,12 @@
   $: people = item?.people_names
     ? item.people_names.split(',').map(n => n.trim()).filter(Boolean)
     : [];
+
+  // Delete is allowed for admin/mediamanager, or if the user owns the image (or it has no owner)
+  $: canDelete = $currentUser?.role === 'admin'
+    || $currentUser?.role === 'mediamanager'
+    || item?.owner_id == null
+    || item?.owner_id === $currentUser?.id;
 
   function close() { dispatch('close'); }
 
@@ -85,7 +91,11 @@
   <div class="divider"></div>
   <button on:click={() => handleAction('copy-path')}>📋 Copy file path</button>
   <div class="divider"></div>
-  <button class="danger" on:click={() => handleAction('delete')}>🗑 {$t('delete')}</button>
+  {#if canDelete}
+    <button class="danger" on:click={() => handleAction('delete')}>🗑 {$t('delete')}</button>
+  {:else}
+    <button class="disabled" title="You don't own this image" disabled>🗑 {$t('delete')} (not yours)</button>
+  {/if}
 </div>
 
 <style>
@@ -117,6 +127,7 @@
   }
   button:hover { background: #3a3a5a; color: #a0c4ff; }
   button.danger:hover { background: #5a2a2a; color: #ff8a8a; }
+  button.disabled { color: #404050; cursor: not-allowed; opacity: 0.5; }
   .divider { height: 1px; background: #3a3a5a; margin: 4px; }
 
   .section-label {

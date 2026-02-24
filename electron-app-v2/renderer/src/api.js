@@ -300,15 +300,16 @@ export function scanPhash(onEvent) {
 
 /**
  * Request a cleanup script from the server and trigger a browser download.
- * files: [{origin_path, server_path, filename}] — collected before resolve (DB records deleted by then)
+ * files: [{origin_path, server_path, kept_origin_path, filename}]
  * format: 'bash' | 'powershell' | 'json'
+ * action: 'trash' | 'delete' | 'symlink'
  */
-export async function downloadCleanupScript(files, format = 'bash') {
+export async function downloadCleanupScript(files, format = 'bash', action = 'trash') {
   const resp = await fetch(`${BASE}/duplicates/cleanup-script`, {
     method:      'POST',
     headers:     { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body:         JSON.stringify({ files, format }),
+    body:         JSON.stringify({ files, format, action }),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
