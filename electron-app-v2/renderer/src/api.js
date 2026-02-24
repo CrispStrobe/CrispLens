@@ -63,8 +63,9 @@ export function fetchExif(id)     { return get(`/images/${id}/exif`); }
 export function fetchImageFaces(id) { return get(`/images/${id}/faces`); }
 export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
 export function clearIdentifications(imageId) { return post(`/images/${imageId}/clear-identifications`, {}); }
-export function reDetectFaces(imageId, params = { det_thresh: 0.7, min_face_size: 60, rec_thresh: 0.4 }) {
-  return post(`/images/${imageId}/re-detect`, params);
+export function reDetectFaces(imageId, params = {}) {
+  const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true };
+  return post(`/images/${imageId}/re-detect`, { ...defaults, ...params });
 }
 export function addManualFace(imageId, bbox, rec_thresh = null) {
   return post(`/images/${imageId}/faces/manual`, { bbox, rec_thresh });
@@ -87,8 +88,8 @@ export function searchImages(q, limit = 50) {
 
 // ── Processing ────────────────────────────────────────────────────────────────
 
-export function processSingle(filepath, force = false) {
-  return post('/process/single', { filepath, force });
+export function processSingle(filepath, force = false, skipFaces = false, skipVlm = false) {
+  return post('/process/single', { filepath, force, skip_faces: skipFaces, skip_vlm: skipVlm });
 }
 
 export function trainPerson(person_name, image_paths) {

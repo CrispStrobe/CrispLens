@@ -18,6 +18,7 @@
   let isProcessing = false;
   let progressIdx = 0;
   let showAlbumDropdown = false;
+  let rescanMode = 'both'; // 'both' | 'faces' | 'vlm'
 
   function clearSelection() {
     selectedItems.set(new Set());
@@ -37,9 +38,11 @@
   async function batchRescan() {
     isProcessing = true;
     progressIdx = 0;
+    const skipFaces = rescanMode === 'vlm';
+    const skipVlm   = rescanMode === 'faces';
     for (const id of $selectedItems) {
       const img = $galleryImages.find(i => i.id === id);
-      if (img) await processSingle(img.filepath, true);
+      if (img) await processSingle(img.filepath, true, skipFaces, skipVlm);
       progressIdx++;
     }
     location.reload();
@@ -77,7 +80,14 @@
     {:else}
       <span class="count">{count} {$t('selection')}</span>
       <button on:click={() => showEditModal = true}>✏️ {$t('edit')}</button>
-      <button on:click={batchRescan}>🔄 Rescan</button>
+      <div class="rescan-group" on:click|stopPropagation>
+        <div class="rescan-mode-tabs">
+          <button class="mode-tab" class:active={rescanMode === 'both'}  on:click={() => rescanMode = 'both'}>Both</button>
+          <button class="mode-tab" class:active={rescanMode === 'faces'} on:click={() => rescanMode = 'faces'}>Faces</button>
+          <button class="mode-tab" class:active={rescanMode === 'vlm'}   on:click={() => rescanMode = 'vlm'}>VLM</button>
+        </div>
+        <button class="rescan-btn" on:click={batchRescan}>🔄</button>
+      </div>
       <button on:click={() => showConvertModal = true}>🔁 Convert</button>
 
       <!-- Add to Album button + dropdown -->
@@ -195,4 +205,37 @@
   }
 
   .dim { color: #505070; font-size: 10px; }
+
+  .rescan-group {
+    display: flex;
+    align-items: center;
+    background: #1e1e32;
+    border: 1px solid #3a3a5a;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .rescan-mode-tabs {
+    display: flex;
+  }
+  .mode-tab {
+    background: transparent;
+    color: #6070a0;
+    border: none;
+    border-right: 1px solid #3a3a5a;
+    border-radius: 0;
+    padding: 4px 8px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .mode-tab:hover { background: #2a2a48; color: #a0c4ff; }
+  .mode-tab.active { background: #2a3a6a; color: #80b4ff; font-weight: 600; }
+  .rescan-btn {
+    background: transparent;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 0;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .rescan-btn:hover { background: #2a3a5a; }
 </style>

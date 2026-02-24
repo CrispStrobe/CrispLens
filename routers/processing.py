@@ -38,8 +38,10 @@ def _state_with_engine():
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class SingleRequest(BaseModel):
-    filepath: str
-    force:    bool = False
+    filepath:   str
+    force:      bool = False
+    skip_faces: bool = False   # True = re-run VLM only
+    skip_vlm:   bool = False   # True = re-run face detection only
 
 class BatchRequest(BaseModel):
     folder:    str
@@ -82,7 +84,10 @@ def process_single(body: SingleRequest, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="File not found")
     try:
         vlm = get_effective_vlm_provider(user, s)
-        result = s.engine.process_image(body.filepath, vlm, force=body.force)
+        result = s.engine.process_image(
+            body.filepath, vlm, force=body.force,
+            skip_faces=body.skip_faces, skip_vlm=body.skip_vlm,
+        )
         return {"ok": True, "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

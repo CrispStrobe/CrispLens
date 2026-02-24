@@ -184,7 +184,7 @@ class FaceRecognitionConfig:
         # InsightFace settings
         insightface_config = config.get('insightface', {})
         self.model = insightface_config.get('model', self.MODEL_BUFFALO_L)
-        self.detection_threshold = insightface_config.get('detection_threshold', 0.7)
+        self.detection_threshold = insightface_config.get('detection_threshold', 0.5)
         self.recognition_threshold = insightface_config.get('recognition_threshold', 0.4)
         
         # Load det_size (can be int or list of 2 ints)
@@ -722,10 +722,12 @@ class FaceRecognitionEngine:
             # Use provided threshold or global config
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
 
-            # ── CRITICAL: push threshold into the model's NMS so it pre-filters, ──
-            # ── not just our post-filter below.                                  ──
+            # Set NMS floor low so InsightFace returns ALL candidates above noise;
+            # the post-filter loop below applies the effective threshold.
+            # Previously we pushed `threshold` here, which silently dropped faces
+            # scoring 0.625–0.637 when threshold=0.70 — the main cause of missed detections.
             if hasattr(self.face_analyzer.det_model, 'det_thresh'):
-                self.face_analyzer.det_model.det_thresh = threshold
+                self.face_analyzer.det_model.det_thresh = 0.05
 
             logger.info(f"  🎯 Detection: image={w}x{h}px  det_size={det_size}  det_thresh={threshold:.2f}  min_face={self.config.min_face_size}px")
 
@@ -882,45 +884,74 @@ class FaceRecognitionEngine:
             return []
         
         try:
-            # Detect based on backend
+            height, width = image.shape[:2]
+            mfs = min_face_size if min_face_size is not None else self.config.min_face_size
+
+            def _apply_filters(raw_faces: List) -> List:
+                """Apply quality and size filters. Bbox is normalised 0-1 so original
+                image dimensions are correct even for faces found in a downscaled copy."""
+                result = []
+                for face in raw_faces:
+                    if face.quality < self.config.min_face_quality:
+                        continue
+                    bp = face.bbox.to_pixels(width, height)
+                    fw = bp[1] - bp[3]   # right - left
+                    fh = bp[2] - bp[0]   # bottom - top
+                    if fw < mfs or fh < mfs:
+                        logger.info(f"  Face rejected: too small ({fw}x{fh}px < {mfs}px min)")
+                        continue
+                    if self.config.max_face_size > 0:
+                        if fw > self.config.max_face_size or fh > self.config.max_face_size:
+                            continue
+                    result.append(face)
+                return result
+
+            # ── Initial detection ──────────────────────────────────────────────────
             if self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE:
                 faces = self._detect_faces_insightface(image, det_thresh=det_thresh)
             else:
                 faces = self._detect_faces_dlib(image)
-            
-            # Filter by quality and size
-            filtered_faces = []
-            height, width = image.shape[:2]
-            
-            # Use provided min size or global config
-            mfs = min_face_size if min_face_size is not None else self.config.min_face_size
 
-            for face in faces:
-                # Check quality
-                if face.quality < self.config.min_face_quality:
-                    continue
-                
-                # Check size
-                bbox_pixels = face.bbox.to_pixels(width, height)
-                face_width = bbox_pixels[1] - bbox_pixels[3]
-                face_height = bbox_pixels[2] - bbox_pixels[0]
-                
-                if face_width < mfs or face_height < mfs:
-                    logger.info(f"  Face rejected: too small ({face_width}x{face_height}px < {mfs}px min)")
-                    continue
-                
-                if self.config.max_face_size > 0:
-                    if face_width > self.config.max_face_size or face_height > self.config.max_face_size:
-                        continue
-                
-                filtered_faces.append(face)
-            
+            filtered_faces = _apply_filters(faces)
+
+            # ── Auto-retry: lower threshold sweep when nothing found ───────────────
+            # Only kick in when the caller did not supply an explicit threshold, so we
+            # don't override intentional manual re-detects.
+            if (not filtered_faces
+                    and det_thresh is None
+                    and self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE):
+
+                for retry_thresh in [0.40, 0.30]:
+                    logger.info(f"  🔄 No faces at default threshold — retrying at {retry_thresh:.2f}")
+                    raw = self._detect_faces_insightface(image, det_thresh=retry_thresh)
+                    filtered_faces = _apply_filters(raw)
+                    if filtered_faces:
+                        break
+
+                # ── Scale-retry: downsample image if all threshold attempts failed ──
+                # InsightFace anchor-based detectors sometimes find faces at a
+                # different spatial scale.  Normalised bboxes are scale-invariant so
+                # no coordinate adjustment is needed.
+                if not filtered_faces:
+                    for scale in [0.75, 0.50]:
+                        sh, sw = int(height * scale), int(width * scale)
+                        scaled = cv2.resize(image, (sw, sh), interpolation=cv2.INTER_AREA)
+                        logger.info(f"  🔍 Scale-retry at {int(scale * 100)}% ({sw}×{sh}px)")
+                        for retry_thresh in [0.50, 0.40, 0.30]:
+                            raw = self._detect_faces_insightface(scaled, det_thresh=retry_thresh)
+                            filtered_faces = _apply_filters(raw)
+                            if filtered_faces:
+                                logger.info(f"  ✓ Found {len(filtered_faces)} face(s) at scale {int(scale*100)}%, thresh {retry_thresh:.2f}")
+                                break
+                        if filtered_faces:
+                            break
+
             # Limit number of faces
             if self.config.max_faces_per_image > 0:
                 filtered_faces = filtered_faces[:self.config.max_faces_per_image]
-            
+
             return filtered_faces
-        
+
         except Exception as e:
             logger.error(f"Face detection failed: {e}")
             return []
@@ -1013,18 +1044,22 @@ class FaceRecognitionEngine:
     
     def process_image(self, image_path: str, vlm_provider=None, force: bool = False,
                      det_thresh: Optional[float] = None, min_face_size: Optional[int] = None,
-                     rec_thresh: Optional[float] = None) -> Dict[str, Any]:
+                     rec_thresh: Optional[float] = None,
+                     skip_faces: bool = False, skip_vlm: bool = False) -> Dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
-        
+
         Args:
-            image_path: Path to image file
+            image_path:  Path to image file
             vlm_provider: Optional VLM provider for enrichment
-            force: If True, re-process even if already in DB
-            det_thresh: Optional detection threshold override
+            force:       If True, re-process even if already in DB
+            det_thresh:  Optional detection threshold override
             min_face_size: Optional minimum face size override
-            rec_thresh: Optional recognition threshold override
-        
+            rec_thresh:  Optional recognition threshold override
+            skip_faces:  If True, skip face detection/recognition/storage
+                         (existing face rows are left untouched)
+            skip_vlm:    If True, skip VLM enrichment step
+
         Returns:
             Processing results dictionary
         """
@@ -1091,31 +1126,31 @@ class FaceRecognitionEngine:
                     logger.info(f"  ⏭️  Duplicate content detected (id={image_id}), returning cached result")
                     return self._build_cached_result(image_id, image_path)
 
-            # Detect faces
-            faces = self.detect_faces(image, det_thresh=det_thresh, min_face_size=min_face_size)
-            logger.info(f"  👤 Detected {len(faces)} faces")
-            
-            # Recognize faces
-            h_img, w_img = image.shape[:2]
-            recognitions_by_face = []
-            for i, face in enumerate(faces):
-                y1_px, x2_px, y2_px, x1_px = face.bbox.to_pixels(w_img, h_img)
-                fw = x2_px - x1_px
-                fh = y2_px - y1_px
-                logger.info(
-                    f"    Recognizing face {i+1}/{len(faces)}: "
-                    f"x=[{x1_px}–{x2_px}] y=[{y1_px}–{y2_px}] size={fw}x{fh}px  det={face.detection_confidence:.3f}"
-                )
-                recognitions = self.recognize_face(face, top_k=1, rec_thresh=rec_thresh)
-                recognitions_by_face.append(recognitions[0] if recognitions else None)
-            
-            logger.info("  📥 Storing faces in database...")
-            # Store faces in database
-            self._store_faces(image_id, faces, recognitions_by_face)
-            
-            # VLM enrichment
+            # ── Face detection & recognition ───────────────────────────────────
+            faces: List = []
+            recognitions_by_face: List = []
+            if not skip_faces:
+                faces = self.detect_faces(image, det_thresh=det_thresh, min_face_size=min_face_size)
+                logger.info(f"  👤 Detected {len(faces)} faces")
+                h_img, w_img = image.shape[:2]
+                for i, face in enumerate(faces):
+                    y1_px, x2_px, y2_px, x1_px = face.bbox.to_pixels(w_img, h_img)
+                    fw = x2_px - x1_px
+                    fh = y2_px - y1_px
+                    logger.info(
+                        f"    Recognizing face {i+1}/{len(faces)}: "
+                        f"x=[{x1_px}–{x2_px}] y=[{y1_px}–{y2_px}] size={fw}x{fh}px  det={face.detection_confidence:.3f}"
+                    )
+                    recognitions = self.recognize_face(face, top_k=1, rec_thresh=rec_thresh)
+                    recognitions_by_face.append(recognitions[0] if recognitions else None)
+                logger.info("  📥 Storing faces in database...")
+                self._store_faces(image_id, faces, recognitions_by_face)
+            else:
+                logger.info("  ⏭️  skip_faces=True — face detection skipped")
+
+            # ── VLM enrichment ─────────────────────────────────────────────────
             vlm_result = None
-            if vlm_provider:
+            if vlm_provider and not skip_vlm:
                 logger.info(f"Calling VLM provider for: {image_path}")
                 try:
                     from i18n import i18n
@@ -1125,6 +1160,8 @@ class FaceRecognitionEngine:
                         self._update_image_vlm(image_id, vlm_result)
                 except Exception as e:
                     logger.warning(f"VLM enrichment failed: {e}")
+            elif skip_vlm:
+                logger.debug("  ⏭️  skip_vlm=True — VLM enrichment skipped")
             else:
                 logger.debug("VLM provider not enabled, skipping enrichment")
             

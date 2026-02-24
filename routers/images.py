@@ -72,9 +72,10 @@ class RotateRequest(BaseModel):
     direction: str  # 'cw' | 'ccw' | 'flip_h' | 'flip_v'
 
 class ReDetectRequest(BaseModel):
-    det_thresh: float = 0.6
-    min_face_size: int = 20
-    rec_thresh: float = 0.4
+    det_thresh:    float = 0.5
+    min_face_size: int   = 20
+    rec_thresh:    float = 0.4
+    skip_vlm:      bool  = True   # default: re-detect faces only, don't re-run VLM
 
 class ManualAddFaceRequest(BaseModel):
     bbox: Dict[str, float]  # top, right, bottom, left
@@ -539,13 +540,14 @@ def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_
     from image_ops import re_detect_faces
     s = _state()
     _check_modify(image_id, user, s.db_path)
+    vlm_prov = None if body.skip_vlm else s.vlm_provider
     ok, msg, result = re_detect_faces(
-        s.db_path, image_id, 
-        det_thresh=body.det_thresh, 
+        s.db_path, image_id,
+        det_thresh=body.det_thresh,
         min_face_size=body.min_face_size,
         rec_thresh=body.rec_thresh,
         engine=s.engine,
-        vlm_provider=s.vlm_provider
+        vlm_provider=vlm_prov,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

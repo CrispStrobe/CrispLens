@@ -80,9 +80,10 @@
   }
 
   // Parameters for re-detection
-  let detThresh = 0.7;
+  let detThresh = 0.5;
   let minFaceSize = 60;
   let recThresh = 0.4;
+  let alsoRunVlm = false;   // when true, also re-runs VLM enrichment after face detection
   let showParams = false;
   let reDetecting = false;
 
@@ -217,9 +218,10 @@
     reDetecting = true;
     try {
       await reDetectFaces(imageId, {
-        det_thresh: detThresh,
+        det_thresh:    detThresh,
         min_face_size: minFaceSize,
-        rec_thresh: recThresh
+        rec_thresh:    recThresh,
+        skip_vlm:      !alsoRunVlm,
       });
       anyChanged = true;
       await loadFaces();
@@ -417,6 +419,10 @@
             <label for="id-rec-thresh-e">{$t('recognition_certainty')}: {recThresh}</label>
             <input id="id-rec-thresh-e" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
           </div>
+          <label class="vlm-toggle">
+            <input type="checkbox" bind:checked={alsoRunVlm} />
+            Also refresh VLM description
+          </label>
           <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
             {reDetecting ? $t('scanning') : $t('run_detection')}
           </button>
@@ -507,6 +513,10 @@
               <label for="id-rec-thresh">{$t('recognition_certainty')}: {recThresh}</label>
               <input id="id-rec-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
             </div>
+            <label class="vlm-toggle">
+              <input type="checkbox" bind:checked={alsoRunVlm} />
+              Also refresh VLM description
+            </label>
             <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
               {reDetecting ? $t('scanning') : $t('run_detection')}
             </button>
@@ -749,4 +759,14 @@
   .param-row label { color: #8090b0; }
   .param-row input[type="range"] { width: 100%; }
   .full { width: 100%; }
+  .vlm-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #7080a0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .vlm-toggle input { cursor: pointer; }
 </style>
