@@ -85,6 +85,7 @@
   let recThresh = 0.4;
   let alsoRunVlm = false;   // when true, also re-runs VLM enrichment after face detection
   let detModel = 'auto';    // detection model override
+  let maxSize = 0;          // 0 = no resize; >0 = max long-edge px before detection
   let showParams = false;
   let reDetecting = false;
 
@@ -245,6 +246,7 @@
         rec_thresh:    recThresh,
         skip_vlm:      !alsoRunVlm,
         det_model:     detModel,
+        max_size:      maxSize,
       });
       anyChanged = true;
       await loadFaces();
@@ -459,6 +461,16 @@
               {/each}
             </select>
           </div>
+          <div class="param-row">
+            <label for="id-max-size-e">{$t('downsize_before_detect')}</label>
+            <select id="id-max-size-e" bind:value={maxSize}>
+              <option value={0}>{$t('downsize_original')}</option>
+              <option value={1080}>1080 px</option>
+              <option value={1920}>1920 px</option>
+              <option value={2560}>2560 px</option>
+              <option value={3840}>3840 px</option>
+            </select>
+          </div>
           <label class="vlm-toggle">
             <input type="checkbox" bind:checked={alsoRunVlm} />
             {$t('also_run_vlm')}
@@ -559,6 +571,16 @@
                 {#each DET_MODELS as m}
                   <option value={m.value}>{$t(m.label)}</option>
                 {/each}
+              </select>
+            </div>
+            <div class="param-row">
+              <label for="id-max-size">{$t('downsize_before_detect')}</label>
+              <select id="id-max-size" bind:value={maxSize}>
+                <option value={0}>{$t('downsize_original')}</option>
+                <option value={1080}>1080 px</option>
+                <option value={1920}>1920 px</option>
+                <option value={2560}>2560 px</option>
+                <option value={3840}>3840 px</option>
               </select>
             </div>
             <label class="vlm-toggle">

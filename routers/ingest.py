@@ -127,8 +127,10 @@ async def upload_local(
     file_hash = _hashlib.sha256(data).hexdigest()
     _dedup_conn = _connect(s.db_path)
     try:
+        # Match same-user rows OR unowned rows with the same content
         _dup = _dedup_conn.execute(
-            "SELECT id, face_count FROM images WHERE file_hash = ? AND owner_id = ? AND processed = 1 LIMIT 1",
+            "SELECT id, face_count FROM images"
+            " WHERE file_hash = ? AND (owner_id = ? OR owner_id IS NULL) AND processed = 1 LIMIT 1",
             (file_hash, user.id),
         ).fetchone()
     finally:

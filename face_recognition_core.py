@@ -1114,7 +1114,7 @@ class FaceRecognitionEngine:
                      det_thresh: Optional[float] = None, min_face_size: Optional[int] = None,
                      rec_thresh: Optional[float] = None,
                      skip_faces: bool = False, skip_vlm: bool = False,
-                     det_model: str = 'auto') -> Dict[str, Any]:
+                     det_model: str = 'auto', max_size: int = 0) -> Dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
 
@@ -1176,7 +1176,26 @@ class FaceRecognitionEngine:
             # Store image in database
             image_id = self._store_image(image_path, metadata, image if self.config.store_in_db else None, thumbnail)
             if image_id is None:
-                raise ValueError(f"Failed to store image record (filepath collision with no retrievable row): {image_path}")
+                # Last resort: direct SELECT in case _store_image's recovery also failed
+                _lr_conn = None
+                try:
+                    _lr_conn = self._get_connection()
+                    _lr_row = _lr_conn.execute(
+                        "SELECT id FROM images WHERE filepath = ?", (image_path,)
+                    ).fetchone()
+                    if _lr_row:
+                        image_id = _lr_row['id']
+                    elif metadata.file_hash:
+                        _lr_row = _lr_conn.execute(
+                            "SELECT id FROM images WHERE file_hash = ?", (metadata.file_hash,)
+                        ).fetchone()
+                        if _lr_row:
+                            image_id = _lr_row['id']
+                finally:
+                    if _lr_conn:
+                        _lr_conn.close()
+            if image_id is None:
+                raise ValueError(f"Failed to store image record (no retrievable row): {image_path}")
             logger.info(f"  💾 Stored/Reused image record (id={image_id})")
 
             # If the stored row's filepath differs from image_path, the insert hit a filepath
@@ -1195,11 +1214,28 @@ class FaceRecognitionEngine:
                     logger.info(f"  ⏭️  Duplicate content detected (id={image_id}), returning cached result")
                     return self._build_cached_result(image_id, image_path)
 
+            # ── Optional in-memory downsize before detection ───────────────────
+            # max_size > 0 means: resize the image to max dimension max_size before
+            # detection (for speed on very high-res inputs).  Bboxes are normalised
+            # 0-1 so they map back to the original image automatically.  The stored
+            # file and DB record are not affected.
+            det_image = image
+            if max_size and max_size > 0:
+                dh, dw = image.shape[:2]
+                if max(dh, dw) > max_size:
+                    _scale = max_size / max(dh, dw)
+                    det_image = cv2.resize(
+                        image,
+                        (int(dw * _scale), int(dh * _scale)),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    logger.info(f"  🔽 Downsized for detection: {dw}×{dh} → {det_image.shape[1]}×{det_image.shape[0]}")
+
             # ── Face detection & recognition ───────────────────────────────────
             faces: List = []
             recognitions_by_face: List = []
             if not skip_faces:
-                faces = self.detect_faces(image, det_thresh=det_thresh, min_face_size=min_face_size, det_model=det_model)
+                faces = self.detect_faces(det_image, det_thresh=det_thresh, min_face_size=min_face_size, det_model=det_model)
                 logger.info(f"  👤 Detected {len(faces)} faces")
                 h_img, w_img = image.shape[:2]
                 for i, face in enumerate(faces):
@@ -1330,16 +1366,34 @@ class FaceRecognitionEngine:
                 conn.commit()
                 return image_id
 
-            except sqlite3.IntegrityError:
-                # filepath collision (same physical path already in DB) — return existing row id.
-                # file_hash collisions no longer occur here: after the schema migration, the
-                # column-level UNIQUE on file_hash was removed and replaced with a composite
-                # partial index UNIQUE(file_hash, owner_id) WHERE file_hash IS NOT NULL, which
-                # allows different users to each store their own copy of the same content.
-                row = conn.execute(
-                    "SELECT id FROM images WHERE filepath = ?", (filepath,)
-                ).fetchone()
-                return row['id'] if row else None
+            except sqlite3.IntegrityError as _ie:
+                # Constraint violation — could be UNIQUE on filepath OR on file_hash
+                # (if the schema migration to a composite index hasn't run yet on this server).
+                # Use a fresh connection for the recovery SELECT to avoid stale tx state.
+                logger.warning(f"_store_image IntegrityError for {filepath}: {_ie}")
+                _rc = None
+                try:
+                    _rc = sqlite3.connect(self.db_path, timeout=10.0)
+                    # Try filepath first (the most common case)
+                    _row = _rc.execute(
+                        "SELECT id FROM images WHERE filepath = ?", (filepath,)
+                    ).fetchone()
+                    if _row:
+                        return _row[0]
+                    # Fall back to file_hash match (old schema: file_hash TEXT UNIQUE)
+                    if metadata.file_hash:
+                        _row = _rc.execute(
+                            "SELECT id FROM images WHERE file_hash = ?", (metadata.file_hash,)
+                        ).fetchone()
+                        if _row:
+                            return _row[0]
+                    return None
+                except Exception as _re:
+                    logger.error(f"Recovery SELECT failed: {_re}")
+                    return None
+                finally:
+                    if _rc:
+                        _rc.close()
 
             except Exception as e:
                 logger.error(f"Failed to store image: {e}")

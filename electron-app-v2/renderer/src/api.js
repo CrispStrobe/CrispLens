@@ -65,7 +65,7 @@ export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/fac
 export function clearIdentifications(imageId) { return post(`/images/${imageId}/clear-identifications`, {}); }
 export function clearDetections(imageId) { return post(`/images/${imageId}/clear-detections`, {}); }
 export function reDetectFaces(imageId, params = {}) {
-  const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true, det_model: 'auto' };
+  const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true, det_model: 'auto', max_size: 0 };
   return post(`/images/${imageId}/re-detect`, { ...defaults, ...params });
 }
 export function addManualFace(imageId, bbox, rec_thresh = null) {
