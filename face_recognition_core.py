@@ -927,11 +927,11 @@ class FaceRecognitionEngine:
                 return _apply_filters(faces)
             elif det_model == 'yunet':
                 logger.info("  🔬 Using YuNet detector (explicit override)")
-                faces = self._detect_faces_yunet(image)
+                faces = self._detect_faces_yunet(image, det_thresh=det_thresh)
                 return _apply_filters(faces)
             elif det_model == 'mediapipe':
                 logger.info("  🔬 Using MediaPipe detector (explicit override)")
-                faces = self._detect_faces_mediapipe(image)
+                faces = self._detect_faces_mediapipe(image, det_thresh=det_thresh)
                 return _apply_filters(faces)
 
             # 'auto' and 'retinaface' → standard InsightFace pipeline
@@ -2051,6 +2051,7 @@ class FaceRecognitionEngine:
             if det_model is None:
                 logger.warning("SCRFD: face_analyzer.det_model is None — InsightFace not ready")
                 return []
+            logger.info(f"  SCRFD: using det_model class={type(det_model).__name__}")
 
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
             h, w = image.shape[:2]
@@ -2063,9 +2064,32 @@ class FaceRecognitionEngine:
                 det_size = (1280, 1280)
             else:
                 det_size = (1920, 1920)
-            det_model.input_size = det_size
+            try:
+                det_model.input_size = det_size
+            except (AttributeError, TypeError):
+                pass  # model controls its own tiling
 
-            bboxes, kpss = det_model.detect(image, thresh=0.05)
+            # InsightFace API varies across versions: some accept thresh as kwarg,
+            # others set it as an attribute or don't expose it at all.
+            import inspect as _inspect
+            _det_thresh = 0.05
+            _sig = _inspect.signature(det_model.detect)
+            if 'thresh' in _sig.parameters:
+                bboxes, kpss = det_model.detect(image, thresh=_det_thresh)
+            else:
+                # Set threshold attribute (det_thresh / threshold) before calling
+                _attr = next(
+                    (a for a in ('det_thresh', 'threshold', '_thresh')
+                     if hasattr(det_model, a)), None
+                )
+                _old = getattr(det_model, _attr) if _attr else None
+                if _attr:
+                    setattr(det_model, _attr, _det_thresh)
+                try:
+                    bboxes, kpss = det_model.detect(image)
+                finally:
+                    if _attr and _old is not None:
+                        setattr(det_model, _attr, _old)
             if bboxes is None or len(bboxes) == 0:
                 logger.info("  SCRFD: no detections")
                 return []
@@ -2100,12 +2124,11 @@ class FaceRecognitionEngine:
             logger.warning(f"SCRFD detection failed: {e}")
             return []
 
-    def _detect_faces_yunet(self, image: np.ndarray) -> List['Face']:
+    def _detect_faces_yunet(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        Fallback face detector using OpenCV YuNet (FaceDetectorYN).
-        Requires OpenCV ≥ 4.5.4.  Downloads the model file (231 KB) on first
-        use into the same directory as the database.
-        Returns Face objects with ArcFace embeddings (aligned via landmarks).
+        Face detector using OpenCV YuNet (FaceDetectorYN).
+        Requires OpenCV ≥ 4.5.4.  Downloads the model file on first use.
+        Returns Face objects with ArcFace embeddings (5-point landmark aligned).
         """
         if not YUNET_AVAILABLE:
             return []
@@ -2120,12 +2143,29 @@ class FaceRecognitionEngine:
                 logger.info(f"Downloading YuNet model → {model_path}")
                 urllib.request.urlretrieve(YUNET_URL, str(model_path))
 
+            threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
+
             h, w = image.shape[:2]
+
+            # YuNet works best at ≤1920px on the long edge.
+            # Full-res images (e.g. 7334×4892) produce many false positives because
+            # the model scans too wide a scale range.  Downsample for detection,
+            # then scale pixel bboxes back to original coords for embedding.
+            MAX_YN_DIM = 1920
+            scale = 1.0
+            det_image = image
+            if max(h, w) > MAX_YN_DIM:
+                scale = MAX_YN_DIM / max(h, w)
+                new_w, new_h = int(w * scale), int(h * scale)
+                det_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                logger.info(f"  YuNet: downsampled {w}×{h} → {new_w}×{new_h} for detection")
+
+            dh, dw = det_image.shape[:2]
             detector = cv2.FaceDetectorYN.create(
-                str(model_path), '', (w, h),
-                score_threshold=0.3, nms_threshold=0.3, top_k=100,
+                str(model_path), '', (dw, dh),
+                score_threshold=threshold, nms_threshold=0.3, top_k=100,
             )
-            _, results = detector.detect(image)
+            _, results = detector.detect(det_image)
             if results is None or len(results) == 0:
                 return []
 
@@ -2135,16 +2175,18 @@ class FaceRecognitionEngine:
                 #              nose_x, nose_y, rm_x, rm_y, lm_x, lm_y, score]
                 x, y, bw, bh = float(det[0]), float(det[1]), float(det[2]), float(det[3])
                 score = float(det[14])
+                # Scale coords back to original image resolution
+                inv = 1.0 / scale
                 bbox = BoundingBox(
-                    top=max(0.0, y / h),
-                    right=min(1.0, (x + bw) / w),
-                    bottom=min(1.0, (y + bh) / h),
-                    left=max(0.0, x / w),
+                    top=max(0.0, (y * inv) / h),
+                    right=min(1.0, ((x + bw) * inv) / w),
+                    bottom=min(1.0, ((y + bh) * inv) / h),
+                    left=max(0.0, (x * inv) / w),
                 )
                 if not bbox.is_valid():
                     continue
-                # Landmarks as (5, 2) float32: right_eye, left_eye, nose, right_mouth, left_mouth
-                lm = det[4:14].reshape(5, 2).astype(np.float32)
+                # Scale landmarks back too
+                lm = det[4:14].reshape(5, 2).astype(np.float32) * inv
                 embedding = self._embed_crop(image, bbox, landmarks=lm)
                 if embedding is None:
                     continue
@@ -2154,15 +2196,15 @@ class FaceRecognitionEngine:
                     embedding=embedding,
                     quality=score,
                 ))
-            logger.info(f"  YuNet fallback: {len(faces)} face(s) found")
+            logger.info(f"  YuNet: {len(faces)} face(s) found (score_threshold={threshold:.2f})")
             return faces
         except Exception as e:
-            logger.warning(f"YuNet fallback failed: {e}")
+            logger.warning(f"YuNet detection failed: {e}")
             return []
 
-    def _detect_faces_mediapipe(self, image: np.ndarray) -> List['Face']:
+    def _detect_faces_mediapipe(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        Fallback face detector using Google MediaPipe BlazeFace.
+        Face detector using Google MediaPipe BlazeFace.
         Requires ``pip install mediapipe``.
         Handles unusual head poses and lighting conditions well.
         Returns Face objects with ArcFace embeddings (simple crop).
@@ -2172,10 +2214,26 @@ class FaceRecognitionEngine:
         try:
             import mediapipe as mp
             h, w = image.shape[:2]
-            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
+            min_conf = max(0.1, min(0.9, threshold))
+
+            # BlazeFace is designed for images up to ~1920px on the long edge.
+            # Very high-res images (e.g. Canon R5 at 7334×4892) produce zero detections
+            # because the model's receptive field can't locate large faces.
+            # Downsample for detection only; bboxes are relative so they map back exactly.
+            MAX_MP_DIM = 1920
+            scale = 1.0
+            det_image = image
+            if max(h, w) > MAX_MP_DIM:
+                scale = MAX_MP_DIM / max(h, w)
+                new_w, new_h = int(w * scale), int(h * scale)
+                det_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                logger.info(f"  MediaPipe: downsampled {w}×{h} → {new_w}×{new_h} for detection")
+
+            rgb = cv2.cvtColor(det_image, cv2.COLOR_BGR2RGB)
             # model_selection=1 covers full-range distances (better for portraits)
             with mp.solutions.face_detection.FaceDetection(
-                model_selection=1, min_detection_confidence=0.3
+                model_selection=1, min_detection_confidence=min_conf
             ) as detector:
                 results = detector.process(rgb)
 
@@ -2185,6 +2243,7 @@ class FaceRecognitionEngine:
             faces = []
             for det in results.detections:
                 bb = det.location_data.relative_bounding_box
+                # Relative coords are already normalised — they map back to original image
                 x1 = max(0.0, bb.xmin)
                 y1 = max(0.0, bb.ymin)
                 x2 = min(1.0, bb.xmin + bb.width)
@@ -2193,6 +2252,7 @@ class FaceRecognitionEngine:
                 if not bbox.is_valid():
                     continue
                 score = float(det.score[0]) if det.score else 0.5
+                # Embed from the original full-res image for best embedding quality
                 embedding = self._embed_crop(image, bbox)
                 if embedding is None:
                     continue
@@ -2202,7 +2262,7 @@ class FaceRecognitionEngine:
                     embedding=embedding,
                     quality=score,
                 ))
-            logger.info(f"  MediaPipe fallback: {len(faces)} face(s) found")
+            logger.info(f"  MediaPipe: {len(faces)} face(s) found")
             return faces
         except Exception as e:
             logger.warning(f"MediaPipe fallback failed: {e}")
