@@ -2091,10 +2091,11 @@ class FaceRecognitionEngine:
 
     def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        SCRFD detection via face_analyzer.get() — the full InsightFace pipeline,
-        single pass (no retry sweep, no fallbacks).  buffalo_l's det_model IS
-        SCRFD-10G-KPS; using face_analyzer.get() gives calibrated det_score values
-        unlike calling det_model.detect() directly which bypasses internal preprocessing.
+        SCRFD detection via face_analyzer.get() — the full InsightFace pipeline.
+        buffalo_l's det_model IS SCRFD-10G-KPS; it was trained at 640×640.
+        Forcing det_size=(1920,1920) degrades confidence to near-zero because the
+        anchor grid is calibrated for 640×640 input.  We therefore always start at
+        640×640 and implement the same retry/scale-sweep as AUTO mode.
         """
         if not INSIGHTFACE_AVAILABLE:
             logger.warning("SCRFD: InsightFace not available")
@@ -2108,61 +2109,87 @@ class FaceRecognitionEngine:
             logger.info(f"  SCRFD: det_model class={type(det_model).__name__}")
 
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
-            h, w = image.shape[:2]
+            orig_h, orig_w = image.shape[:2]
+            NMS_FLOOR = 0.05
 
-            # Adaptive input_size — same logic as _detect_faces_insightface
-            max_dim = max(h, w)
-            if max_dim < 200:
-                det_size = (128, 128)
-            elif max_dim < 400:
-                det_size = (320, 320)
-            elif max_dim < 1200:
-                det_size = (640, 640)
-            elif max_dim < 2400:
-                det_size = (1280, 1280)
-            else:
-                det_size = (1920, 1920)
-            det_model.input_size = det_size
-
-            # NMS floor low; we apply real threshold below
-            if hasattr(det_model, 'det_thresh'):
-                det_model.det_thresh = 0.05
-
-            raw_faces = self.face_analyzer.get(image)
-            logger.info(f"  SCRFD raw: {len(raw_faces)} candidate(s)")
-
-            detected_faces = []
-            for i, face in enumerate(raw_faces):
-                bp = face.bbox.astype(int)
-                x1, y1, x2, y2 = bp[0], bp[1], bp[2], bp[3]
-                conf = float(face.det_score)
-                if conf < threshold:
-                    logger.info(f"    SCRFD candidate {i}: score={conf:.4f} < {threshold:.2f} — skipped")
-                    continue
-                norm_bbox = BoundingBox(
-                    top=max(0.0, y1 / h), right=min(1.0, x2 / w),
-                    bottom=min(1.0, y2 / h), left=max(0.0, x1 / w),
+            def _run_at(det_size: tuple, thresh: float, img: np.ndarray) -> List['Face']:
+                """Run one SCRFD pass at the given det_size and confidence floor."""
+                det_model.input_size = det_size
+                if hasattr(det_model, 'det_thresh'):
+                    det_model.det_thresh = NMS_FLOOR
+                raw = self.face_analyzer.get(img)
+                img_h, img_w = img.shape[:2]
+                logger.info(
+                    f"  SCRFD det_size={det_size} img={img_w}×{img_h}: "
+                    f"{len(raw)} raw candidates, filtering at thresh={thresh:.2f}"
                 )
-                if not norm_bbox.is_valid():
+                results = []
+                for i, face in enumerate(raw):
+                    bp = face.bbox.astype(int)
+                    x1, y1, x2, y2 = bp[0], bp[1], bp[2], bp[3]
+                    conf = float(face.det_score)
+                    if conf < thresh:
+                        logger.info(f"    candidate {i}: score={conf:.4f} < {thresh:.2f} — skipped")
+                        continue
+                    norm_bbox = BoundingBox(
+                        top=max(0.0, y1 / img_h), right=min(1.0, x2 / img_w),
+                        bottom=min(1.0, y2 / img_h), left=max(0.0, x1 / img_w),
+                    )
+                    if not norm_bbox.is_valid():
+                        continue
+                    embedding = None
+                    if face.embedding is not None:
+                        _e = face.embedding / (np.linalg.norm(face.embedding) + 1e-8)
+                        if np.any(_e):
+                            embedding = _e
+                    # For downscaled passes prefer a crop from the full-res original
+                    if img is not image:
+                        embedding = self._embed_crop(image, norm_bbox) or embedding
+                    if embedding is None:
+                        embedding = self._embed_crop(img, norm_bbox)
+                    if embedding is None:
+                        continue
+                    kps = getattr(face, 'kps', None)
+                    lm = np.array(kps, dtype=np.float32) if kps is not None else None
+                    logger.info(f"    candidate {i}: score={conf:.4f}  bbox=[{x1},{y1},{x2},{y2}]  ✓")
+                    results.append(Face(
+                        bbox=norm_bbox,
+                        detection_confidence=conf,
+                        embedding=embedding,
+                        quality=conf,
+                        landmarks=lm,
+                    ))
+                return results
+
+            # ── Pass 1: native 640×640 at user threshold ──────────────────────
+            faces = _run_at((640, 640), threshold, image)
+            if faces:
+                return faces
+
+            # ── Pass 2: lower thresholds at 640×640 ───────────────────────────
+            for retry_thresh in [0.30, 0.20, 0.10]:
+                if retry_thresh >= threshold:
                     continue
-                embedding = None
-                if face.embedding is not None:
-                    embedding = face.embedding / (np.linalg.norm(face.embedding) + 1e-8)
-                if embedding is None:
-                    embedding = self._embed_crop(image, norm_bbox)
-                if embedding is None:
-                    continue
-                kps = getattr(face, 'kps', None)
-                landmarks_np = np.array(kps, dtype=np.float32) if kps is not None else None
-                logger.info(f"    SCRFD candidate {i}: score={conf:.4f}  bbox=[{x1},{y1},{x2},{y2}]  ✓")
-                detected_faces.append(Face(
-                    bbox=norm_bbox,
-                    detection_confidence=conf,
-                    embedding=embedding,
-                    quality=conf,
-                    landmarks=landmarks_np,
-                ))
-            return detected_faces
+                faces = _run_at((640, 640), retry_thresh, image)
+                if faces:
+                    logger.info(f"  SCRFD: found {len(faces)} face(s) at thresh={retry_thresh:.2f}")
+                    return faces
+
+            # ── Pass 3: scale-retry (downsample image) ─────────────────────────
+            for scale in [0.75, 0.50]:
+                sh, sw = int(orig_h * scale), int(orig_w * scale)
+                scaled = cv2.resize(image, (sw, sh), interpolation=cv2.INTER_AREA)
+                logger.info(f"  SCRFD scale-retry at {int(scale*100)}% ({sw}×{sh}px)")
+                for retry_thresh in [0.20, 0.10]:
+                    faces = _run_at((640, 640), retry_thresh, scaled)
+                    if faces:
+                        logger.info(
+                            f"  SCRFD: found {len(faces)} face(s) at scale={int(scale*100)}%"
+                            f", thresh={retry_thresh:.2f}"
+                        )
+                        return faces
+
+            return []
         except Exception as e:
             logger.warning(f"SCRFD detection failed: {e}")
             return []

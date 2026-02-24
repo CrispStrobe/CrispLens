@@ -463,13 +463,8 @@
           </div>
           <div class="param-row">
             <label for="id-max-size-e">{$t('downsize_before_detect')}</label>
-            <select id="id-max-size-e" bind:value={maxSize}>
-              <option value={0}>{$t('downsize_original')}</option>
-              <option value={1080}>1080 px</option>
-              <option value={1920}>1920 px</option>
-              <option value={2560}>2560 px</option>
-              <option value={3840}>3840 px</option>
-            </select>
+            <input id="id-max-size-e" type="number" bind:value={maxSize}
+              min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
           </div>
           <label class="vlm-toggle">
             <input type="checkbox" bind:checked={alsoRunVlm} />
@@ -575,13 +570,8 @@
             </div>
             <div class="param-row">
               <label for="id-max-size">{$t('downsize_before_detect')}</label>
-              <select id="id-max-size" bind:value={maxSize}>
-                <option value={0}>{$t('downsize_original')}</option>
-                <option value={1080}>1080 px</option>
-                <option value={1920}>1920 px</option>
-                <option value={2560}>2560 px</option>
-                <option value={3840}>3840 px</option>
-              </select>
+              <input id="id-max-size" type="number" bind:value={maxSize}
+                min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
             </div>
             <label class="vlm-toggle">
               <input type="checkbox" bind:checked={alsoRunVlm} />
