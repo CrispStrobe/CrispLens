@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
   import { allPeople, t } from '../stores.js';
-  import { fetchImageFaces, fetchPeople, previewUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
+  import { fetchImageFaces, fetchPeople, previewUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
 
   export let imageId;
 
@@ -223,6 +223,17 @@
     }
   }
 
+  async function onClearDetections() {
+    if (!confirm($t('clear_all_detections') + '?')) return;
+    try {
+      await clearDetections(imageId);
+      anyChanged = true;
+      await loadFaces();
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
+  }
+
   async function onReDetect() {
     reDetecting = true;
     // Persist the chosen model as the user's default (best-effort, silent on failure)
@@ -406,10 +417,15 @@
         💡 {$t('drag_to_mark_face')}
       </div>
 
-      {#if faces.some(f => f.person_id)}
+      {#if faces.length > 0}
         <div class="clear-bar">
-          <button class="btn-danger-sm" on:click={onClearIdentifications}>
-            🗑 {$t('clear_all_identifications')}
+          {#if faces.some(f => f.person_id)}
+            <button class="btn-danger-sm" on:click={onClearIdentifications}>
+              🗑 {$t('clear_all_identifications')}
+            </button>
+          {/if}
+          <button class="btn-danger-sm" on:click={onClearDetections}>
+            ✕ {$t('clear_all_detections')}
           </button>
         </div>
       {/if}
@@ -537,9 +553,17 @@
               <label for="id-rec-thresh">{$t('recognition_certainty')}: {recThresh}</label>
               <input id="id-rec-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
             </div>
+            <div class="param-row">
+              <label for="id-det-model">{$t('detection_model')}</label>
+              <select id="id-det-model" bind:value={detModel}>
+                {#each DET_MODELS as m}
+                  <option value={m.value}>{$t(m.label)}</option>
+                {/each}
+              </select>
+            </div>
             <label class="vlm-toggle">
               <input type="checkbox" bind:checked={alsoRunVlm} />
-              Also refresh VLM description
+              {$t('also_run_vlm')}
             </label>
             <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
               {reDetecting ? $t('scanning') : $t('run_detection')}

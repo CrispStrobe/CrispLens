@@ -260,33 +260,24 @@ def get_preview(image_id: int, user=Depends(get_current_user)):
         logger.error(f"Image {image_id} file not found on disk: {filepath}")
         raise HTTPException(status_code=404, detail="Image file not found on disk")
 
-    # If it's already a standard web format, serve directly
-    ext = Path(filepath).suffix.lower()
-    if ext in ('.jpg', '.jpeg', '.png', '.webp'):
-        logger.debug(f"Serving standard web format directly: {ext}")
-        return FileResponse(filepath)
-    
-    # Otherwise, convert to JPEG in memory and serve
-    from PIL import Image
+    # Always serve as JPEG with EXIF orientation baked in.
+    # Serving the raw JPEG file directly would rely on browser EXIF support which
+    # is inconsistent; baking the rotation ensures every client sees the correct
+    # orientation and bbox coordinates stay aligned.
+    from PIL import Image, ImageOps
     import io
+    ext = Path(filepath).suffix.lower()
     try:
-        logger.debug(f"Converting non-standard format {ext} to JPEG...")
+        logger.debug(f"Generating oriented preview for {ext}...")
         with Image.open(filepath) as img:
-            # Respect EXIF orientation if it exists
-            try:
-                from PIL import ImageOps
-                img = ImageOps.exif_transpose(img)
-            except Exception:
-                pass
-            
+            img = ImageOps.exif_transpose(img)   # bake EXIF rotation
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')
-            
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=90)
             buf.seek(0)
             from fastapi.responses import Response
-            logger.debug(f"Conversion successful, returning {buf.getbuffer().nbytes} bytes")
+            logger.debug(f"Preview ready, {buf.getbuffer().nbytes} bytes")
             return Response(content=buf.getvalue(), media_type="image/jpeg")
     except Exception as e:
         logger.error(f"Preview conversion failed for {filepath}: {e}", exc_info=True)
@@ -582,6 +573,35 @@ def clear_identifications(image_id: int, user=Depends(get_current_user)):
         except Exception:
             pass
         return {"ok": True, "cleared": affected}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/{image_id}/clear-detections")
+def clear_detections(image_id: int, user=Depends(get_current_user)):
+    """Delete ALL face detection rows for this image (boxes + embeddings gone)."""
+    s = _state()
+    _check_modify(image_id, user, s.db_path)
+    conn = None
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(s.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM faces WHERE image_id = ?", (image_id,))
+        deleted = conn.execute("SELECT changes() as n").fetchone()[0]
+        conn.execute(
+            "UPDATE images SET face_count = 0, processed = 0 WHERE id = ?", (image_id,)
+        )
+        conn.commit()
+        try:
+            s.engine._load_faiss_index()
+        except Exception:
+            pass
+        return {"ok": True, "deleted": deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

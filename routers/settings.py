@@ -129,6 +129,7 @@ _DE: dict = {
     'lower_threshold_hint': 'Niedrigerer Schwellwert = mehr Ergebnisse',
     'recognition_certainty': 'Gewissheit', 'conf_short': 'Konf',
     'clear_all_identifications': 'Alle Identifikationen löschen',
+    'clear_all_detections': 'Alle Erkennungen löschen',
     'drag_to_mark_face': 'Ziehen um Gesicht zu markieren',
     # Train
     'browse_button': 'Durchsuchen',
@@ -414,7 +415,14 @@ def put_user_detection(body: UserDetPrefs, user=Depends(get_current_user)):
     conn = None
     try:
         conn = _sqlite3.connect(s.db_path)
-        conn.execute('UPDATE users SET det_model = ? WHERE id = ?', (body.det_model, user.id))
+        try:
+            conn.execute('UPDATE users SET det_model = ? WHERE id = ?', (body.det_model, user.id))
+        except _sqlite3.OperationalError as col_err:
+            if 'no column named det_model' in str(col_err) or 'no such column' in str(col_err):
+                conn.execute('ALTER TABLE users ADD COLUMN det_model TEXT')
+                conn.execute('UPDATE users SET det_model = ? WHERE id = ?', (body.det_model, user.id))
+            else:
+                raise
         conn.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save detection preferences: {e}")

@@ -652,8 +652,10 @@ def get_or_create_thumbnail(
         return str(thumb_path)
 
     try:
+        from PIL import ImageOps as _ImageOps
         Path(thumb_dir).mkdir(parents=True, exist_ok=True)
         with Image.open(filepath) as img:
+            img = _ImageOps.exif_transpose(img)   # bake EXIF rotation before resizing
             img.thumbnail((size, size), Image.LANCZOS)
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')

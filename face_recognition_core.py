@@ -2037,32 +2037,38 @@ class FaceRecognitionEngine:
 
     def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        Face detector using InsightFace SCRFD model (scrfd_10g_bnkps).
-        SCRFD is better than RetinaFace for non-frontal and occluded faces.
-        Downloads model automatically via InsightFace model zoo on first use.
-        Returns Face objects with ArcFace embeddings (5-point landmark aligned).
+        Face detector using the SCRFD model already loaded inside face_analyzer
+        (buffalo_l packs SCRFD-10G-KPS as its det_model).  We call det_model.detect()
+        directly with an adaptive input_size so large photos aren't downscaled too
+        aggressively.  Returns Face objects with ArcFace embeddings.
         """
         if not INSIGHTFACE_AVAILABLE:
             logger.warning("SCRFD: InsightFace not available")
             return []
         try:
-            from insightface.model_zoo import get_model
-
-            if not hasattr(self, '_scrfd_model') or self._scrfd_model is None:
-                logger.info("  📥 Loading SCRFD model (scrfd_10g_bnkps)…")
-                try:
-                    self._scrfd_model = get_model('scrfd_10g_bnkps', download=True)
-                    self._scrfd_model.prepare(ctx_id=0, input_size=(640, 640), det_thresh=0.05)
-                    logger.info("  ✅ SCRFD model loaded")
-                except Exception as e:
-                    logger.error(f"  ❌ Failed to load SCRFD model: {e}")
-                    self._scrfd_model = None
-                    return []
+            self._ensure_backend()
+            det_model = getattr(self.face_analyzer, 'det_model', None)
+            if det_model is None:
+                logger.warning("SCRFD: face_analyzer.det_model is None — InsightFace not ready")
+                return []
 
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
             h, w = image.shape[:2]
 
-            bboxes, kpss = self._scrfd_model.detect(image, thresh=0.05)
+            # Adaptive tile size: bigger images benefit from a larger input window
+            max_dim = max(h, w)
+            if max_dim < 1200:
+                det_size = (640, 640)
+            elif max_dim < 2400:
+                det_size = (1280, 1280)
+            else:
+                det_size = (1920, 1920)
+            det_model.input_size = det_size
+
+            bboxes, kpss = det_model.detect(image, thresh=0.05)
+            if bboxes is None or len(bboxes) == 0:
+                logger.info("  SCRFD: no detections")
+                return []
             detected_faces = []
             for i, (bbox, kps) in enumerate(zip(bboxes, kpss if kpss is not None else [None] * len(bboxes))):
                 x1, y1, x2, y2, conf = bbox
