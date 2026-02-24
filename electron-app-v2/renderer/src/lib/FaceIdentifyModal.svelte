@@ -818,6 +818,7 @@
   .param-row { display: flex; flex-direction: column; gap: 4px; }
   .param-row label { color: #8090b0; }
   .param-row input[type="range"] { width: 100%; }
+  .num-input { width: 100%; padding: 4px 6px; background: #1a2030; border: 1px solid #3a4a60; border-radius: 4px; color: #c8d8f0; font-size: 12px; }
   .full { width: 100%; }
   .vlm-toggle {
     display: flex;
