@@ -2282,15 +2282,15 @@ class FaceRecognitionEngine:
             return []
         try:
             import mediapipe as mp
+            import tempfile, os
             h, w = image.shape[:2]
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
-            min_conf = max(0.1, min(0.9, float(threshold)))
+            # Use a very low floor so we can see EVERYTHING the model finds;
+            # we apply the real threshold ourselves in detect_faces().
+            min_conf = max(0.05, min(0.9, float(threshold)))
 
-            # BlazeFace works best at ≤1920px — downsample large images for detection.
-            # Tasks API bboxes are in pixel coords of the (possibly downsampled) image;
-            # we normalise them ourselves so they reference the original resolution.
+            # BlazeFace works best at ≤1920px — downsample large images.
             MAX_MP_DIM = 1920
-            scale = 1.0
             det_image = image
             if max(h, w) > MAX_MP_DIM:
                 scale = MAX_MP_DIM / max(h, w)
@@ -2299,22 +2299,50 @@ class FaceRecognitionEngine:
                 logger.info(f"  MediaPipe: downsampled {w}×{h} → {new_w}×{new_h}")
             dh, dw = det_image.shape[:2]
 
-            # Download tflite model on first use
+            # Download/re-download tflite model (re-download if file is too small = truncated)
             model_path = Path(self.db_path).parent / 'blaze_face_short_range.tflite'
-            if not model_path.exists():
+            EXPECTED_MIN_BYTES = 800_000   # real file is ~2.8 MB; <800 KB means corrupt
+            needs_download = (
+                not model_path.exists()
+                or model_path.stat().st_size < EXPECTED_MIN_BYTES
+            )
+            if needs_download:
                 import urllib.request
                 url = ('https://storage.googleapis.com/mediapipe-models/'
                        'face_detector/blaze_face_short_range/float16/1/'
                        'blaze_face_short_range.tflite')
-                logger.info(f"Downloading MediaPipe model → {model_path}")
+                logger.info(f"  MediaPipe: downloading model → {model_path}")
                 urllib.request.urlretrieve(url, str(model_path))
+
+            model_bytes = model_path.stat().st_size
+            logger.info(
+                f"  MediaPipe: model={model_path.name} ({model_bytes:,} B), "
+                f"img={dw}×{dh}, min_conf={min_conf:.2f}"
+            )
 
             # Tasks API (mediapipe ≥ 0.10)
             from mediapipe.tasks import python as _mp_py
             from mediapipe.tasks.python import vision as _mp_vis
 
-            rgb = cv2.cvtColor(det_image, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            # Write detection image to a temp file and use create_from_file() —
+            # this matches the official example exactly and avoids any numpy-array
+            # format/contiguity issues with the mp.Image() constructor.
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    tmp_path = tmp.name
+                # Save as JPEG (already EXIF-corrected since _load_image applied exif_transpose)
+                from PIL import Image as _PILImage
+                rgb = cv2.cvtColor(det_image, cv2.COLOR_BGR2RGB)
+                _PILImage.fromarray(rgb).save(tmp_path, 'JPEG', quality=95)
+
+                mp_image = mp.Image.create_from_file(tmp_path)
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
             base_opts = _mp_py.BaseOptions(model_asset_path=str(model_path))
             opts = _mp_vis.FaceDetectorOptions(
@@ -2327,7 +2355,9 @@ class FaceRecognitionEngine:
             finally:
                 detector.close()
 
-            if not result or not result.detections:
+            n_raw = len(result.detections) if result and result.detections else 0
+            logger.info(f"  MediaPipe: {n_raw} raw detection(s) (min_conf={min_conf:.2f})")
+            if not n_raw:
                 return []
 
             faces = []
@@ -2351,10 +2381,10 @@ class FaceRecognitionEngine:
                     embedding=embedding,
                     quality=score,
                 ))
-            logger.info(f"  MediaPipe: {len(faces)} face(s) found (min_conf={min_conf:.2f})")
+            logger.info(f"  MediaPipe: {len(faces)} face(s) accepted")
             return faces
         except Exception as e:
-            logger.warning(f"MediaPipe detection failed: {e}")
+            logger.warning(f"MediaPipe detection failed: {e}", exc_info=True)
             return []
 
     def add_manual_face(self, image_id: int, bbox_dict: Dict[str, float], rec_thresh: Optional[float] = None) -> Dict[str, Any]:
