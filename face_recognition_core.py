@@ -2037,10 +2037,10 @@ class FaceRecognitionEngine:
 
     def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        Face detector using the SCRFD model already loaded inside face_analyzer
-        (buffalo_l packs SCRFD-10G-KPS as its det_model).  We call det_model.detect()
-        directly with an adaptive input_size so large photos aren't downscaled too
-        aggressively.  Returns Face objects with ArcFace embeddings.
+        SCRFD detection via face_analyzer.get() — the full InsightFace pipeline,
+        single pass (no retry sweep, no fallbacks).  buffalo_l's det_model IS
+        SCRFD-10G-KPS; using face_analyzer.get() gives calibrated det_score values
+        unlike calling det_model.detect() directly which bypasses internal preprocessing.
         """
         if not INSIGHTFACE_AVAILABLE:
             logger.warning("SCRFD: InsightFace not available")
@@ -2049,55 +2049,39 @@ class FaceRecognitionEngine:
             self._ensure_backend()
             det_model = getattr(self.face_analyzer, 'det_model', None)
             if det_model is None:
-                logger.warning("SCRFD: face_analyzer.det_model is None — InsightFace not ready")
+                logger.warning("SCRFD: face_analyzer.det_model not available")
                 return []
-            logger.info(f"  SCRFD: using det_model class={type(det_model).__name__}")
+            logger.info(f"  SCRFD: det_model class={type(det_model).__name__}")
 
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
             h, w = image.shape[:2]
 
-            # Adaptive tile size: bigger images benefit from a larger input window
+            # Adaptive input_size — same logic as _detect_faces_insightface
             max_dim = max(h, w)
-            if max_dim < 1200:
+            if max_dim < 200:
+                det_size = (128, 128)
+            elif max_dim < 400:
+                det_size = (320, 320)
+            elif max_dim < 1200:
                 det_size = (640, 640)
             elif max_dim < 2400:
                 det_size = (1280, 1280)
             else:
                 det_size = (1920, 1920)
-            try:
-                det_model.input_size = det_size
-            except (AttributeError, TypeError):
-                pass  # model controls its own tiling
+            det_model.input_size = det_size
 
-            # InsightFace API varies across versions: some accept thresh as kwarg,
-            # others set it as an attribute or don't expose it at all.
-            import inspect as _inspect
-            _det_thresh = 0.05
-            _sig = _inspect.signature(det_model.detect)
-            if 'thresh' in _sig.parameters:
-                bboxes, kpss = det_model.detect(image, thresh=_det_thresh)
-            else:
-                # Set threshold attribute (det_thresh / threshold) before calling
-                _attr = next(
-                    (a for a in ('det_thresh', 'threshold', '_thresh')
-                     if hasattr(det_model, a)), None
-                )
-                _old = getattr(det_model, _attr) if _attr else None
-                if _attr:
-                    setattr(det_model, _attr, _det_thresh)
-                try:
-                    bboxes, kpss = det_model.detect(image)
-                finally:
-                    if _attr and _old is not None:
-                        setattr(det_model, _attr, _old)
-            if bboxes is None or len(bboxes) == 0:
-                logger.info("  SCRFD: no detections")
-                return []
+            # NMS floor low; we apply real threshold below
+            if hasattr(det_model, 'det_thresh'):
+                det_model.det_thresh = 0.05
+
+            raw_faces = self.face_analyzer.get(image)
+            logger.info(f"  SCRFD raw: {len(raw_faces)} candidate(s)")
+
             detected_faces = []
-            for i, (bbox, kps) in enumerate(zip(bboxes, kpss if kpss is not None else [None] * len(bboxes))):
-                x1, y1, x2, y2, conf = bbox
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                conf = float(conf)
+            for i, face in enumerate(raw_faces):
+                bp = face.bbox.astype(int)
+                x1, y1, x2, y2 = bp[0], bp[1], bp[2], bp[3]
+                conf = float(face.det_score)
                 if conf < threshold:
                     logger.info(f"    SCRFD candidate {i}: score={conf:.4f} < {threshold:.2f} — skipped")
                     continue
@@ -2107,10 +2091,15 @@ class FaceRecognitionEngine:
                 )
                 if not norm_bbox.is_valid():
                     continue
-                landmarks_np = np.array(kps, dtype=np.float32) if kps is not None else None
-                embedding = self._embed_crop(image, norm_bbox, landmarks=landmarks_np)
+                embedding = None
+                if face.embedding is not None:
+                    embedding = face.embedding / (np.linalg.norm(face.embedding) + 1e-8)
+                if embedding is None:
+                    embedding = self._embed_crop(image, norm_bbox)
                 if embedding is None:
                     continue
+                kps = getattr(face, 'kps', None)
+                landmarks_np = np.array(kps, dtype=np.float32) if kps is not None else None
                 logger.info(f"    SCRFD candidate {i}: score={conf:.4f}  bbox=[{x1},{y1},{x2},{y2}]  ✓")
                 detected_faces.append(Face(
                     bbox=norm_bbox,
@@ -2204,10 +2193,9 @@ class FaceRecognitionEngine:
 
     def _detect_faces_mediapipe(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
         """
-        Face detector using Google MediaPipe BlazeFace.
-        Requires ``pip install mediapipe``.
-        Handles unusual head poses and lighting conditions well.
-        Returns Face objects with ArcFace embeddings (simple crop).
+        Face detector using the MediaPipe Tasks API (mediapipe ≥ 0.10).
+        Uses the blaze_face_short_range.tflite model downloaded on first use.
+        Bounding boxes from the Tasks API are in pixel coords of the input image.
         """
         if not MEDIAPIPE_AVAILABLE:
             return []
@@ -2215,12 +2203,11 @@ class FaceRecognitionEngine:
             import mediapipe as mp
             h, w = image.shape[:2]
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
-            min_conf = max(0.1, min(0.9, threshold))
+            min_conf = max(0.1, min(0.9, float(threshold)))
 
-            # BlazeFace is designed for images up to ~1920px on the long edge.
-            # Very high-res images (e.g. Canon R5 at 7334×4892) produce zero detections
-            # because the model's receptive field can't locate large faces.
-            # Downsample for detection only; bboxes are relative so they map back exactly.
+            # BlazeFace works best at ≤1920px — downsample large images for detection.
+            # Tasks API bboxes are in pixel coords of the (possibly downsampled) image;
+            # we normalise them ourselves so they reference the original resolution.
             MAX_MP_DIM = 1920
             scale = 1.0
             det_image = image
@@ -2228,44 +2215,65 @@ class FaceRecognitionEngine:
                 scale = MAX_MP_DIM / max(h, w)
                 new_w, new_h = int(w * scale), int(h * scale)
                 det_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                logger.info(f"  MediaPipe: downsampled {w}×{h} → {new_w}×{new_h} for detection")
+                logger.info(f"  MediaPipe: downsampled {w}×{h} → {new_w}×{new_h}")
+            dh, dw = det_image.shape[:2]
+
+            # Download tflite model on first use
+            model_path = Path(self.db_path).parent / 'blaze_face_short_range.tflite'
+            if not model_path.exists():
+                import urllib.request
+                url = ('https://storage.googleapis.com/mediapipe-models/'
+                       'face_detector/blaze_face_short_range/float16/1/'
+                       'blaze_face_short_range.tflite')
+                logger.info(f"Downloading MediaPipe model → {model_path}")
+                urllib.request.urlretrieve(url, str(model_path))
+
+            # Tasks API (mediapipe ≥ 0.10)
+            from mediapipe.tasks import python as _mp_py
+            from mediapipe.tasks.python import vision as _mp_vis
 
             rgb = cv2.cvtColor(det_image, cv2.COLOR_BGR2RGB)
-            # model_selection=1 covers full-range distances (better for portraits)
-            with mp.solutions.face_detection.FaceDetection(
-                model_selection=1, min_detection_confidence=min_conf
-            ) as detector:
-                results = detector.process(rgb)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-            if not results or not results.detections:
+            base_opts = _mp_py.BaseOptions(model_asset_path=str(model_path))
+            opts = _mp_vis.FaceDetectorOptions(
+                base_options=base_opts,
+                min_detection_confidence=min_conf,
+            )
+            detector = _mp_vis.FaceDetector.create_from_options(opts)
+            try:
+                result = detector.detect(mp_image)
+            finally:
+                detector.close()
+
+            if not result or not result.detections:
                 return []
 
             faces = []
-            for det in results.detections:
-                bb = det.location_data.relative_bounding_box
-                # Relative coords are already normalised — they map back to original image
-                x1 = max(0.0, bb.xmin)
-                y1 = max(0.0, bb.ymin)
-                x2 = min(1.0, bb.xmin + bb.width)
-                y2 = min(1.0, bb.ymin + bb.height)
-                bbox = BoundingBox(top=y1, right=x2, bottom=y2, left=x1)
-                if not bbox.is_valid():
+            for det in result.detections:
+                bb = det.bounding_box          # pixel coords in det_image space
+                x1 = max(0.0, bb.origin_x / dw)
+                y1 = max(0.0, bb.origin_y / dh)
+                x2 = min(1.0, (bb.origin_x + bb.width) / dw)
+                y2 = min(1.0, (bb.origin_y + bb.height) / dh)
+                face_bbox = BoundingBox(top=y1, right=x2, bottom=y2, left=x1)
+                if not face_bbox.is_valid():
                     continue
-                score = float(det.score[0]) if det.score else 0.5
-                # Embed from the original full-res image for best embedding quality
-                embedding = self._embed_crop(image, bbox)
+                score = float(det.categories[0].score) if det.categories else 0.5
+                # Embed from the original full-res image for best quality
+                embedding = self._embed_crop(image, face_bbox)
                 if embedding is None:
                     continue
                 faces.append(Face(
-                    bbox=bbox,
+                    bbox=face_bbox,
                     detection_confidence=score,
                     embedding=embedding,
                     quality=score,
                 ))
-            logger.info(f"  MediaPipe: {len(faces)} face(s) found")
+            logger.info(f"  MediaPipe: {len(faces)} face(s) found (min_conf={min_conf:.2f})")
             return faces
         except Exception as e:
-            logger.warning(f"MediaPipe fallback failed: {e}")
+            logger.warning(f"MediaPipe detection failed: {e}")
             return []
 
     def add_manual_face(self, image_id: int, bbox_dict: Dict[str, float], rec_thresh: Optional[float] = None) -> Dict[str, Any]:
