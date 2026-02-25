@@ -30,11 +30,20 @@ router = APIRouter()
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _state_with_engine():
+    """Return app state, blocking until the face recognition backend is ready.
+
+    The model warms up in a background thread at startup.  If a request arrives
+    before warm-up completes this function waits (up to 120 s) rather than
+    immediately returning 503, so non-admin users who upload right after server
+    start are not rejected spuriously.
+    """
     from fastapi_app import state
-    if not state.engine._backend_ready:
+    try:
+        state.engine._ensure_backend()
+    except Exception as e:
         raise HTTPException(
             status_code=503,
-            detail='Face recognition model is still loading. Please wait and try again.',
+            detail=f'Face recognition model failed to initialize: {e}',
         )
     return state
 
@@ -93,9 +102,22 @@ async def upload_local(
     The file is saved permanently to uploads/ so that thumbnail generation
     and full-image serving work after the request completes.
     """
+    import asyncio
     import uuid as _uuid
 
-    s = _state_with_engine()
+    # Run the (potentially blocking) engine readiness check in a thread pool so
+    # that the asyncio event loop is not blocked while the model warms up.
+    loop = asyncio.get_event_loop()
+    try:
+        s = await asyncio.wait_for(
+            loop.run_in_executor(None, _state_with_engine),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail='Face recognition model did not become ready within 120 s.',
+        )
 
     suffix = os.path.splitext(file.filename or '.jpg')[1] or '.jpg'
 

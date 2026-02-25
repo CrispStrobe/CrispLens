@@ -15,6 +15,7 @@ from PIL import Image
 import base64
 import os
 import platform
+import threading
 
 # Optional imports with fallbacks
 try:
@@ -268,6 +269,7 @@ class FaceRecognitionEngine:
         self.faiss_index = None
         self.person_id_map = {}  # faiss_index -> person_id
         self._backend_ready = False
+        self._init_lock = threading.Lock()   # prevents concurrent _initialize_backend calls
 
         # Shared-DB FAISS sync state
         self._faiss_db_mtime = 0.0    # DB mtime when FAISS was last built
@@ -325,9 +327,11 @@ class FaceRecognitionEngine:
         return conn
     
     def _ensure_backend(self):
-        """Lazy-initialize the backend on first use."""
+        """Lazy-initialize the backend on first use (thread-safe)."""
         if not self._backend_ready:
-            self._initialize_backend()
+            with self._init_lock:
+                if not self._backend_ready:   # double-checked locking
+                    self._initialize_backend()
 
     @staticmethod
     def _build_onnx_providers(ctx_id: int, use_coreml: bool) -> List[str]:

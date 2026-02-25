@@ -306,7 +306,7 @@
     if (selected.size === 0 || adding) return;
     adding = true;
     addDone = false;
-    addProgress = { total: 0, done: 0, errors: 0, current: '' };
+    addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '' };
     backgroundTask.set({ label: 'Fetching from cloud', done: 0, total: 0 });
 
     const paths   = [...selected];

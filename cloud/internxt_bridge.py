@@ -133,15 +133,31 @@ def list_dir(drive, path: str = '/') -> list:
     """
     Return a normalised list of entries for the given path.
     Each entry: {name, is_dir, uuid, size (files only)}
+
+    IMPORTANT: Internxt stores file name and extension separately
+    (plainName='photo', type='jpg').  We reconstruct the full display
+    name so that callers can detect image files by extension.
     """
     content = drive.list_folder_with_paths(path)
     result = []
     for f in content.get('folders', []):
-        result.append({'name': f.get('plainName', f.get('name', '?')),
-                        'is_dir': True, 'uuid': f.get('uuid', ''), 'size': None})
+        name = (f.get('display_name')
+                or f.get('plainName')
+                or f.get('name')
+                or '?')
+        result.append({'name': name, 'is_dir': True,
+                       'uuid': f.get('uuid', ''), 'size': None})
     for f in content.get('files', []):
-        result.append({'name': f.get('plainName', f.get('name', '?')),
-                        'is_dir': False, 'uuid': f.get('uuid', ''),
-                        'size': f.get('size', 0)})
+        # list_folder_with_paths already builds display_name = "plainName.type"
+        plain = f.get('plainName') or f.get('name') or '?'
+        ftype = f.get('type', '')
+        name = (f.get('display_name')
+                or (f"{plain}.{ftype}" if ftype else plain))
+        try:
+            size = int(f.get('size', 0))
+        except (TypeError, ValueError):
+            size = 0
+        result.append({'name': name, 'is_dir': False,
+                       'uuid': f.get('uuid', ''), 'size': size})
     result.sort(key=lambda e: (not e['is_dir'], e['name'].lower()))
     return result
