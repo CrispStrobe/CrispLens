@@ -67,10 +67,10 @@ def _delete_thumbnails(thumb_dir: str, image_id: int):
 
 class CropRequest(BaseModel):
     image_id: int
-    x: int
-    y: int
-    width: int
-    height: int
+    x: float        # rounded to int on use — canvas coords can be fractional
+    y: float
+    width: float
+    height: float
     save_as: str = 'replace'        # 'replace' | 'new_file'
     new_filename: Optional[str] = None
 
@@ -238,7 +238,8 @@ def crop_image(body: CropRequest, user=Depends(get_current_user)) -> Dict[str, A
     try:
         img = PILImage.open(filepath)
         fmt = img.format or 'JPEG'
-        box = (body.x, body.y, body.x + body.width, body.y + body.height)
+        x, y, w, h = int(round(body.x)), int(round(body.y)), int(round(body.width)), int(round(body.height))
+        box = (x, y, x + w, y + h)
         cropped = img.crop(box)
     except Exception as e:
         logger.error("Crop failed for image %d: %s", body.image_id, e, exc_info=True)

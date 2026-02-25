@@ -241,7 +241,8 @@
     errorMsg = '';
     try {
       const result = await cropImage(
-        imageId, selX, selY, selW, selH,
+        imageId,
+        Math.round(selX), Math.round(selY), Math.round(selW), Math.round(selH),
         saveAs,
         saveAs === 'new_file' ? (newFilename || null) : null,
       );
