@@ -120,7 +120,7 @@
   <input
     class="search path-filter"
     type="search"
-    placeholder="Path / Filename…"
+    placeholder="Filename / Path / Description…"
     bind:value={pathQuery}
     on:input={onPathSearch}
   />
@@ -142,12 +142,13 @@
     <button on:click={clearFilters}>Clear ({$activeFilterCount})</button>
   {/if}
 
-  <!-- Thumb size slider -->
-  <label class="size-label">
+  <!-- Thumb size slider — only functional in grid mode -->
+  <label class="size-label" class:disabled={$galleryMode !== 'grid'} title={$galleryMode !== 'grid' ? 'Thumbnail size only applies in grid view' : ''}>
     <span>⊞</span>
     <input
       type="range" min="100" max="400" step="10"
       bind:value={$thumbSize}
+      disabled={$galleryMode !== 'grid'}
     />
   </label>
 
@@ -203,6 +204,11 @@
     gap: 6px;
     color: #7080a0;
     font-size: 16px;
+    transition: opacity 0.2s;
+  }
+  .size-label.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
   .size-label input[type=range] {
     width: 90px;
@@ -211,6 +217,9 @@
     background: transparent;
     cursor: pointer;
     accent-color: #6080c0;
+  }
+  .size-label.disabled input[type=range] {
+    cursor: not-allowed;
   }
   .loading-dot {
     color: #6080c0;

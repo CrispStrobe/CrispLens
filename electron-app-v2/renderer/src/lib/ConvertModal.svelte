@@ -5,7 +5,7 @@
    * Events: close, converted (detail: { results })
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { fetchEditFormats, convertImages, convertBatch } from '../api.js';
+  import { fetchEditFormats, convertImages, convertBatch, downloadImage } from '../api.js';
 
   export let imageIds = [];
 
@@ -119,13 +119,24 @@
           <div class="done-title">
             Done — {results.filter(r => r.ok).length} / {results.length} converted
           </div>
-          {#if results.some(r => !r.ok)}
-            <div class="errors-list">
-              {#each results.filter(r => !r.ok) as r}
-                <div class="err-row">⚠ ID {r.image_id}: {r.error}</div>
-              {/each}
-            </div>
-          {/if}
+          <div class="results-list">
+            {#each results as r}
+              {#if r.ok}
+                <div class="result-row ok">
+                  <span class="result-icon">✓</span>
+                  <span class="result-path" title={r.filepath}>{r.filepath}</span>
+                  {#if r.new_image_id}
+                    <button class="dl-btn" on:click={() => downloadImage(r.new_image_id, r.filepath?.split('/').pop())}>⬇</button>
+                  {/if}
+                </div>
+              {:else}
+                <div class="result-row err">
+                  <span class="result-icon">⚠</span>
+                  <span class="result-path">ID {r.image_id}: {r.error}</span>
+                </div>
+              {/if}
+            {/each}
+          </div>
           <button class="primary" on:click={handleClose}>Close</button>
         </div>
       {:else}
@@ -286,6 +297,23 @@
 
   .done-panel { display: flex; flex-direction: column; gap: 10px; }
   .done-title  { font-size: 13px; color: #a0c4ff; }
-  .errors-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto; }
-  .err-row { font-size: 11px; color: #ff8080; background: #2a1a1a; padding: 4px 8px; border-radius: 4px; }
+  .results-list { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; }
+  .result-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; padding: 4px 8px; border-radius: 4px;
+  }
+  .result-row.ok  { background: #1a2a1a; color: #80c080; }
+  .result-row.err { background: #2a1a1a; color: #ff8080; }
+  .result-icon { flex-shrink: 0; font-size: 12px; }
+  .result-path {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: monospace; font-size: 10px;
+  }
+  .dl-btn {
+    flex-shrink: 0;
+    background: #1e3a1e; color: #60c060;
+    border: 1px solid #2a4a2a;
+    padding: 2px 6px; border-radius: 4px; font-size: 11px;
+  }
+  .dl-btn:hover { background: #2a4a2a; }
 </style>

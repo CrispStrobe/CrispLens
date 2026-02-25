@@ -631,9 +631,19 @@ def list_folders_stats(user=Depends(get_current_user)):
         # user's own directory structure, not VPS upload paths.
         src = r['local_path'] or r['filepath']
         dir_path = str(Path(src).parent)
+        if dir_path == '.':
+            # bare filename — try server filepath for a real directory
+            dir_path = str(Path(r['filepath']).parent)
+        if dir_path == '.':
+            dir_path = '(Uploaded)'
         folders[dir_path] = folders.get(dir_path, 0) + 1
 
-    return [{"name": k, "count": v} for k, v in sorted(folders.items())]
+    # Sort: named paths first (alphabetically), then "(Uploaded)" last
+    def _sort_key(item):
+        k = item[0]
+        return (k == '(Uploaded)', k.lower())
+
+    return [{"name": k, "count": v} for k, v in sorted(folders.items(), key=_sort_key)]
 
 
 # ─── Event grouping ───────────────────────────────────────────────────────────

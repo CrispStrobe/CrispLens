@@ -822,8 +822,14 @@ def browse_images_filtered(
             params.extend([f'{f}%', f'{f}%'])
 
     if path.strip():
-        wheres.append("(i.filepath LIKE ? OR i.filename LIKE ?)")
-        params.extend([f'%{path.strip()}%', f'%{path.strip()}%'])
+        p = f'%{path.strip()}%'
+        wheres.append("""(
+            i.filepath LIKE ?
+            OR COALESCE(i.local_path, '') LIKE ?
+            OR i.ai_description LIKE ?
+            OR i.ai_tags LIKE ?
+        )""")
+        params.extend([p, p, p, p])
 
     if date_from.strip():
         wheres.append(

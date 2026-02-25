@@ -1,6 +1,6 @@
 <script>
   import { selectedItems, galleryImages, allAlbums, t, currentUser } from '../stores.js';
-  import { deleteImage, processSingle, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
+  import { deleteImage, processSingle, addToAlbum, createAlbum, fetchAlbums, downloadImage } from '../api.js';
   import BatchEditModal from './BatchEditModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
 
@@ -18,7 +18,7 @@
   let isProcessing = false;
   let progressIdx = 0;
   let showAlbumDropdown = false;
-  let rescanMode = 'both'; // 'both' | 'faces' | 'vlm'
+  let showRescanDropdown = false;
 
   function clearSelection() {
     selectedItems.set(new Set());
@@ -35,17 +35,28 @@
     location.reload();
   }
 
-  async function batchRescan() {
+  async function batchRescan(mode = 'both') {
+    showRescanDropdown = false;
     isProcessing = true;
     progressIdx = 0;
-    const skipFaces = rescanMode === 'vlm';
-    const skipVlm   = rescanMode === 'faces';
+    const skipFaces = mode === 'vlm';
+    const skipVlm   = mode === 'faces';
     for (const id of $selectedItems) {
       const img = $galleryImages.find(i => i.id === id);
       if (img) await processSingle(img.filepath, true, skipFaces, skipVlm);
       progressIdx++;
     }
     location.reload();
+  }
+
+  async function batchDownload() {
+    const ids = Array.from($selectedItems);
+    for (let i = 0; i < ids.length; i++) {
+      const img = $galleryImages.find(x => x.id === ids[i]);
+      downloadImage(ids[i], img?.filename);
+      // Small delay between downloads to avoid browser popup blocking
+      if (i < ids.length - 1) await new Promise(r => setTimeout(r, 300));
+    }
   }
 
   async function addToAlbumAction(albumId) {
@@ -68,6 +79,7 @@
 
   function handleWindowClick() {
     showAlbumDropdown = false;
+    showRescanDropdown = false;
   }
 </script>
 
@@ -76,36 +88,45 @@
 {#if count > 0}
   <div class="selection-toolbar">
     {#if isProcessing}
-      <span class="count">Processing {progressIdx} / {count}...</span>
+      <span class="count">Processing {progressIdx} / {count}…</span>
     {:else}
       <span class="count">{count} {$t('selection')}</span>
+
       <button on:click={() => showEditModal = true}>✏️ {$t('edit')}</button>
-      <div class="rescan-group" on:click|stopPropagation>
-        <div class="rescan-mode-tabs">
-          <button class="mode-tab" class:active={rescanMode === 'both'}  on:click={() => rescanMode = 'both'}>{$t('rescan_mode_both')}</button>
-          <button class="mode-tab" class:active={rescanMode === 'faces'} on:click={() => rescanMode = 'faces'}>{$t('rescan_mode_faces')}</button>
-          <button class="mode-tab" class:active={rescanMode === 'vlm'}   on:click={() => rescanMode = 'vlm'}>{$t('rescan_mode_vlm')}</button>
-        </div>
-        <button class="rescan-btn" on:click={batchRescan}>🔄</button>
+
+      <!-- Rescan with dropdown for mode -->
+      <div class="dropdown-wrap" on:click|stopPropagation>
+        <button class="rescan-btn" on:click={() => batchRescan('both')} title="Re-detect faces + run VLM">🔄 Rescan</button>
+        <button class="dropdown-arrow" on:click={() => showRescanDropdown = !showRescanDropdown}>▾</button>
+        {#if showRescanDropdown}
+          <div class="dropdown-menu">
+            <button class="dropdown-opt" on:click={() => batchRescan('both')}>🔄 Faces + VLM</button>
+            <button class="dropdown-opt" on:click={() => batchRescan('faces')}>👤 Faces only</button>
+            <button class="dropdown-opt" on:click={() => batchRescan('vlm')}>🤖 VLM only</button>
+          </div>
+        {/if}
       </div>
+
+      <button on:click={batchDownload} title="Download selected images">⬇ Download</button>
+
       <button on:click={() => showConvertModal = true}>🔁 Convert</button>
 
       <!-- Add to Album button + dropdown -->
-      <div class="album-wrap" on:click|stopPropagation>
+      <div class="dropdown-wrap" on:click|stopPropagation>
         <button on:click={() => showAlbumDropdown = !showAlbumDropdown}>📚 Album ▾</button>
         {#if showAlbumDropdown}
-          <div class="album-dropdown">
+          <div class="dropdown-menu album-dropdown">
             {#if $allAlbums.length === 0}
               <div class="no-albums">No albums yet</div>
             {:else}
               {#each $allAlbums as album}
-                <button class="album-opt" on:click={() => addToAlbumAction(album.id)}>
+                <button class="dropdown-opt" on:click={() => addToAlbumAction(album.id)}>
                   {album.name} <span class="dim">({album.image_count})</span>
                 </button>
               {/each}
             {/if}
             <div class="dropdown-divider"></div>
-            <button class="album-opt new-album" on:click={createAndAdd}>+ New album…</button>
+            <button class="dropdown-opt new-album" on:click={createAndAdd}>+ New album…</button>
           </div>
         {/if}
       </div>
@@ -147,18 +168,33 @@
     border-radius: 24px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     z-index: 100;
   }
-  .count { font-size: 13px; font-weight: 600; color: #a0c4ff; margin-right: 8px; }
+  .count { font-size: 13px; font-weight: 600; color: #a0c4ff; margin-right: 4px; }
   button { padding: 5px 12px; border-radius: 16px; }
 
-  .album-wrap {
+  /* Generic dropdown wrapper */
+  .dropdown-wrap {
     position: relative;
+    display: flex;
+    align-items: center;
   }
 
-  .album-dropdown {
+  .rescan-btn {
+    border-radius: 16px 0 0 16px;
+    border-right: 1px solid #3a3a5a;
+  }
+  .dropdown-arrow {
+    border-radius: 0 16px 16px 0;
+    padding: 5px 8px;
+    font-size: 10px;
+    background: transparent;
+  }
+  .dropdown-arrow:hover { background: #2a3a5a; }
+
+  .dropdown-menu {
     position: absolute;
     bottom: calc(100% + 8px);
     left: 50%;
@@ -167,16 +203,19 @@
     border: 1px solid #4a4a6a;
     border-radius: 8px;
     padding: 4px;
-    min-width: 180px;
+    min-width: 160px;
     max-height: 260px;
     overflow-y: auto;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     display: flex;
     flex-direction: column;
     gap: 1px;
+    z-index: 110;
   }
 
-  .album-opt {
+  .album-dropdown { min-width: 180px; }
+
+  .dropdown-opt {
     background: transparent;
     border: none;
     color: #e0e0e0;
@@ -189,8 +228,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .album-opt:hover { background: #3a3a5a; color: #a0c4ff; }
-  .album-opt.new-album { color: #8090b8; font-style: italic; }
+  .dropdown-opt:hover { background: #3a3a5a; color: #a0c4ff; }
+  .dropdown-opt.new-album { color: #8090b8; font-style: italic; }
 
   .no-albums {
     padding: 8px 10px;
@@ -205,37 +244,4 @@
   }
 
   .dim { color: #505070; font-size: 10px; }
-
-  .rescan-group {
-    display: flex;
-    align-items: center;
-    background: #1e1e32;
-    border: 1px solid #3a3a5a;
-    border-radius: 16px;
-    overflow: hidden;
-  }
-  .rescan-mode-tabs {
-    display: flex;
-  }
-  .mode-tab {
-    background: transparent;
-    color: #6070a0;
-    border: none;
-    border-right: 1px solid #3a3a5a;
-    border-radius: 0;
-    padding: 4px 8px;
-    font-size: 10px;
-    cursor: pointer;
-  }
-  .mode-tab:hover { background: #2a2a48; color: #a0c4ff; }
-  .mode-tab.active { background: #2a3a6a; color: #80b4ff; font-weight: 600; }
-  .rescan-btn {
-    background: transparent;
-    border: none;
-    padding: 4px 10px;
-    border-radius: 0;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .rescan-btn:hover { background: #2a3a5a; }
 </style>
