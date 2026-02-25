@@ -386,6 +386,23 @@ export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent)
   );
 }
 
+export function renameCloudDriveItem(driveId, path, newName) {
+  return post(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
+}
+
+export function trashCloudDriveItem(driveId, path) {
+  return post(`/cloud-drives/${driveId}/trash`, { path });
+}
+
+export function deleteCloudDriveItem(driveId, path) {
+  return fetch(`${BASE}/cloud-drives/${driveId}/item`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ path }),
+  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+}
+
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
 export function browseFilesystem(path = '') {

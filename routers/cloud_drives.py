@@ -25,6 +25,7 @@ from cloud_drive_manager import (
     ensure_table, encrypt_config, decrypt_config,
     mount_drive, unmount_drive, get_drive_status,
     list_dir, make_dir, list_image_files, download_to_temp,
+    rename_item, trash_item, delete_item,
     _connect as _db_connect,
     _mount_smb, _mount_sftp, _unmount_path,
 )
@@ -74,6 +75,15 @@ class IngestRequest(BaseModel):
     paths: List[str] = ['/']
     recursive: bool = True
     visibility: str = 'shared'
+
+
+class RenameRequest(BaseModel):
+    path: str
+    new_name: str
+
+
+class ItemPathRequest(BaseModel):
+    path: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -438,6 +448,48 @@ async def ingest_drive(drive_id: int, body: IngestRequest,
         yield f"data: {json.dumps({'done': True, 'total': total})}\n\n"
 
     return StreamingResponse(event_stream(), media_type='text/event-stream')
+
+
+@router.post('/{drive_id}/rename')
+def rename_drive_item(drive_id: int, body: RenameRequest,
+                      _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+    """Rename a file or folder on the drive."""
+    s = _state()
+    try:
+        rename_item(s.db_path, drive_id, body.path, body.new_name)
+        return {'ok': True, 'path': body.path, 'new_name': body.new_name}
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/{drive_id}/trash')
+def trash_drive_item(drive_id: int, body: ItemPathRequest,
+                     _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+    """Move a file or folder to trash (cloud) or delete it (SMB/SFTP)."""
+    s = _state()
+    try:
+        trash_item(s.db_path, drive_id, body.path)
+        return {'ok': True, 'path': body.path}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete('/{drive_id}/item')
+def delete_drive_item(drive_id: int, body: ItemPathRequest,
+                      _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+    """Permanently delete a file or folder on the drive."""
+    s = _state()
+    try:
+        delete_item(s.db_path, drive_id, body.path)
+        return {'ok': True, 'path': body.path}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post('/test')

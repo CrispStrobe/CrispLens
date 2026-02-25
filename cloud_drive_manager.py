@@ -407,15 +407,69 @@ def list_image_files(db_path: str, drive_id: int, path: str,
                      recursive: bool = True) -> List[Dict[str, Any]]:
     """
     Return a flat list of image file entries under 'path'.
+    'path' may be a directory (walked) or a single image file.
     Each entry: {name, is_dir:False, uuid (cloud types), path, size}.
     """
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
     result = []
+
+    def _try_single_file(cur_path: str) -> None:
+        """Resolve cur_path as a single image file and append to result."""
+        ext = os.path.splitext(cur_path)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            return
+
+        if dtype in ('smb', 'sftp'):
+            mount_point = drive.get('mount_point', '')
+            abs_path = os.path.join(mount_point, cur_path.lstrip('/'))
+            if os.path.isfile(abs_path):
+                result.append({
+                    'name': os.path.basename(cur_path),
+                    'is_dir': False,
+                    'size': os.path.getsize(abs_path),
+                    'path': cur_path,
+                })
+            return
+
+        session = _get_cached_session(drive_id)
+        if session is None:
+            return
+
+        if dtype == 'internxt':
+            try:
+                from cloud.internxt_bridge import get_internxt_drive, get_file_item
+                drv = get_internxt_drive(session)
+                item = get_file_item(drv, cur_path)
+                if item:
+                    result.append(item)
+            except Exception as exc:
+                logger.debug('list_image_files: internxt file resolve %s: %s', cur_path, exc)
+        elif dtype == 'filen':
+            try:
+                from cloud.filen_bridge import get_filen_drive, get_file_item
+                drv = get_filen_drive(session)
+                item = get_file_item(drv, cur_path)
+                if item:
+                    result.append(item)
+            except Exception as exc:
+                logger.debug('list_image_files: filen file resolve %s: %s', cur_path, exc)
 
     def _walk(cur_path: str) -> None:
         try:
             entries = list_dir(db_path, drive_id, cur_path)
         except Exception:
+            # list_dir failed — cur_path is likely a single file, not a directory
+            _try_single_file(cur_path)
             return
+        # For cloud drives: an empty listing where the path has an image extension
+        # means the path resolved to a file UUID (not a folder).  Filen returns []
+        # in this case instead of raising.
+        if not entries and dtype in ('filen', 'internxt'):
+            ext = os.path.splitext(cur_path)[1].lower()
+            if ext in IMAGE_EXTENSIONS:
+                _try_single_file(cur_path)
+                return
         for e in entries:
             if e['is_dir']:
                 if recursive:
@@ -516,6 +570,138 @@ def make_dir(db_path: str, drive_id: int, path: str) -> bool:
         parent_meta = drive_svc.resolve_path(parent_path or '/')
         drive_svc.api.create_folder({'plainName': name,
                                      'parentFolderUuid': parent_meta['uuid']})
+        return True
+
+    raise RuntimeError(f'Unsupported drive type: {dtype}')
+
+
+def rename_item(db_path: str, drive_id: int, path: str, new_name: str) -> bool:
+    """
+    Rename a file or folder at 'path' to 'new_name' (basename only, no slashes).
+    Returns True on success.
+    """
+    if '/' in new_name or '\\' in new_name:
+        raise ValueError('new_name must be a simple name without path separators')
+
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        old_abs = os.path.join(mount_point, path.lstrip('/'))
+        new_abs = os.path.join(os.path.dirname(old_abs), new_name)
+        os.rename(old_abs, new_abs)
+        return True
+
+    session = _get_cached_session(drive_id)
+    if session is None:
+        raise RuntimeError('Drive is not connected. Mount it first.')
+
+    if dtype == 'internxt':
+        from cloud.internxt_bridge import get_internxt_drive
+        drv = get_internxt_drive(session)
+        resolved = drv.resolve_path(path)
+        if resolved['type'] == 'file':
+            drv.rename_file(resolved['uuid'], new_name)
+        else:
+            drv.rename_folder(resolved['uuid'], new_name)
+        return True
+
+    if dtype == 'filen':
+        from cloud.filen_bridge import get_filen_drive, resolve_path
+        drv = get_filen_drive(session)
+        meta = resolve_path(drv, path)
+        uuid = meta.get('uuid', '')
+        # Try file rename, fall back to folder rename
+        try:
+            drv.rename_file(uuid, new_name)
+        except Exception:
+            drv.rename_folder(uuid, new_name)
+        return True
+
+    raise RuntimeError(f'Unsupported drive type: {dtype}')
+
+
+def trash_item(db_path: str, drive_id: int, path: str) -> bool:
+    """
+    Move a file or folder to the cloud trash.
+    For SMB/SFTP, physically deletes the file (trash not available for network drives).
+    Returns True on success.
+    """
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        abs_path = os.path.join(mount_point, path.lstrip('/'))
+        if os.path.isdir(abs_path):
+            import shutil
+            shutil.rmtree(abs_path)
+        else:
+            os.remove(abs_path)
+        return True
+
+    session = _get_cached_session(drive_id)
+    if session is None:
+        raise RuntimeError('Drive is not connected. Mount it first.')
+
+    if dtype == 'internxt':
+        from cloud.internxt_bridge import get_internxt_drive
+        drv = get_internxt_drive(session)
+        drv.trash_by_path(path)
+        return True
+
+    if dtype == 'filen':
+        from cloud.filen_bridge import get_filen_drive, resolve_path
+        drv = get_filen_drive(session)
+        meta = resolve_path(drv, path)
+        uuid = meta.get('uuid', '')
+        try:
+            drv.trash_file(uuid)
+        except Exception:
+            drv.trash_folder(uuid)
+        return True
+
+    raise RuntimeError(f'Unsupported drive type: {dtype}')
+
+
+def delete_item(db_path: str, drive_id: int, path: str) -> bool:
+    """
+    Permanently delete a file or folder.
+    Returns True on success.
+    """
+    drive = _get_drive(db_path, drive_id)
+    dtype = drive['type']
+
+    if dtype in ('smb', 'sftp'):
+        mount_point = drive.get('mount_point', '')
+        abs_path = os.path.join(mount_point, path.lstrip('/'))
+        if os.path.isdir(abs_path):
+            import shutil
+            shutil.rmtree(abs_path)
+        else:
+            os.remove(abs_path)
+        return True
+
+    session = _get_cached_session(drive_id)
+    if session is None:
+        raise RuntimeError('Drive is not connected. Mount it first.')
+
+    if dtype == 'internxt':
+        from cloud.internxt_bridge import get_internxt_drive
+        drv = get_internxt_drive(session)
+        drv.delete_permanently_by_path(path)
+        return True
+
+    if dtype == 'filen':
+        from cloud.filen_bridge import get_filen_drive, resolve_path
+        drv = get_filen_drive(session)
+        meta = resolve_path(drv, path)
+        uuid = meta.get('uuid', '')
+        try:
+            drv.delete_permanently_file(uuid)
+        except Exception:
+            drv.delete_permanently_folder(uuid)
         return True
 
     raise RuntimeError(f'Unsupported drive type: {dtype}')

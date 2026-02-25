@@ -196,8 +196,9 @@ def get_face_clusters(
                 'bottom': face['bbox_bottom'],
                 'left':   face['bbox_left'],
             },
-            'face_quality':        face['face_quality'],
+            'face_quality':         face['face_quality'],
             'detection_confidence': face['detection_confidence'],
+            'person_name':          face.get('person_name'),  # populated when include_identified=True
         }
 
         if best_idx >= 0:

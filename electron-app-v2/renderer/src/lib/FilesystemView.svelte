@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { fsCurrentPath, backgroundTask, galleryRefreshTick } from '../stores.js';
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
-           fetchCloudDrives, browseCloudDrive, ingestCloudDrive } from '../api.js';
+           fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
+           renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const hasFSA      = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -133,6 +134,60 @@
     currentPath = '/';
     parentPath = null;
     loadCloudDrives();
+  }
+
+  // ── Cloud file operations (rename / trash / delete) ───────────────────────
+  let renameModal = null;   // { path, name } or null
+  let renameValue = '';
+  let cloudOpsMsg = '';     // inline success/error feedback
+
+  async function openRename() {
+    const paths = [...selected];
+    if (paths.length !== 1 || cloudDriveId === null) return;
+    const entry = entries.find(e => e.path === paths[0]);
+    renameModal = { path: paths[0], name: entry?.name || paths[0].split('/').pop() };
+    renameValue = renameModal.name;
+  }
+
+  async function doRename() {
+    if (!renameModal || !renameValue.trim()) return;
+    try {
+      await renameCloudDriveItem(cloudDriveId, renameModal.path, renameValue.trim());
+      cloudOpsMsg = `Renamed to "${renameValue.trim()}"`;
+      renameModal = null;
+      browse(currentPath);
+    } catch (e) {
+      cloudOpsMsg = `Rename failed: ${e.message}`;
+      renameModal = null;
+    }
+  }
+
+  async function doTrash() {
+    const paths = [...selected];
+    if (paths.length === 0 || cloudDriveId === null) return;
+    const isDeletion = cloudDriveType === 'smb' || cloudDriveType === 'sftp';
+    const action = isDeletion ? 'permanently delete' : 'trash';
+    if (!confirm(`${action} ${paths.length} item${paths.length > 1 ? 's' : ''} on "${cloudDriveName}"?`)) return;
+    let ok = 0, fail = 0;
+    for (const path of paths) {
+      try { await trashCloudDriveItem(cloudDriveId, path); ok++; }
+      catch { fail++; }
+    }
+    cloudOpsMsg = `${ok} item${ok > 1 ? 's' : ''} ${isDeletion ? 'deleted' : 'trashed'}${fail > 0 ? `, ${fail} failed` : ''}.`;
+    browse(currentPath);
+  }
+
+  async function doDelete() {
+    const paths = [...selected];
+    if (paths.length === 0 || cloudDriveId === null) return;
+    if (!confirm(`Permanently delete ${paths.length} item${paths.length > 1 ? 's' : ''} on "${cloudDriveName}"? This cannot be undone.`)) return;
+    let ok = 0, fail = 0;
+    for (const path of paths) {
+      try { await deleteCloudDriveItem(cloudDriveId, path); ok++; }
+      catch { fail++; }
+    }
+    cloudOpsMsg = `${ok} item${ok > 1 ? 's' : ''} permanently deleted${fail > 0 ? `, ${fail} failed` : ''}.`;
+    browse(currentPath);
   }
 
   // ── Mode switch ────────────────────────────────────────────────────────────
@@ -933,6 +988,14 @@
     </div>
   {/if}
 
+  <!-- Cloud ops feedback message -->
+  {#if cloudMode && cloudOpsMsg}
+    <div class="cloud-ops-msg">
+      {cloudOpsMsg}
+      <button class="btn-sm" on:click={() => cloudOpsMsg = ''}>✕</button>
+    </div>
+  {/if}
+
   <!-- Bottom action bar -->
   {#if selected.size > 0 || adding || addDone}
     <div class="action-bar">
@@ -981,11 +1044,43 @@
         <button class="primary" on:click={startAddToDb}>
           {cloudMode ? '⬇ Add to DB from cloud' : localMode ? '⬆ Upload to DB' : 'Add to DB'}
         </button>
+        {#if cloudMode && cloudDriveId !== null}
+          <button class="btn-sm" on:click={openRename}
+            disabled={selected.size !== 1} title="Rename selected item">✏ Rename</button>
+          <button class="btn-sm btn-trash" on:click={doTrash}
+            title={cloudDriveType === 'smb' || cloudDriveType === 'sftp' ? 'Delete' : 'Move to trash'}>
+            🗑 {cloudDriveType === 'smb' || cloudDriveType === 'sftp' ? 'Delete' : 'Trash'}
+          </button>
+        {/if}
         <button class="btn-sm" on:click={clearSelection}>Deselect</button>
       {/if}
     </div>
   {/if}
 </div>
+
+<!-- Rename modal -->
+{#if renameModal}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <div class="modal-backdrop" on:click|self={() => renameModal = null}>
+    <div class="rename-modal">
+      <div class="rename-title">Rename</div>
+      <div class="rename-path">{renameModal.path}</div>
+      <input
+        class="rename-input"
+        type="text"
+        bind:value={renameValue}
+        on:keydown={e => { if (e.key === 'Enter') doRename(); else if (e.key === 'Escape') renameModal = null; }}
+        autofocus
+      />
+      <div class="rename-actions">
+        <button on:click={() => renameModal = null}>Cancel</button>
+        <button class="primary" on:click={doRename} disabled={!renameValue.trim() || renameValue.trim() === renameModal.name}>
+          Rename
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .fs-view {
@@ -1395,4 +1490,52 @@
   }
   .lt-status-cell { white-space: nowrap; }
   .lt-size-cell { color: #505070; font-size: 10px; white-space: nowrap; text-align: right; }
+
+  /* ── Cloud file ops ── */
+  .cloud-ops-msg {
+    background: #1a2a1a;
+    color: #70c070;
+    font-size: 11px;
+    padding: 5px 12px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #2a3a2a;
+  }
+  .btn-trash { color: #c07070; }
+  .btn-trash:hover { background: #2a1a1a; color: #e08080; }
+
+  /* ── Rename modal ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .rename-modal {
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    border-radius: 8px;
+    padding: 18px;
+    width: 360px;
+    max-width: 95vw;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rename-title { font-size: 13px; font-weight: 600; color: #c0c8e0; }
+  .rename-path { font-size: 10px; color: #505070; word-break: break-all; }
+  .rename-input {
+    background: #111120;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    color: #c0c8e0;
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+  .rename-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

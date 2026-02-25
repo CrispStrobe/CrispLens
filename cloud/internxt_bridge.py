@@ -19,6 +19,7 @@ import os
 import sys
 import subprocess
 import logging
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,29 @@ def get_internxt_drive(session: dict):
     auth_service.config.save_user_credentials(session)
     auth_service.api.set_auth_tokens(session.get('token'), session.get('newToken'))
     return drive_service
+
+
+def get_file_item(drive, path: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolve a file path to an item dict {name, is_dir, uuid, size, path}.
+    Returns None if the path does not resolve to a file.
+    """
+    try:
+        resolved = drive.resolve_path(path)
+        if resolved.get('type') != 'file':
+            return None
+        meta = resolved.get('metadata', {})
+        plain = meta.get('plainName') or meta.get('name') or path.split('/')[-1]
+        ftype = meta.get('type', '')
+        name = f"{plain}.{ftype}" if ftype else plain
+        try:
+            size = int(meta.get('size', 0))
+        except (TypeError, ValueError):
+            size = 0
+        return {'name': name, 'is_dir': False, 'uuid': resolved['uuid'],
+                'size': size, 'path': path}
+    except Exception:
+        return None
 
 
 def list_dir(drive, path: str = '/') -> list:

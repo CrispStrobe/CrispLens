@@ -18,6 +18,7 @@ import os
 import sys
 import subprocess
 import logging
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -148,3 +149,29 @@ def list_dir(drive, folder_uuid: str) -> list:
 def resolve_path(drive, path: str) -> dict:
     """Resolve a slash-delimited path; returns metadata dict with 'uuid'."""
     return drive.resolve_path(path)
+
+
+def get_file_item(drive, path: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolve a file path to an item dict {name, is_dir, uuid, size, path}.
+    Returns None if the path does not resolve to a file.
+    Filen's resolve_path returns raw metadata — a file has a 'size' field
+    and no 'is_dir' / child keys.
+    """
+    try:
+        meta = drive.resolve_path(path)
+        if not meta or not meta.get('uuid'):
+            return None
+        # Filen folders typically lack 'size' or have size=None/0 without content
+        # If the metadata has 'type' indicating folder, skip it
+        if meta.get('is_dir') or meta.get('type') == 'folder':
+            return None
+        name = meta.get('name', path.split('/')[-1])
+        try:
+            size = int(meta.get('size', 0))
+        except (TypeError, ValueError):
+            size = 0
+        return {'name': name, 'is_dir': False, 'uuid': meta.get('uuid', ''),
+                'size': size, 'path': path}
+    except Exception:
+        return None
