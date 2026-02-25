@@ -88,62 +88,62 @@ class ConvertRequest(BaseModel):
 
 class AdjustRequest(BaseModel):
     image_id: int
-    # PIL ImageEnhance (1.0 = neutral)
-    brightness: float = 1.0     # 0.0–2.0
-    contrast:   float = 1.0     # 0.0–2.0
-    saturation: float = 1.0     # 0.0–2.0  (ImageEnhance.Color)
-    sharpness:  float = 1.0     # 0.0–2.0
-    # Tonal / LUT adjustments
-    gamma:      float = 1.0     # 0.5–3.0
-    shadows:    float = 0.0     # –1.0–+1.0 (lift/crush blacks)
-    highlights: float = 0.0     # –1.0–+1.0 (recover/boost whites)
+    # ── Levels (Photoshop-style) ─────────────────────────────────────
+    black_in:   int   = 0       # input black point  0–253
+    white_in:   int   = 255     # input white point  2–255
+    gamma_mid:  float = 1.0     # midtone gamma  0.10–9.99
+    black_out:  int   = 0       # output black point 0–253
+    white_out:  int   = 255     # output white point 2–255
+    # ── Colour / detail enhancers ────────────────────────────────────
+    brightness: float = 1.0     # PIL ImageEnhance, 0.0–2.0
+    contrast:   float = 1.0
+    saturation: float = 1.0
+    sharpness:  float = 1.0
     warmth:     float = 0.0     # –1.0–+1.0 (cool↔warm)
-    # One-click preset applied BEFORE sliders
-    preset: Optional[str] = None  # 'bw' | 'sepia' | 'auto_contrast' | 'lucky'
-    # Save options
-    save_as: str = 'new_file'   # 'replace' | 'new_file'
+    # ── Preset (applied first) ───────────────────────────────────────
+    preset: Optional[str] = None  # 'bw' | 'sepia' | 'auto_contrast' | 'lucky' | 'vivid' | 'cool' | 'warm'
+    # ── Save ─────────────────────────────────────────────────────────
+    save_as: str = 'new_file'
     suffix:  str = '_adj'
 
 
 # ── Adjust helpers ────────────────────────────────────────────────────────────
 
-def _apply_gamma(img, gamma: float):
-    """Apply gamma correction via a per-channel LUT. gamma=1.0 → no change."""
-    if abs(gamma - 1.0) < 1e-4:
-        return img
+def _apply_levels(img, black_in: int, white_in: int, gamma_mid: float,
+                  black_out: int, white_out: int):
+    """Photoshop-style levels: input clipping → midtone gamma → output remapping.
+
+    Transfer function per channel:
+      t = clamp((x - black_in) / (white_in - black_in), 0, 1)
+      t = t ^ (1 / gamma_mid)
+      out = t * (white_out - black_out) + black_out
+    """
     from PIL import Image
-    inv = 1.0 / max(gamma, 0.001)
-    lut = [int(255 * (i / 255.0) ** inv + 0.5) for i in range(256)]
-    if img.mode in ('RGB', 'L'):
-        return img.point(lut * (3 if img.mode == 'RGB' else 1))
-    if img.mode == 'RGBA':
-        r, g, b, a = img.split()
-        r = r.point(lut); g = g.point(lut); b = b.point(lut)
-        return Image.merge('RGBA', (r, g, b, a))
-    return img
-
-
-def _apply_tonal(img, shadows: float, highlights: float):
-    """Lift/crush shadows and pull/push highlights via a combined per-channel LUT."""
-    if abs(shadows) < 1e-4 and abs(highlights) < 1e-4:
+    no_op = (black_in == 0 and white_in == 255
+             and abs(gamma_mid - 1.0) < 1e-4
+             and black_out == 0 and white_out == 255)
+    if no_op:
         return img
+
+    span_in  = max(white_in - black_in, 1)
+    span_out = white_out - black_out
+    inv_g    = 1.0 / max(abs(gamma_mid), 0.001)
+
     lut = []
     for i in range(256):
-        t = i / 255.0
-        # shadows: quadratic lift for dark pixels
-        shadow_lift = shadows * ((1.0 - t) ** 2) * 255
-        # highlights: quadratic pull for bright pixels (negative highlights = darken)
-        hi_pull = highlights * (t ** 2) * 128
-        v = int(i + shadow_lift - hi_pull + 0.5)
-        lut.append(max(0, min(255, v)))
-    if img.mode in ('RGB', 'L'):
-        return img.point(lut * (3 if img.mode == 'RGB' else 1))
+        t = max(0.0, min(1.0, (i - black_in) / span_in))
+        t = t ** inv_g
+        lut.append(max(0, min(255, int(round(t * span_out + black_out)))))
+
+    if img.mode == 'L':
+        return img.point(lut)
     if img.mode == 'RGBA':
-        from PIL import Image
         r, g, b, a = img.split()
-        r = r.point(lut); g = g.point(lut); b = b.point(lut)
-        return Image.merge('RGBA', (r, g, b, a))
-    return img
+        return Image.merge('RGBA', (r.point(lut), g.point(lut), b.point(lut), a))
+    rgb = img.convert('RGB')
+    r, g, b = rgb.split()
+    result = Image.merge('RGB', (r.point(lut), g.point(lut), b.point(lut)))
+    return result
 
 
 def _apply_warmth(img, warmth: float):
@@ -492,13 +492,11 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
         if body.preset:
             img, overrides = _apply_preset(img, body.preset)
 
-        # 2. Gamma
-        img = _apply_gamma(img, body.gamma)
+        # 2. Levels (input clipping → midtone gamma → output remapping)
+        img = _apply_levels(img, body.black_in, body.white_in, body.gamma_mid,
+                            body.black_out, body.white_out)
 
-        # 3. Tonal (shadows / highlights)
-        img = _apply_tonal(img, body.shadows, body.highlights)
-
-        # 4. Warmth
+        # 3. Warmth
         img = _apply_warmth(img, body.warmth)
 
         # 5. PIL enhancers — use override values from preset where applicable
