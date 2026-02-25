@@ -11,9 +11,11 @@ send them on every request over HTTPS.
 """
 import os
 import secrets
+import time
+from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from pydantic import BaseModel
 
 # True when running behind HTTPS (VPS).  Locally (HTTP) leave unset.
@@ -27,8 +29,39 @@ _SAME_SITE = 'none' if _SECURE_COOKIES else 'lax'
 
 router = APIRouter()
 
-# In-process session store: token → username
-_sessions: dict[str, str] = {}
+# In-process session store: token → {username, expires_at}
+_SESSION_TTL = 60 * 60 * 24 * 30  # 30 days (matches cookie max_age)
+_sessions: dict[str, dict] = {}
+
+# Per-IP login rate limiter: IP → list of attempt timestamps
+_LOGIN_MAX_ATTEMPTS = 10       # max attempts per window
+_LOGIN_WINDOW_SECS  = 15 * 60  # 15-minute window
+_login_attempts: dict[str, list] = defaultdict(list)
+
+
+def _get_session_user(token: str) -> Optional[str]:
+    """Return username for session token, or None if expired/missing. Cleans up expired entries."""
+    entry = _sessions.get(token)
+    if entry is None:
+        return None
+    if time.time() > entry['expires_at']:
+        _sessions.pop(token, None)
+        return None
+    return entry['username']
+
+
+def _check_login_rate_limit(ip: str) -> None:
+    """Raise 429 if the IP has exceeded the login attempt limit."""
+    now = time.time()
+    attempts = _login_attempts[ip]
+    # Purge old attempts outside the window
+    _login_attempts[ip] = [t for t in attempts if now - t < _LOGIN_WINDOW_SECS]
+    if len(_login_attempts[ip]) >= _LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please wait 15 minutes before trying again.",
+        )
+    _login_attempts[ip].append(now)
 
 
 def _state():
@@ -47,14 +80,15 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest, response: Response):
+def login(body: LoginRequest, response: Response, request: Request):
+    _check_login_rate_limit(request.client.host if request.client else "unknown")
     s = _state()
     ok, msg, user = s.permissions.authenticate(body.username, body.password)
     if not ok or user is None:
-        raise HTTPException(status_code=401, detail=msg)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = secrets.token_hex(32)
-    _sessions[token] = user.username
+    _sessions[token] = {'username': user.username, 'expires_at': time.time() + _SESSION_TTL}
     response.set_cookie(
         "session", token,
         httponly=True,
@@ -74,7 +108,7 @@ def login(body: LoginRequest, response: Response):
 @router.post("/logout")
 def logout(response: Response, session: Optional[str] = Cookie(None)):
     if session and session in _sessions:
-        del _sessions[session]
+        _sessions.pop(session, None)
     response.delete_cookie("session", path="/", secure=_SECURE_COOKIES, samesite=_SAME_SITE)
     return {"ok": True}
 
@@ -82,9 +116,9 @@ def logout(response: Response, session: Optional[str] = Cookie(None)):
 @router.post("/change-password")
 def change_password(body: ChangePasswordRequest, session: Optional[str] = Cookie(None)):
     """Allow any authenticated user to change their own password."""
-    if not session or session not in _sessions:
+    username = _get_session_user(session) if session else None
+    if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    username = _sessions[session]
     s = _state()
     # Verify current password first
     ok, msg, _ = s.permissions.authenticate(username, body.current_password)
@@ -103,9 +137,9 @@ def change_password(body: ChangePasswordRequest, session: Optional[str] = Cookie
 
 @router.get("/me")
 def me(session: Optional[str] = Cookie(None)):
-    if not session or session not in _sessions:
+    username = _get_session_user(session) if session else None
+    if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    username = _sessions[session]
     s = _state()
     user = s.permissions.get_user(username)
     if user is None:

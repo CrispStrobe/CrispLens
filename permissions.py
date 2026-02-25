@@ -124,7 +124,7 @@ class PermissionManager:
             success, message, user_id = self.create_user('admin', default_password, 'admin', [])
             
             if success:
-                logger.warning(f"⚠️  Created default admin user with password '{default_password}' - CHANGE THIS IMMEDIATELY!")
+                logger.warning("⚠️  Created default admin user — log in and change the password immediately!")
             else:
                 logger.error(f"Failed to create default admin: {message}")
                 

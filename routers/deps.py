@@ -16,12 +16,12 @@ from fastapi import Cookie, Depends, HTTPException
 
 def get_current_user(session: Optional[str] = Cookie(None)):
     """Return the authenticated User or raise 401."""
-    from routers.auth import _sessions
+    from routers.auth import _get_session_user
     from fastapi_app import state
 
-    if not session or session not in _sessions:
+    username = _get_session_user(session) if session else None
+    if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    username = _sessions[session]
     user = state.permissions.get_user(username)
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="User inactive or not found")

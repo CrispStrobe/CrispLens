@@ -92,12 +92,13 @@ def process_single(body: SingleRequest, user=Depends(get_current_user)):
         )
         return {"ok": True, "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("process_single failed for %s: %s", body.filepath, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Processing failed. Check server logs.")
 
 
 def _build_payload(i, total, path, result=None, error=None):
     if error:
-        return {'index': i, 'total': total, 'path': path, 'error': str(error)}
+        return {'index': i, 'total': total, 'path': path, 'error': 'Processing failed'}
     return {
         'index': i,
         'total': total,

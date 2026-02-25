@@ -53,8 +53,29 @@ def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
     return result
 
 
+def _check_path_allowed(path: Path, user) -> None:
+    """
+    Raise 403 if a non-admin user tries to browse a path outside their allowed folders.
+    Admins and mediamanagers can browse anywhere on the server.
+    Regular users are restricted to FACE_REC_DATA_DIR and their explicit allowed_folders.
+    """
+    if user.role in ('admin', 'mediamanager'):
+        return
+    allowed_roots: list[Path] = []
+    data_dir = os.environ.get('FACE_REC_DATA_DIR', '')
+    if data_dir:
+        allowed_roots.append(Path(data_dir).resolve())
+    for folder in (user.allowed_folders or []):
+        allowed_roots.append(Path(folder).resolve())
+    if not allowed_roots:
+        raise HTTPException(status_code=403, detail="No accessible paths configured for your account")
+    resolved = path.resolve()
+    if not any(resolved == r or str(resolved).startswith(str(r) + os.sep) for r in allowed_roots):
+        raise HTTPException(status_code=403, detail="Access to this path is not permitted")
+
+
 @router.get("/browse")
-def browse_filesystem(path: str = Query('')) -> Dict[str, Any]:
+def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> Dict[str, Any]:
     """
     List a directory with DB-status for each image file and subdirectory.
 
@@ -80,6 +101,7 @@ def browse_filesystem(path: str = Query('')) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Path not found: {path}")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+    _check_path_allowed(target, user)
 
     conn = None
     try:
@@ -150,7 +172,8 @@ def browse_filesystem(path: str = Query('')) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("browse_filesystem error for path %s: %s", path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list directory")
     finally:
         if conn:
             conn.close()

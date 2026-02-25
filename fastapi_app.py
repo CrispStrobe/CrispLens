@@ -53,13 +53,41 @@ from i18n import i18n
 
 app = FastAPI(title="CrispLens API", version="2.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r".*",   # allow all origins (desktop app → self-hosted server)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS origins — configurable via CRISP_ALLOWED_ORIGINS (comma-separated list).
+# On HTTPS deployments (CRISP_HTTPS_COOKIES=1) a wildcard is a CSRF risk because
+# SameSite=none is used.  We therefore restrict to localhost by default on HTTPS.
+# On plain HTTP the SameSite=lax cookie flag already blocks cross-site fetch/XHR.
+_HTTPS_MODE   = os.environ.get('CRISP_HTTPS_COOKIES', '0').strip() == '1'
+_EXTRA_ORIGINS = [
+    o.strip()
+    for o in os.environ.get('CRISP_ALLOWED_ORIGINS', '').split(',')
+    if o.strip()
+]
+_LOCALHOST_ORIGINS = [
+    'http://localhost:7865', 'http://127.0.0.1:7865',
+    'http://localhost:5173', 'http://127.0.0.1:5173',
+    'http://localhost:7861', 'http://127.0.0.1:7861',
+]
+_ALLOWED_ORIGINS = list(dict.fromkeys(_LOCALHOST_ORIGINS + _EXTRA_ORIGINS))
+
+if _HTTPS_MODE:
+    # On HTTPS: only specific origins — reflect-all with credentials is a CSRF risk
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # On HTTP (local/Electron desktop): reflect all origins; SameSite=lax blocks CSRF
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r".*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ─── Auth middleware — all /api/* routes require a valid session ───────────────
 # Exemptions: login, logout, health check, i18n strings (needed before login)
@@ -84,13 +112,13 @@ async def require_auth_middleware(request, call_next):
     # Public API endpoints
     if path in _PUBLIC_API_PATHS:
         return await call_next(request)
-    # All other /api/* paths require a valid session
+    # All other /api/* paths require a valid, non-expired session
     session_token = request.cookies.get('session')
     if session_token:
         # Lazy import to avoid circular import at module load time
         try:
-            from routers.auth import _sessions
-            if session_token in _sessions:
+            from routers.auth import _get_session_user
+            if _get_session_user(session_token) is not None:
                 return await call_next(request)
         except Exception:
             pass
