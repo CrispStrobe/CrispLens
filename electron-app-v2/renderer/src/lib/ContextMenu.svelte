@@ -89,6 +89,7 @@
   <button on:click={() => handleAction('crop')}>✂ Crop image</button>
   <button on:click={() => handleAction('convert')}>🔁 Convert / Export</button>
   <div class="divider"></div>
+  <button on:click={() => handleAction('download')}>⬇ Download file</button>
   <button on:click={() => handleAction('copy-path')}>📋 Copy file path</button>
   <div class="divider"></div>
   {#if canDelete}

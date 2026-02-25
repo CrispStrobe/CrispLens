@@ -45,8 +45,20 @@ export function fetchImages({ person='', tag='', scene='', folder='', path='', d
 export function fetchImage(id) { return get(`/images/${id}`); }
 
 export function thumbnailUrl(id, size = 200) { return `${BASE}/images/${id}/thumbnail?size=${size}`; }
-export function previewUrl(id)                  { return `${BASE}/images/${id}/preview`; }
-export function fullUrl(id)                   { return `${BASE}/images/${id}/full`; }
+export function previewUrl(id)               { return `${BASE}/images/${id}/preview`; }
+export function fullUrl(id)                  { return `${BASE}/images/${id}/full`; }
+export function downloadUrl(id)              { return `${BASE}/images/${id}/download`; }
+
+/** Force-download the original image file via a hidden <a> click. */
+export function downloadImage(id, filename) {
+  const a = Object.assign(document.createElement('a'), {
+    href: downloadUrl(id),
+    download: filename || `image_${id}`,
+  });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
 export function patchMetadata(id, { description='', scene_type='', tags_csv='' }) {
   return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv });

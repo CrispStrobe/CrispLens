@@ -237,6 +237,24 @@ def get_full(image_id: int, user=Depends(get_current_user)):
     return FileResponse(filepath)
 
 
+@router.get("/{image_id}/download")
+def download_image(image_id: int, user=Depends(get_current_user)):
+    """Force-download the original image file with Content-Disposition: attachment."""
+    s = _state()
+    if not can_access_image(image_id, user, s.db_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    rec = get_image_record(s.db_path, image_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    filepath = rec.get('filepath', '')
+    if not filepath or not Path(filepath).exists():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+    filename = rec.get('filename') or Path(filepath).name
+    return FileResponse(filepath, filename=filename, headers={
+        'Content-Disposition': f'attachment; filename="{filename}"'
+    })
+
+
 @router.get("/{image_id}/preview")
 def get_preview(image_id: int, user=Depends(get_current_user)):
     """Return a web-friendly JPEG version of the full image for display."""
@@ -354,9 +372,21 @@ def delete_image(image_id: int, user=Depends(get_current_user)):
             conn.close()
 
 
+def _has_display() -> bool:
+    """Return True if a GUI/display environment is available on this server."""
+    import platform
+    plat = platform.system()
+    if plat == 'Darwin' or plat == 'Windows':
+        return True
+    # Linux: check DISPLAY (X11) or WAYLAND_DISPLAY
+    return bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+
+
 @router.post("/{image_id}/open")
 def open_in_os(image_id: int, _=Depends(get_current_user)):
-    """Open image file in the default OS application."""
+    """Open image file in the default OS application.
+    On headless servers returns ok=False with the server path so the frontend
+    can display it or offer a download instead."""
     s = _state()
     rec = get_image_record(s.db_path, image_id)
     if rec is None:
@@ -364,6 +394,8 @@ def open_in_os(image_id: int, _=Depends(get_current_user)):
     filepath = rec.get('filepath', '')
     if not filepath or not Path(filepath).exists():
         raise HTTPException(status_code=404, detail="File not found")
+    if not _has_display():
+        return {"ok": False, "headless": True, "path": filepath}
     try:
         import platform
         if platform.system() == 'Darwin':
@@ -372,14 +404,17 @@ def open_in_os(image_id: int, _=Depends(get_current_user)):
             os.startfile(filepath)
         else:
             subprocess.Popen(['xdg-open', filepath])
-        return {"ok": True}
+        return {"ok": True, "path": filepath}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning("open_in_os failed for %s: %s", filepath, e)
+        return {"ok": False, "headless": True, "path": filepath}
 
 
 @router.post("/{image_id}/open-folder")
 def open_folder_in_os(image_id: int, _=Depends(get_current_user)):
-    """Open the directory containing the image in the OS file manager."""
+    """Open the directory containing the image in the OS file manager.
+    On headless servers returns ok=False with the directory path so the
+    frontend can display it (e.g. copy to clipboard or show a tooltip)."""
     s = _state()
     rec = get_image_record(s.db_path, image_id)
     if rec is None:
@@ -389,6 +424,8 @@ def open_folder_in_os(image_id: int, _=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="File not found")
 
     dir_path = str(Path(filepath).parent)
+    if not _has_display():
+        return {"ok": False, "headless": True, "path": dir_path}
     try:
         import platform
         if platform.system() == 'Darwin':
@@ -397,9 +434,10 @@ def open_folder_in_os(image_id: int, _=Depends(get_current_user)):
             os.startfile(dir_path)
         else:
             subprocess.Popen(['xdg-open', dir_path])
-        return {"ok": True}
+        return {"ok": True, "path": dir_path}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning("open_folder_in_os failed for %s: %s", dir_path, e)
+        return {"ok": False, "headless": True, "path": dir_path}
 
 
 @router.patch("/{image_id}/rating")

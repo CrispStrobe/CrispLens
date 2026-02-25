@@ -1,6 +1,6 @@
 <script>
   import { galleryImages, selectedId, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums } from '../stores.js';
-  import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
+  import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
   import ContextMenu from './ContextMenu.svelte';
 
   function openLightbox(id) {
@@ -48,9 +48,18 @@
     if (action === 'view') {
       openLightbox(item.id);
     } else if (action === 'open') {
-      await openInOs(item.id);
+      const res = await openInOs(item.id).catch(() => null);
+      if (res && !res.ok && res.headless) {
+        alert(`Server path (headless — use Download to get the file):\n${res.path}`);
+      }
     } else if (action === 'open-folder') {
-      await openFolderInOs(item.id);
+      const res = await openFolderInOs(item.id).catch(() => null);
+      if (res && !res.ok && res.headless) {
+        await navigator.clipboard.writeText(res.path).catch(() => {});
+        alert(`Server folder (copied to clipboard):\n${res.path}`);
+      }
+    } else if (action === 'download') {
+      downloadImage(item.id, item.filename);
     } else if (action === 'browse-folder') {
       const dir = item.filepath.substring(0, item.filepath.lastIndexOf('/'));
       filters.set({ person: '', tag: '', scene: '', path: '', dateFrom: '', dateTo: '', folder: dir });

@@ -17,9 +17,11 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from routers.deps import get_current_user, can_access_image
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -94,10 +96,13 @@ def list_formats():
 
 
 @router.post("/crop")
-def crop_image(body: CropRequest) -> Dict[str, Any]:
+def crop_image(body: CropRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
     """Crop an image to the given pixel rectangle."""
     PILImage = _get_pil()
     s = _state()
+
+    if not can_access_image(body.image_id, user, s.db_path):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     conn = None
     try:
@@ -119,7 +124,8 @@ def crop_image(body: CropRequest) -> Dict[str, Any]:
         box = (body.x, body.y, body.x + body.width, body.y + body.height)
         cropped = img.crop(box)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Crop failed: {e}")
+        logger.error("Crop failed for image %d: %s", body.image_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Crop failed")
 
     if body.save_as == 'replace':
         out_path = filepath
@@ -137,7 +143,8 @@ def crop_image(body: CropRequest) -> Dict[str, Any]:
     try:
         cropped.save(out_path, format=fmt, **save_kwargs)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+        logger.error("Crop save failed for %s: %s", out_path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save cropped image")
 
     w, h = cropped.size
     conn = None
@@ -201,9 +208,31 @@ def _build_out_path(filepath: str, body: ConvertRequest) -> str:
         return str(p.parent / new_name)
 
 
+def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_id: int) -> Optional[int]:
+    """Insert a newly-created file into the images table. Returns new image_id or None."""
+    conn = None
+    try:
+        conn = _connect(db_path)
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO images (filepath, filename, width, height, processed, owner_id) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            (out_path, Path(out_path).name, w, h, owner_id),
+        )
+        conn.commit()
+        return cur.lastrowid if cur.lastrowid else None
+    except Exception as exc:
+        logger.warning("Could not register converted file %s: %s", out_path, exc)
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
 @router.post("/convert")
-def convert_images(body: ConvertRequest) -> Dict[str, Any]:
-    """Convert/resize one or more images (synchronous, up to 50 images)."""
+def convert_images(body: ConvertRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+    """Convert/resize one or more images (synchronous, up to 50 images).
+    New files (save_as != 'replace') are registered in the DB so they can be
+    accessed/downloaded via /api/images/{new_id}/download."""
     if body.output_format not in SUPPORTED_FORMATS:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {body.output_format}")
     if len(body.image_ids) > 50:
@@ -214,6 +243,9 @@ def convert_images(body: ConvertRequest) -> Dict[str, Any]:
     results = []
 
     for image_id in body.image_ids:
+        if not can_access_image(image_id, user, s.db_path):
+            results.append({"image_id": image_id, "ok": False, "error": "Access denied"})
+            continue
         conn = None
         try:
             conn = _connect(s.db_path)
@@ -230,18 +262,25 @@ def convert_images(body: ConvertRequest) -> Dict[str, Any]:
         out_path = filepath if body.save_as == 'replace' else _build_out_path(filepath, body)
         try:
             w, h = _do_convert_one(PILImage, filepath, out_path, body)
+            new_id: Optional[int] = None
             if body.save_as == 'replace':
                 _delete_thumbnails(s.thumb_dir, image_id)
-            results.append({"image_id": image_id, "ok": True, "filepath": out_path, "width": w, "height": h})
+                new_id = image_id
+            else:
+                new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+            results.append({"image_id": image_id, "new_image_id": new_id, "ok": True,
+                            "filepath": out_path, "width": w, "height": h})
         except Exception as e:
-            results.append({"image_id": image_id, "ok": False, "error": str(e)})
+            logger.error("convert failed for image %d → %s: %s", image_id, out_path, e, exc_info=True)
+            results.append({"image_id": image_id, "ok": False, "error": "Conversion failed"})
 
     return {"results": results, "total": len(results), "ok": sum(1 for r in results if r['ok'])}
 
 
 @router.post("/convert-batch")
-def convert_batch(body: ConvertRequest):
-    """Stream batch convert via SSE. Returns text/event-stream."""
+def convert_batch(body: ConvertRequest, user=Depends(get_current_user)):
+    """Stream batch convert via SSE. Returns text/event-stream.
+    New files are registered in the DB; each SSE event includes new_image_id."""
     if body.output_format not in SUPPORTED_FORMATS:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {body.output_format}")
     PILImage = _get_pil()
@@ -252,6 +291,10 @@ def convert_batch(body: ConvertRequest):
         done = 0
         ok = 0
         for image_id in body.image_ids:
+            if not can_access_image(image_id, user, s.db_path):
+                done += 1
+                yield f"data: {json.dumps({'index': done, 'total': total, 'image_id': image_id, 'ok': False, 'error': 'access denied'})}\n\n"
+                continue
             conn = None
             try:
                 conn = _connect(s.db_path)
@@ -262,22 +305,28 @@ def convert_batch(body: ConvertRequest):
 
             if not row or not os.path.exists(row['filepath']):
                 done += 1
-                payload = json.dumps({'index': done, 'total': total, 'image_id': image_id, 'ok': False, 'error': 'not found'})
-                yield f"data: {payload}\n\n"
+                yield f"data: {json.dumps({'index': done, 'total': total, 'image_id': image_id, 'ok': False, 'error': 'not found'})}\n\n"
                 continue
 
             filepath = row['filepath']
             out_path = filepath if body.save_as == 'replace' else _build_out_path(filepath, body)
             try:
                 w, h = _do_convert_one(PILImage, filepath, out_path, body)
+                new_id: Optional[int] = None
                 if body.save_as == 'replace':
                     _delete_thumbnails(s.thumb_dir, image_id)
+                    new_id = image_id
+                else:
+                    new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
                 done += 1
                 ok += 1
-                payload = json.dumps({'index': done, 'total': total, 'image_id': image_id, 'ok': True, 'filepath': out_path})
+                payload = json.dumps({'index': done, 'total': total, 'image_id': image_id,
+                                      'new_image_id': new_id, 'ok': True, 'filepath': out_path})
             except Exception as e:
+                logger.error("batch convert failed image %d → %s: %s", image_id, out_path, e, exc_info=True)
                 done += 1
-                payload = json.dumps({'index': done, 'total': total, 'image_id': image_id, 'ok': False, 'error': str(e)})
+                payload = json.dumps({'index': done, 'total': total, 'image_id': image_id,
+                                      'ok': False, 'error': 'Conversion failed'})
             yield f"data: {payload}\n\n"
 
         yield f"data: {json.dumps({'done': True, 'total': total, 'ok': ok})}\n\n"

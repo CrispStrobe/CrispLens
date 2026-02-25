@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { patchMetadata, renameImage, deleteImage, openInOs, fetchPeople, renamePerson, reassignFace, fetchImage, deleteFace } from '../api.js';
+  import { patchMetadata, renameImage, deleteImage, openInOs, downloadImage, fetchPeople, renamePerson, reassignFace, fetchImage, deleteFace } from '../api.js';
   import { t, allPeople, currentUser } from '../stores.js';
   import FaceIdentifyModal from './FaceIdentifyModal.svelte';
 
@@ -70,7 +70,14 @@
     }
   }
 
-  function doOpen() { openInOs(image.id).catch(() => {}); }
+  async function doOpen() {
+    const res = await openInOs(image.id).catch(() => null);
+    if (res && !res.ok && res.headless) {
+      await navigator.clipboard.writeText(res.path).catch(() => {});
+      alert(`Server path (headless — downloading instead):\n${res.path}`);
+      downloadImage(image.id, image.filename);
+    }
+  }
   let editingFaceId = null;
   let fixName = '';
 
