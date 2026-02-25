@@ -1,10 +1,13 @@
 """
 routers/settings.py — Config read/write, re-init engine.
 """
+import logging
 import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
@@ -474,3 +477,40 @@ def db_status(_admin=Depends(require_admin)):
         info["db_error"] = str(e)
 
     return info
+
+
+@router.get("/engine-status")
+def engine_status(user=Depends(get_current_user)):
+    """Return face-recognition engine readiness (all authenticated users)."""
+    s = _state()
+    eng = s.engine
+    return {
+        "ready":   bool(eng._backend_ready),
+        "error":   eng._init_error or None,
+        "backend": s.config.get('face_recognition', {}).get('backend', 'insightface'),
+        "model":   s.config.get('face_recognition', {}).get('insightface', {}).get('model', 'buffalo_l'),
+    }
+
+
+@router.post("/reload-engine")
+def reload_engine(_admin=Depends(require_admin)):
+    """Reset and re-initialize the face-recognition backend (admin only).
+
+    Resets the backend synchronously then kicks off the heavy model load in a
+    background thread (same pattern as the startup warm-up).  Returns
+    immediately with {queued: true}.
+    """
+    s = _state()
+    s.engine.reset_backend()
+
+    import threading
+    def _warm():
+        try:
+            logger.info("reload-engine: reloading backend…")
+            s.engine._ensure_backend()
+            logger.info("reload-engine: backend reloaded successfully")
+        except Exception as exc:
+            logger.error("reload-engine: reload failed: %s", exc)
+
+    threading.Thread(target=_warm, daemon=True, name="engine-reload").start()
+    return {"queued": True, "message": "Engine reload started in background"}

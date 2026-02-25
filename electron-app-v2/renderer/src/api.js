@@ -216,6 +216,8 @@ export function saveSettings(body)                  { return put('/settings', bo
 export function fetchTranslations()                 { return get('/settings/i18n'); }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { return get('/settings/db-status'); }
+export function fetchEngineStatus()                 { return get('/settings/engine-status'); }
+export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
 export function fetchUserVlmPrefs()                 { return get('/settings/user-vlm'); }
 export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }
 export function fetchUserDetPrefs()                 { return get('/settings/user-detection'); }

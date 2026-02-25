@@ -269,6 +269,7 @@ class FaceRecognitionEngine:
         self.faiss_index = None
         self.person_id_map = {}  # faiss_index -> person_id
         self._backend_ready = False
+        self._init_error: str = ''           # last initialization error message (empty = no error)
         self._init_lock = threading.Lock()   # prevents concurrent _initialize_backend calls
 
         # Shared-DB FAISS sync state
@@ -391,9 +392,25 @@ class FaceRecognitionEngine:
                 raise ValueError(f"Unknown backend: {self.config.backend}")
 
         except Exception as e:
+            self._init_error = str(e)
             logger.error(f"Failed to initialize backend: {e}")
             raise
-    
+
+        self._init_error = ''   # clear any previous error on success
+
+    def reset_backend(self) -> None:
+        """Clear the backend so the next _ensure_backend() call reinitializes it.
+
+        Use this when model files change, after manually downloading a missing
+        model, or after any config change that requires a fresh model load.
+        Thread-safe: acquires the init lock.
+        """
+        with self._init_lock:
+            logger.info("reset_backend: clearing face_analyzer and resetting _backend_ready")
+            self.face_analyzer = None
+            self._backend_ready = False
+            self._init_error = ''
+
     def _initialize_database(self):
         """Initialize database tables if needed and run column migrations."""
         try:

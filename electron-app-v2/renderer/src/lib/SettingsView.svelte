@@ -7,7 +7,7 @@
     fetchProviders, fetchKeyStatus, saveApiKey, deleteApiKey, testApiKey,
     login, logout, fetchMe, fetchVlmModels,
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
-    checkCredentials, fetchDbStatus,
+    checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
@@ -82,6 +82,7 @@
     }
     fetchProviders().then(p => { providers = p; }).catch(() => {});
     fetchKeyStatus().then(k => { keyStatus = k; }).catch(() => {});
+    fetchEngineStatus().then(s => { engineStatus = s; }).catch(() => {});
     if ($currentUser?.role === 'admin') {
       loadUsers();
       fetchDbStatus().then(s => { dbStatus = s; }).catch(() => {});
@@ -171,6 +172,9 @@
   let credCheckMsg   = '';
   let credChecking   = false;
   let dbStatus       = null;
+  let engineStatus   = null;   // {ready, error, backend, model}
+  let engineReloading = false;
+  let engineReloadMsg = '';
 
   onMount(async () => {
     isElectron = typeof window.electronAPI !== 'undefined';
@@ -352,6 +356,7 @@
         try { allAlbums.set(await fetchAlbums()); } catch {}
         fetchProviders().then(p => { providers = p; }).catch(() => {});
         fetchKeyStatus().then(k => { keyStatus = k; }).catch(() => {});
+        fetchEngineStatus().then(s => { engineStatus = s; }).catch(() => {});
         if (r.role === 'admin') {
           loadUsers();
           fetchDbStatus().then(s => { dbStatus = s; }).catch(() => {});
@@ -372,6 +377,7 @@
     allAlbums.set([]);
     users = [];
     dbStatus = null;
+    engineStatus = null;
     providers = {};
     keyStatus = {};
   }
@@ -532,6 +538,27 @@
         }
         sessionStorage.setItem('i18n_cache', JSON.stringify(data));
       } catch { /* ignore */ }
+    }
+  }
+
+  // ── Engine reload ─────────────────────────────────────────────────────────
+  async function doReloadEngine() {
+    engineReloading = true;
+    engineReloadMsg = '';
+    try {
+      await reloadEngine();
+      engineReloadMsg = 'Reload queued — refreshing status in 5 s…';
+      // Poll once after a short delay to show the updated state
+      setTimeout(async () => {
+        try { engineStatus = await fetchEngineStatus(); } catch {}
+        engineReloadMsg = engineStatus?.ready
+          ? '✓ Engine ready'
+          : (engineStatus?.error ? '✗ ' + engineStatus.error : 'Still loading…');
+        engineReloading = false;
+      }, 5000);
+    } catch (e) {
+      engineReloadMsg = '✗ ' + e.message;
+      engineReloading = false;
     }
   }
 
@@ -919,6 +946,38 @@
   </section>
   {/if}
 
+  <!-- Engine status — visible to all users so they can see why uploads fail -->
+  {#if engineStatus}
+  <section class="card">
+    <h3>Face Recognition Engine</h3>
+    <div class="db-status-grid">
+      <span class="hint">Status</span>
+      <span class:ok={engineStatus.ready} class:error-badge={!engineStatus.ready}>
+        {engineStatus.ready ? '✓ Ready' : '✗ Not ready'}
+      </span>
+      <span class="hint">Backend</span>  <span class="hint">{engineStatus.backend}</span>
+      <span class="hint">Model</span>    <span class="hint">{engineStatus.model}</span>
+      {#if engineStatus.error}
+        <span class="hint">Error</span>
+        <span class="hint" style="color:var(--error,#c0392b);word-break:break-all">{engineStatus.error}</span>
+      {/if}
+    </div>
+    {#if isAdmin}
+    <div class="field-row" style="margin-top:8px;">
+      <button class="small" on:click={doReloadEngine} disabled={engineReloading}>
+        {engineReloading ? '…' : 'Reload Engine'}
+      </button>
+      <button class="small" on:click={() => fetchEngineStatus().then(s => { engineStatus = s; engineReloadMsg = ''; })}>
+        Refresh
+      </button>
+    </div>
+    {#if engineReloadMsg}
+      <div class="save-msg" class:error-msg={engineReloadMsg.startsWith('✗')}>{engineReloadMsg}</div>
+    {/if}
+    {/if}
+  </section>
+  {/if}
+
   <!-- General settings -->
   <section class="card">
     <h3>{$t('ui_settings')}</h3>
@@ -1228,6 +1287,7 @@
     gap: 4px 8px; align-items: baseline; font-size: 12px;
   }
   .db-status-grid .ok { color: #60c060; }
+  .db-status-grid .error-badge { color: #e08080; }
 
   /* Admin set-password inline row */
   .set-pass-row {
