@@ -8,11 +8,12 @@
   let loading = false;
   let sort = 'most_faces';
   let identifyImageId = null;   // currently open in modal
+  let showAll = false;  // false = only images with unidentified faces; true = all images with faces
 
   async function load() {
     loading = true;
     try {
-      images = await fetchImages({ unidentified: true, sort, limit: 500 });
+      images = await fetchImages({ unidentified: showAll ? false : true, sort, limit: 500 });
     } catch (e) {
       console.error('IdentifyView load error:', e);
     } finally {
@@ -46,6 +47,10 @@
         <option value="newest">{$t('sort_newest')}</option>
         <option value="oldest">{$t('sort_oldest')}</option>
       </select>
+      <label class="toggle-label" title="Show all images with detected faces, not just unidentified">
+        <input type="checkbox" bind:checked={showAll} on:change={load} />
+        All faces
+      </label>
       <button on:click={load} disabled={loading}>
         {loading ? '…' : $t('refresh')}
       </button>
@@ -58,8 +63,8 @@
       <div class="empty-state">{$t('loading')}</div>
     {:else if images.length === 0}
       <div class="empty-state">
-        <div class="empty-icon">✅</div>
-        <div>{$t('all_faces_identified')}</div>
+        <div class="empty-icon">{showAll ? '📷' : '✅'}</div>
+        <div>{showAll ? 'No images with detected faces.' : $t('all_faces_identified')}</div>
         <div class="empty-sub">{$t('process_more_images')}</div>
       </div>
     {:else}
@@ -122,6 +127,13 @@
   }
   .controls { display: flex; align-items: center; gap: 8px; }
   .ctrl-label { font-size: 11px; color: #606080; }
+  .toggle-label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: #8090b8; cursor: pointer; user-select: none;
+  }
+  .toggle-label input[type=checkbox] {
+    width: auto; padding: 0; border: none; background: transparent; cursor: pointer; accent-color: #6080c0;
+  }
 
   .grid-wrap {
     flex: 1;

@@ -55,10 +55,15 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
-    """Return unidentified face records with embedding bytes (if present).
+def _load_faces(db_path: str, user=None, unidentified_only: bool = True) -> List[Dict[str, Any]]:
+    """Return face records with embedding bytes.
 
-    Only returns faces from images accessible to `user`. Admins see all.
+    When *unidentified_only* is True (default) only faces with no confirmed
+    person assignment are returned.  When False, all detected faces are
+    returned (useful for clustering everything together to spot duplicates or
+    group already-identified people for review).
+
+    Only returns faces from images accessible to *user*.  Admins see all.
     """
     conn = None
     try:
@@ -79,6 +84,11 @@ def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
             """
             params = (uid, uid)
 
+        identity_filter = (
+            "AND (fe.person_id IS NULL OR fe.recognition_confidence < 0.5)"
+            if unidentified_only else ""
+        )
+
         rows = conn.execute(f"""
             SELECT
                 f.id AS face_id,
@@ -87,12 +97,15 @@ def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
                 f.detection_confidence,
                 f.face_quality,
                 fe.id AS embedding_id,
-                fe.embedding_vector
+                fe.embedding_vector,
+                fe.person_id,
+                p.name AS person_name
             FROM faces f
             JOIN images i ON f.image_id = i.id
             LEFT JOIN face_embeddings fe ON f.id = fe.face_id
-            WHERE (fe.person_id IS NULL OR fe.recognition_confidence < 0.5)
-              AND f.image_id IS NOT NULL
+            LEFT JOIN people p ON fe.person_id = p.id
+            WHERE f.image_id IS NOT NULL
+              {identity_filter}
               {access_clause}
             ORDER BY f.face_quality DESC NULLS LAST
         """, params).fetchall()
@@ -100,6 +113,11 @@ def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
     finally:
         if conn:
             conn.close()
+
+
+def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
+    """Backward-compatible wrapper — returns only unidentified faces."""
+    return _load_faces(db_path, user, unidentified_only=True)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -128,15 +146,19 @@ def list_unidentified_faces(
 def get_face_clusters(
     threshold: float = Query(0.55, ge=0.0, le=1.0),
     limit: int = Query(500, ge=1, le=5000),
+    include_identified: bool = Query(False, description="Include already-identified faces"),
     user=Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
     """
-    Group unidentified faces into clusters by embedding cosine similarity.
+    Group faces into clusters by embedding cosine similarity.
+    By default only unidentified faces are clustered.  Pass
+    include_identified=true to cluster ALL faces (useful for reviewing
+    existing identifications or spotting mis-identified groups).
     Uses a greedy O(n²) algorithm — suitable for up to ~5000 faces.
     Faces without embeddings are placed each in their own singleton cluster.
     """
     s = _state()
-    raw = _load_unidentified(s.db_path, user)[:limit]
+    raw = _load_faces(s.db_path, user, unidentified_only=not include_identified)[:limit]
 
     # Separate faces with / without embeddings
     with_emb = []
@@ -198,8 +220,9 @@ def get_face_clusters(
                 'bottom': face['bbox_bottom'],
                 'left':   face['bbox_left'],
             },
-            'face_quality':        face['face_quality'],
+            'face_quality':         face['face_quality'],
             'detection_confidence': face['detection_confidence'],
+            'person_name':          face.get('person_name'),   # None for unidentified
         }])
 
     # Sort by cluster size descending

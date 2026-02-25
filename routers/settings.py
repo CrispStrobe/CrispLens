@@ -481,14 +481,50 @@ def db_status(_admin=Depends(require_admin)):
 
 @router.get("/engine-status")
 def engine_status(user=Depends(get_current_user)):
-    """Return face-recognition engine readiness (all authenticated users)."""
+    """Return face-recognition engine + individual detector readiness."""
+    from face_recognition_core import INSIGHTFACE_AVAILABLE, YUNET_AVAILABLE, MEDIAPIPE_AVAILABLE
     s = _state()
     eng = s.engine
+
+    # ── Per-detector availability / model-file presence ───────────────────────
+    db_dir = Path(s.db_path).parent
+
+    yunet_model  = db_dir / 'face_detection_yunet_2023mar.onnx'
+    mp_model     = db_dir / 'blaze_face_short_range.tflite'
+    MP_MIN_BYTES = 800_000   # ~2.8 MB; <800 KB = corrupt / incomplete
+
+    detectors = {
+        "retinaface": {
+            "available": INSIGHTFACE_AVAILABLE,
+            "ready":     bool(eng._backend_ready),
+            "note":      "Uses buffalo_l det_model (built-in)",
+        },
+        "scrfd": {
+            "available": INSIGHTFACE_AVAILABLE,
+            "ready":     bool(eng._backend_ready),
+            "note":      "SCRFD-10G-KPS via InsightFace (built-in)",
+        },
+        "yunet": {
+            "available": YUNET_AVAILABLE,
+            "model_exists": yunet_model.exists(),
+            "model_size_kb": round(yunet_model.stat().st_size / 1024) if yunet_model.exists() else None,
+            "note":      "OpenCV FaceDetectorYN — model auto-downloaded on first use",
+        },
+        "mediapipe": {
+            "available":    MEDIAPIPE_AVAILABLE,
+            "model_exists": mp_model.exists(),
+            "model_ok":     mp_model.exists() and mp_model.stat().st_size >= MP_MIN_BYTES,
+            "model_size_kb": round(mp_model.stat().st_size / 1024) if mp_model.exists() else None,
+            "note":      "BlazeFace short-range — model auto-downloaded on first use",
+        },
+    }
+
     return {
-        "ready":   bool(eng._backend_ready),
-        "error":   eng._init_error or None,
-        "backend": s.config.get('face_recognition', {}).get('backend', 'insightface'),
-        "model":   s.config.get('face_recognition', {}).get('insightface', {}).get('model', 'buffalo_l'),
+        "ready":     bool(eng._backend_ready),
+        "error":     eng._init_error or None,
+        "backend":   s.config.get('face_recognition', {}).get('backend', 'insightface'),
+        "model":     s.config.get('face_recognition', {}).get('insightface', {}).get('model', 'buffalo_l'),
+        "detectors": detectors,
     }
 
 

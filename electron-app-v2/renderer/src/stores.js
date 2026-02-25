@@ -25,6 +25,7 @@ export const thumbSize = writable(200);       // px; drives CSS var + API size p
 // ── Sidebar view ─────────────────────────────────────────────────────────────
 // 'all' | 'people' | 'tags' | 'dates' | 'process' | 'train' | 'settings'
 export const sidebarView = writable('all');
+export const sidebarCollapsed = writable(false);  // icon-only mode for small screens
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const currentUser = writable(null);   // { username, role } | null

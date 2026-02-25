@@ -1,5 +1,5 @@
 <script>
-  import { allPeople, selectedPerson, t } from '../stores.js';
+  import { allPeople, selectedPerson, filters, t } from '../stores.js';
   import { fetchPeople, fetchPerson, renamePerson, mergePeople, deletePerson, thumbnailUrl } from '../api.js';
   import { onMount } from 'svelte';
 
@@ -71,6 +71,11 @@
     } catch (e) { error = e.message; }
   }
 
+  // Filter people by the global search bar query (person name field)
+  $: filteredPeople = $filters.person
+    ? $allPeople.filter(p => p.name.toLowerCase().includes($filters.person.toLowerCase()))
+    : $allPeople;
+
   // Representative thumbnail — first image in their images list
   function personThumb(person) {
     const img = person.images?.[0];
@@ -122,7 +127,7 @@
   {:else}
     <!-- People grid -->
     <div class="grid-header">
-      <h2>{$t('tab_people')} ({$allPeople.length})</h2>
+      <h2>{$t('tab_people')} ({filteredPeople.length}{$filters.person ? ` / ${$allPeople.length}` : ''})</h2>
 
       <!-- Merge tool -->
       <div class="merge-tool">
@@ -147,7 +152,7 @@
     </div>
 
     <div class="people-grid">
-      {#each $allPeople as person}
+      {#each filteredPeople as person}
         <div class="person-card" on:click={() => openDetail(person)} on:keydown={() => {}}>
           <div class="person-thumb">
             {#if person.thumb_url || person.images?.[0]}

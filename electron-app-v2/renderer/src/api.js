@@ -486,8 +486,8 @@ export function fetchEvents(gapHours = 4, limit = 200) {
 export function fetchUnidentifiedFaces(limit = 500) {
   return get(`/faces/unidentified?limit=${limit}`);
 }
-export function fetchFaceClusters(threshold = 0.55, limit = 500) {
-  const q = new URLSearchParams({ threshold, limit });
+export function fetchFaceClusters(threshold = 0.55, limit = 500, includeIdentified = false) {
+  const q = new URLSearchParams({ threshold, limit, include_identified: includeIdentified });
   return get(`/faces/clusters?${q}`);
 }
 export function faceCropUrl(imageId, faceId, size = 128) {

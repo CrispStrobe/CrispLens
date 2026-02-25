@@ -7,6 +7,7 @@
   let loading = false;
   let threshold = 0.55;
   let pendingThreshold = 0.55;
+  let showAll = false;   // false = unidentified only; true = all faces
 
   // Per-cluster state: name input and selected face IDs
   let clusterNames = {};       // { cluster_id: '' }
@@ -20,7 +21,7 @@
     loading = true;
     clusters = [];
     try {
-      const data = await fetchFaceClusters(threshold, 300);
+      const data = await fetchFaceClusters(threshold, 300, showAll);
       clusters = data;
       clusterNames = {};
       selectedFaces = {};
@@ -115,6 +116,10 @@
       </label>
       <button class="primary" on:click={applyThreshold}>{$t('apply')}</button>
       <button on:click={loadClusters} title={$t('refresh')}>🔄</button>
+      <label class="toggle-label" title="Include already-identified faces in clusters">
+        <input type="checkbox" bind:checked={showAll} on:change={loadClusters} />
+        All faces
+      </label>
     </div>
   </div>
 
@@ -147,7 +152,7 @@
                 class="face-crop"
                 class:sel={selectedFaces[cluster.cluster_id]?.has(face.face_id)}
                 on:click={() => toggleFace(cluster.cluster_id, face.face_id)}
-                title="#{face.face_id} · {$t('quality')}: {face.face_quality?.toFixed(2) ?? 'n/a'}"
+                title="{face.person_name ? face.person_name + ' · ' : ''}#{face.face_id} · {$t('quality')}: {face.face_quality?.toFixed(2) ?? 'n/a'}"
               >
                 <img
                   src={faceCropUrl(face.image_id, face.face_id, 96)}
@@ -158,6 +163,9 @@
                 />
                 {#if selectedFaces[cluster.cluster_id]?.has(face.face_id)}
                   <div class="check">✓</div>
+                {/if}
+                {#if face.person_name}
+                  <div class="face-name-tag">{face.person_name}</div>
                 {/if}
               </div>
             {/each}
@@ -309,6 +317,40 @@
     font-size: 22px;
     color: white;
     pointer-events: none;
+  }
+
+  /* Name tag for already-identified faces in "show all" mode */
+  .face-name-tag {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.65);
+    color: #a0d0ff;
+    font-size: 8px;
+    text-align: center;
+    padding: 1px 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+
+  /* "All faces" toggle checkbox label */
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #8090b8;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-label input[type=checkbox] {
+    width: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    accent-color: #6080c0;
   }
 
   .assign-row {

@@ -962,6 +962,37 @@
         <span class="hint" style="color:var(--error,#c0392b);word-break:break-all">{engineStatus.error}</span>
       {/if}
     </div>
+
+    {#if engineStatus.detectors}
+    <div style="margin-top:10px;">
+      <div class="hint" style="margin-bottom:4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Detectors</div>
+      <div class="detector-grid">
+        {#each Object.entries(engineStatus.detectors) as [name, d]}
+          {@const ok = d.available && (d.ready ?? (d.model_ok ?? d.model_exists ?? true))}
+          <div class="detector-row">
+            <span class="det-name">{name}</span>
+            <span class:ok={ok} class:error-badge={!ok}>
+              {#if !d.available}
+                ✗ lib missing
+              {:else if d.ready !== undefined && !d.ready}
+                ✗ not loaded
+              {:else if d.model_ok === false}
+                ✗ model corrupt
+              {:else if d.model_exists === false}
+                ⚠ model not yet downloaded
+              {:else}
+                ✓
+              {/if}
+            </span>
+            {#if d.model_size_kb}
+              <span class="hint det-size">{d.model_size_kb} KB</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
+    {/if}
+
     {#if isAdmin}
     <div class="field-row" style="margin-top:8px;">
       <button class="small" on:click={doReloadEngine} disabled={engineReloading}>
@@ -1288,6 +1319,15 @@
   }
   .db-status-grid .ok { color: #60c060; }
   .db-status-grid .error-badge { color: #e08080; }
+  .detector-grid { display: flex; flex-direction: column; gap: 3px; }
+  .detector-row {
+    display: grid; grid-template-columns: 90px 1fr auto;
+    gap: 6px; align-items: baseline; font-size: 12px;
+  }
+  .det-name { color: #c0c8e0; font-weight: 500; }
+  .det-size { font-size: 10px; color: #404060; }
+  .detector-row .ok { color: #60c060; }
+  .detector-row .error-badge { color: #e08080; }
 
   /* Admin set-password inline row */
   .set-pass-row {

@@ -513,12 +513,14 @@
                   <input
                     type="text"
                     list="people-list"
+                    autocomplete="off"
                     aria-label="{$t('face_num')} {i+1}"
                     placeholder={$t('type_name_placeholder')}
                     bind:value={names[face.face_id]}
                     class="name-input"
                     class:saved={saved[face.face_id]}
                     on:focus={() => activeFaceId = face.face_id}
+                    on:keydown={e => { if (e.key === 'Enter' && !saving[face.face_id]) saveFace(face); }}
                   />
                   <button
                     class="save-btn"
