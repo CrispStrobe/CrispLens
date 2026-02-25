@@ -1,25 +1,26 @@
 <script>
   /**
-   * AdjustModal — Photoshop-style Levels + colour/detail sliders.
+   * AdjustModal — Photoshop-style Levels + colour/detail adjustments.
+   * Live preview: all controls rendered client-side via canvas ImageData.
    * Props: imageId (number), imageFilename (string)
    * Events: close, adjusted (detail: result)
    */
-  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { adjustImage, downloadImage, thumbnailUrl } from '../api.js';
 
-  export let imageId = null;
+  export let imageId   = null;
   export let imageFilename = '';
 
   const dispatch = createEventDispatcher();
 
-  // ── Levels state ─────────────────────────────────────────────────────────────
-  let black_in   = 0;      // 0–253
-  let white_in   = 255;    // 2–255
-  let gamma_mid  = 1.0;    // 0.10–9.99  (midtone; Photoshop style)
-  let black_out  = 0;      // 0–253
-  let white_out  = 255;    // 2–255
+  // ── Levels ────────────────────────────────────────────────────────────────────
+  let black_in  = 0;     // 0–253
+  let white_in  = 255;   // 2–255
+  let gamma_mid = 1.0;   // 0.10–9.99
+  let black_out = 0;     // 0–253
+  let white_out = 255;   // 2–255
 
-  // ── Colour / detail sliders ───────────────────────────────────────────────────
+  // ── Colour / detail ───────────────────────────────────────────────────────────
   let brightness = 1.0;
   let contrast   = 1.0;
   let saturation = 1.0;
@@ -29,648 +30,627 @@
   let saveAs     = 'new_file';
   let suffix     = '_adj';
 
-  // ── UI state ──────────────────────────────────────────────────────────────────
-  let saving = false;
-  let error  = '';
-  let done   = false;
-  let result = null;
+  // ── UI ────────────────────────────────────────────────────────────────────────
+  let saving = false, error = '', done = false, result = null;
 
   // ── Canvas refs ───────────────────────────────────────────────────────────────
-  let previewEl;
-  let levelsCanvas;   // histogram + input handles
-  let outputCanvas;   // output gradient + handles
-  let curveCanvas;    // transfer-function preview
+  let displayCanvas;   // live pixel preview
+  let levelsCanvas;    // histogram + input handles
+  let outputCanvas;    // output gradient + handles
+  let curveCanvas;     // transfer-function mini-view
 
-  // ── Histogram data (computed once from preview img) ───────────────────────────
+  // ── Source pixel cache ────────────────────────────────────────────────────────
+  let srcPixels = null;
+  let srcW = 0, srcH = 0;
   let histR = new Uint32Array(256);
   let histG = new Uint32Array(256);
   let histB = new Uint32Array(256);
   let histMax = 1;
 
-  function computeHistogram() {
-    if (!previewEl?.complete || !previewEl.naturalWidth) return;
-    const off = document.createElement('canvas');
-    off.width = previewEl.naturalWidth; off.height = previewEl.naturalHeight;
-    const oc = off.getContext('2d');
-    oc.drawImage(previewEl, 0, 0);
-    let px;
-    try { px = oc.getImageData(0, 0, off.width, off.height).data; }
-    catch { return; }
-    histR = new Uint32Array(256); histG = new Uint32Array(256); histB = new Uint32Array(256);
-    for (let i = 0; i < px.length; i += 4) {
-      histR[px[i]]++; histG[px[i+1]]++; histB[px[i+2]]++;
-    }
-    histMax = Math.max(...histR, ...histG, ...histB, 1);
-    redrawAll();
+  function loadSource() {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      srcW = img.naturalWidth; srcH = img.naturalHeight;
+      const off = document.createElement('canvas');
+      off.width = srcW; off.height = srcH;
+      const ctx = off.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      try {
+        const data = ctx.getImageData(0, 0, srcW, srcH).data;
+        srcPixels = new Uint8ClampedArray(data);
+        // histogram
+        histR = new Uint32Array(256); histG = new Uint32Array(256); histB = new Uint32Array(256);
+        for (let i = 0; i < srcPixels.length; i += 4) {
+          histR[srcPixels[i]]++; histG[srcPixels[i+1]]++; histB[srcPixels[i+2]]++;
+        }
+        histMax = Math.max(...histR, ...histG, ...histB, 1);
+        redrawAll();
+        scheduleRender();
+      } catch { /* cross-origin blocked — just no live preview */ }
+    };
+    img.src = thumbnailUrl(imageId, 300);
   }
 
-  function onPreviewLoad() { computeHistogram(); }
+  // ── Live preview rendering ────────────────────────────────────────────────────
+  let rafPending = false;
+  function scheduleRender() {
+    if (rafPending || !srcPixels) return;
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; renderPreview(); });
+  }
 
-  // ── Drawing helpers ───────────────────────────────────────────────────────────
+  // Reactive: fire on any control change
+  $: { black_in; white_in; gamma_mid; black_out; white_out;
+       brightness; contrast; saturation; warmth; sharpness; preset;
+       scheduleRender(); }
 
-  // x in canvas px for the midtone handle (between black_in and white_in)
+  function c255(v) { return Math.max(0, Math.min(255, (v + 0.5) | 0)); }
+
+  function buildLUT() {
+    const lut = new Uint8ClampedArray(256);
+    const span = Math.max(white_in - black_in, 1);
+    const inv_g = 1 / Math.max(gamma_mid, 0.001);
+    const span_out = white_out - black_out;
+    for (let i = 0; i < 256; i++) {
+      const t = Math.max(0, Math.min(1, (i - black_in) / span));
+      lut[i] = Math.max(0, Math.min(255, (Math.pow(t, inv_g) * span_out + black_out + 0.5) | 0));
+    }
+    return lut;
+  }
+
+  function applySharpness(px, W, H, factor) {
+    // Unsharp mask: result = orig + (factor-1)*(orig - boxblur)
+    const tmp = new Uint8ClampedArray(px.length);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const base = (y * W + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          let s = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              s += px[(Math.max(0, Math.min(H-1, y+dy)) * W + Math.max(0, Math.min(W-1, x+dx))) * 4 + c];
+            }
+          }
+          tmp[base + c] = (s / 9 + 0.5) | 0;
+        }
+        tmp[base + 3] = px[base + 3];
+      }
+    }
+    const k = factor - 1;
+    for (let i = 0; i < px.length; i += 4) {
+      for (let c = 0; c < 3; c++)
+        px[i+c] = Math.max(0, Math.min(255, (px[i+c] + k * (px[i+c] - tmp[i+c]) + 0.5) | 0));
+    }
+  }
+
+  function renderPreview() {
+    if (!srcPixels || !displayCanvas) return;
+    const px = new Uint8ClampedArray(srcPixels);
+
+    if (preset === 'bw') {
+      for (let i = 0; i < px.length; i += 4) {
+        const l = c255(0.299*px[i] + 0.587*px[i+1] + 0.114*px[i+2]);
+        px[i] = px[i+1] = px[i+2] = l;
+      }
+    } else if (preset === 'sepia') {
+      for (let i = 0; i < px.length; i += 4) {
+        const r=px[i], g=px[i+1], b=px[i+2];
+        px[i]   = c255(r*0.393 + g*0.769 + b*0.189);
+        px[i+1] = c255(r*0.349 + g*0.686 + b*0.168);
+        px[i+2] = c255(r*0.272 + g*0.534 + b*0.131);
+      }
+    } else {
+      const lut = buildLUT();
+      let _br=brightness, _co=contrast, _sa=saturation, _wa=warmth;
+      if (preset==='cool')          _wa = -0.5;
+      if (preset==='warm')          _wa =  0.5;
+      if (preset==='vivid')         { _sa=Math.max(_sa,1.6); _co=Math.max(_co,1.2); }
+      if (preset==='auto_contrast') _co = Math.max(_co,1.3);
+      if (preset==='lucky')         { _co=Math.max(_co,1.3); _br=Math.max(_br,1.05); _sa=Math.max(_sa,1.15); }
+      const ws = _wa * 25;
+
+      for (let i = 0; i < px.length; i += 4) {
+        let r=lut[px[i]], g=lut[px[i+1]], b=lut[px[i+2]];
+        // warmth
+        r = c255(r + ws); b = c255(b - ws);
+        // saturation
+        if (Math.abs(_sa-1) > 0.005) {
+          const lum = 0.299*r + 0.587*g + 0.114*b;
+          r = c255(lum + (r-lum)*_sa); g = c255(lum + (g-lum)*_sa); b = c255(lum + (b-lum)*_sa);
+        }
+        // brightness
+        if (Math.abs(_br-1) > 0.005) { r=c255(r*_br); g=c255(g*_br); b=c255(b*_br); }
+        // contrast (pivot 127.5)
+        if (Math.abs(_co-1) > 0.005) {
+          r=c255(127.5+(r-127.5)*_co); g=c255(127.5+(g-127.5)*_co); b=c255(127.5+(b-127.5)*_co);
+        }
+        px[i]=r; px[i+1]=g; px[i+2]=b;
+      }
+      if (Math.abs(sharpness-1) > 0.05) applySharpness(px, srcW, srcH, sharpness);
+    }
+
+    displayCanvas.width  = srcW;
+    displayCanvas.height = srcH;
+    displayCanvas.getContext('2d').putImageData(new ImageData(px, srcW, srcH), 0, 0);
+  }
+
+  // ── Levels / output / curve canvas drawing ────────────────────────────────────
+  const HH = 48, HA = 20;         // input histogram height + handle strip
+  const OGH = 14, OHA = 18;       // output gradient + handle strip
+
+  $: { black_in; white_in; gamma_mid; black_out; white_out; redrawAll(); }
+
+  function redrawAll() { drawLevels(); drawOutput(); drawCurve(); }
+
   function midHandleX(W) {
     const span = Math.max(white_in - black_in, 1);
-    const midVal = black_in + span * Math.pow(0.5, gamma_mid);
-    return midVal / 255 * W;
+    return (black_in + span * Math.pow(0.5, gamma_mid)) / 255 * W;
   }
 
-  // Upward-pointing triangle (▲): tip at (x, tipY), base above tipY
-  function drawTriangle(ctx, x, tipY, size, fill, stroke) {
+  function tri(ctx, x, tipY, size, fill) {
     ctx.beginPath();
-    ctx.moveTo(x,          tipY);
-    ctx.lineTo(x - size,   tipY + size * 1.6);
-    ctx.lineTo(x + size,   tipY + size * 1.6);
+    ctx.moveTo(x, tipY);
+    ctx.lineTo(x - size, tipY + size * 1.7);
+    ctx.lineTo(x + size, tipY + size * 1.7);
     ctx.closePath();
     ctx.fillStyle = fill;
     ctx.fill();
-    ctx.strokeStyle = stroke || 'rgba(100,140,220,0.6)';
+    ctx.strokeStyle = 'rgba(100,140,220,0.55)';
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
-  const HH = 56;   // histogram height (px in canvas)
-  const HA = 22;   // input handle strip height
-
   function drawLevels() {
     if (!levelsCanvas) return;
-    const rect = levelsCanvas.getBoundingClientRect();
-    const W = Math.round(rect.width) || 240;
+    const r = levelsCanvas.getBoundingClientRect();
+    const W = Math.round(r.width) || 190;
     levelsCanvas.width = W; levelsCanvas.height = HH + HA;
     const ctx = levelsCanvas.getContext('2d');
 
-    // Histogram background
-    ctx.fillStyle = '#080810';
-    ctx.fillRect(0, 0, W, HH);
-
-    // Histogram bars
+    ctx.fillStyle = '#08080e'; ctx.fillRect(0, 0, W, HH);
     const bw = Math.max(1, W / 256);
-    function histBar(bins, col) {
+    function hbar(bins, col) {
       ctx.fillStyle = col;
       for (let i = 0; i < 256; i++) {
-        const bh = (bins[i] / histMax) * (HH - 2);
-        ctx.fillRect(i / 256 * W, HH - bh, bw, bh);
+        const h = (bins[i] / histMax) * (HH - 1);
+        ctx.fillRect(i / 256 * W, HH - h, bw, h);
       }
     }
-    histBar(histR, 'rgba(200,50,50,0.55)');
-    histBar(histG, 'rgba(50,190,60,0.45)');
-    histBar(histB, 'rgba(50,90,210,0.55)');
+    hbar(histR, 'rgba(210,50,50,0.55)');
+    hbar(histG, 'rgba(50,185,60,0.45)');
+    hbar(histB, 'rgba(50,90,210,0.55)');
 
-    // Active range highlight
-    ctx.fillStyle = 'rgba(74,158,255,0.08)';
-    ctx.fillRect(black_in / 255 * W, 0, (white_in - black_in) / 255 * W, HH);
-
-    // Clipped-out regions (subtle red tint)
+    // Active range
+    ctx.fillStyle = 'rgba(74,158,255,0.07)';
+    ctx.fillRect(black_in/255*W, 0, (white_in-black_in)/255*W, HH);
+    // Clipped zones
     ctx.fillStyle = 'rgba(220,60,60,0.14)';
-    if (black_in > 0)   ctx.fillRect(0, 0, black_in / 255 * W, HH);
-    if (white_in < 255) ctx.fillRect(white_in / 255 * W, 0, (255 - white_in) / 255 * W, HH);
+    if (black_in > 0)   ctx.fillRect(0, 0, black_in/255*W, HH);
+    if (white_in < 255) ctx.fillRect(white_in/255*W, 0, (255-white_in)/255*W, HH);
 
-    // Handle strip
-    ctx.fillStyle = '#111122';
-    ctx.fillRect(0, HH, W, HA);
+    ctx.fillStyle = '#0e0e1c'; ctx.fillRect(0, HH, W, HA);
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, HH, W, 1);
 
-    // Thin separator
-    ctx.fillStyle = '#1e1e30';
-    ctx.fillRect(0, HH, W, 1);
-
-    // Triangle handles (tip points up into histogram)
-    const tipY = HH + 2;
-    drawTriangle(ctx, black_in / 255 * W,  tipY, 7, '#000000', '#8090c0');
-    drawTriangle(ctx, white_in / 255 * W,  tipY, 7, '#ffffff', '#8090c0');
-    drawTriangle(ctx, midHandleX(W),        tipY, 7, '#909090', '#8090c0');
+    tri(ctx, black_in/255*W,  HH+2, 6, '#111');
+    tri(ctx, white_in/255*W,  HH+2, 6, '#eee');
+    tri(ctx, midHandleX(W),   HH+2, 6, '#888');
   }
-
-  const OGH = 18;   // output gradient height
-  const OHA = 22;   // output handle strip height
 
   function drawOutput() {
     if (!outputCanvas) return;
-    const rect = outputCanvas.getBoundingClientRect();
-    const W = Math.round(rect.width) || 240;
+    const r = outputCanvas.getBoundingClientRect();
+    const W = Math.round(r.width) || 190;
     outputCanvas.width = W; outputCanvas.height = OGH + OHA;
     const ctx = outputCanvas.getContext('2d');
 
-    // Gradient bar
     const grad = ctx.createLinearGradient(0, 0, W, 0);
     grad.addColorStop(0, '#000'); grad.addColorStop(1, '#fff');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, OGH);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, OGH);
+    ctx.fillStyle = 'rgba(74,158,255,0.12)';
+    ctx.fillRect(black_out/255*W, 0, (white_out-black_out)/255*W, OGH);
 
-    // Active-range highlight on gradient
-    ctx.fillStyle = 'rgba(74,158,255,0.14)';
-    ctx.fillRect(black_out / 255 * W, 0, (white_out - black_out) / 255 * W, OGH);
+    ctx.fillStyle = '#0e0e1c'; ctx.fillRect(0, OGH, W, OHA);
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, OGH, W, 1);
 
-    // Handle strip
-    ctx.fillStyle = '#111122';
-    ctx.fillRect(0, OGH, W, OHA);
-    ctx.fillStyle = '#1e1e30';
-    ctx.fillRect(0, OGH, W, 1);
-
-    // Output handles — colors inverted so always visible
-    const tipY = OGH + 2;
-    drawTriangle(ctx, black_out / 255 * W, tipY, 7, '#ffffff', '#8090c0');
-    drawTriangle(ctx, white_out / 255 * W, tipY, 7, '#000000', '#8090c0');
+    tri(ctx, black_out/255*W, OGH+2, 6, '#eee');
+    tri(ctx, white_out/255*W, OGH+2, 6, '#111');
   }
 
-  // Transfer function for curve canvas
   function lvlOut(x) {
     const t = Math.max(0, Math.min(1, (x - black_in) / Math.max(white_in - black_in, 1)));
-    const tg = Math.pow(t, 1 / Math.max(gamma_mid, 0.001));
-    return Math.max(0, Math.min(255, tg * (white_out - black_out) + black_out));
+    return Math.max(0, Math.min(255, Math.pow(t, 1/Math.max(gamma_mid,0.001)) * (white_out-black_out) + black_out));
   }
 
   function drawCurve() {
     if (!curveCanvas) return;
-    const rect = curveCanvas.getBoundingClientRect();
-    const CW = Math.round(rect.width) || 120;
-    const CH = Math.round(rect.height) || 120;
+    const r = curveCanvas.getBoundingClientRect();
+    const CW = Math.round(r.width) || 190, CH = Math.round(r.height) || 60;
     curveCanvas.width = CW; curveCanvas.height = CH;
     const ctx = curveCanvas.getContext('2d');
-
-    ctx.fillStyle = '#08080e';
-    ctx.fillRect(0, 0, CW, CH);
-
-    // Grid
-    ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 1;
+    ctx.fillStyle = '#08080e'; ctx.fillRect(0, 0, CW, CH);
+    // grid
+    ctx.strokeStyle = '#16162a'; ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
-      ctx.beginPath(); ctx.moveTo(i * CW / 4, 0); ctx.lineTo(i * CW / 4, CH); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i * CH / 4); ctx.lineTo(CW, i * CH / 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(i*CW/4,0); ctx.lineTo(i*CW/4,CH); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*CH/4); ctx.lineTo(CW,i*CH/4); ctx.stroke();
     }
-    // Neutral diagonal
-    ctx.strokeStyle = '#252545'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, CH); ctx.lineTo(CW, 0); ctx.stroke();
-
-    // Levels transfer curve
-    ctx.strokeStyle = '#4a9eff'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let xi = 0; xi <= 255; xi++) {
-      const yo = lvlOut(xi);
-      const px = xi / 255 * CW, py = CH - yo / 255 * CH;
-      xi === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    // diagonal
+    ctx.strokeStyle='#222240'; ctx.beginPath(); ctx.moveTo(0,CH); ctx.lineTo(CW,0); ctx.stroke();
+    // curve
+    ctx.strokeStyle='#4a9eff'; ctx.lineWidth=2; ctx.beginPath();
+    for (let xi=0; xi<=255; xi++) {
+      const yo=lvlOut(xi);
+      xi===0 ? ctx.moveTo(0,CH) : ctx.lineTo(xi/255*CW, CH-yo/255*CH);
     }
     ctx.stroke();
   }
 
-  function redrawAll() { drawLevels(); drawOutput(); drawCurve(); }
-
-  // Reactive redraws
-  $: { black_in; white_in; gamma_mid; black_out; white_out; redrawAll(); }
-
-  // ── Drag handling ─────────────────────────────────────────────────────────────
-  let dragging = null;  // null | 'black_in' | 'white_in' | 'gamma_mid' | 'black_out' | 'white_out'
-
-  function pickInputHandle(mx, W) {
-    const bx = black_in / 255 * W;
-    const wx = white_in / 255 * W;
-    const gx = midHandleX(W);
-    const HR = 14;
-    const db = Math.abs(mx - bx), dw = Math.abs(mx - wx), dg = Math.abs(mx - gx);
-    const closest = Math.min(db, dw, dg);
-    if (closest > HR) return null;
-    if (closest === db) return 'black_in';
-    if (closest === dw) return 'white_in';
-    return 'gamma_mid';
-  }
+  // ── Drag ──────────────────────────────────────────────────────────────────────
+  let dragging = null;
 
   function onLevelsDown(e) {
     const r = levelsCanvas.getBoundingClientRect();
-    dragging = pickInputHandle(e.clientX - r.left, r.width);
+    const mx = e.clientX - r.left, W = r.width;
+    const bx=black_in/255*W, wx=white_in/255*W, gx=midHandleX(W), HR=14;
+    const db=Math.abs(mx-bx), dw=Math.abs(mx-wx), dg=Math.abs(mx-gx);
+    const mn=Math.min(db,dw,dg);
+    if (mn>HR) return;
+    dragging = mn===db ? 'black_in' : mn===dw ? 'white_in' : 'gamma_mid';
   }
 
   function onOutputDown(e) {
     const r = outputCanvas.getBoundingClientRect();
-    const mx = e.clientX - r.left, W = r.width;
-    const bx = black_out / 255 * W, wx = white_out / 255 * W;
-    const HR = 14;
-    if (Math.abs(mx - bx) <= Math.abs(mx - wx) && Math.abs(mx - bx) < HR) dragging = 'black_out';
-    else if (Math.abs(mx - wx) < HR) dragging = 'white_out';
+    const mx=e.clientX-r.left, W=r.width, HR=14;
+    const db=Math.abs(mx-black_out/255*W), dw=Math.abs(mx-white_out/255*W);
+    if (Math.min(db,dw)>HR) return;
+    dragging = db<=dw ? 'black_out' : 'white_out';
   }
 
   function onWindowMove(e) {
     if (!dragging) return;
-
-    if (dragging === 'black_in' || dragging === 'white_in' || dragging === 'gamma_mid') {
-      const r = levelsCanvas.getBoundingClientRect();
-      const mx = Math.max(0, Math.min(r.width, e.clientX - r.left));
-      const W = r.width;
-
-      if (dragging === 'black_in') {
-        black_in = Math.max(0, Math.min(white_in - 2, Math.round(mx / W * 255)));
-      } else if (dragging === 'white_in') {
-        white_in = Math.max(black_in + 2, Math.min(255, Math.round(mx / W * 255)));
-      } else {
-        // gamma_mid: derive from midpoint x position
-        const span = Math.max(white_in - black_in, 1);
-        const midVal = mx / W * 255;
-        const t = Math.max(0.001, Math.min(0.999, (midVal - black_in) / span));
-        gamma_mid = Math.max(0.10, Math.min(9.99, +(Math.log(0.5) / Math.log(t)).toFixed(2)));
+    if (dragging==='black_in'||dragging==='white_in'||dragging==='gamma_mid') {
+      const r=levelsCanvas.getBoundingClientRect();
+      const mx=Math.max(0,Math.min(r.width,e.clientX-r.left)), W=r.width;
+      const val=Math.round(mx/W*255);
+      if (dragging==='black_in')
+        black_in=Math.max(0,Math.min(white_in-2,val));
+      else if (dragging==='white_in')
+        white_in=Math.max(black_in+2,Math.min(255,val));
+      else {
+        const span=Math.max(white_in-black_in,1);
+        const t=Math.max(0.001,Math.min(0.999,(mx/W*255-black_in)/span));
+        gamma_mid=Math.max(0.10,Math.min(9.99,+(Math.log(0.5)/Math.log(t)).toFixed(2)));
       }
     } else {
-      const r = outputCanvas.getBoundingClientRect();
-      const mx = Math.max(0, Math.min(r.width, e.clientX - r.left));
-      const val = Math.round(mx / r.width * 255);
-      if (dragging === 'black_out') black_out = Math.max(0, Math.min(white_out - 2, val));
-      else white_out = Math.max(black_out + 2, Math.min(255, val));
+      const r=outputCanvas.getBoundingClientRect();
+      const val=Math.round(Math.max(0,Math.min(r.width,e.clientX-r.left))/r.width*255);
+      if (dragging==='black_out') black_out=Math.max(0,Math.min(white_out-2,val));
+      else white_out=Math.max(black_out+2,Math.min(255,val));
     }
   }
 
   function onWindowUp() { dragging = null; }
 
-  // ── CSS filter preview (for brightness/contrast/saturation/warmth) ────────────
-  $: cssFilter = buildCssFilter(brightness, contrast, saturation, warmth, preset);
-
-  function buildCssFilter(br, co, sa, wa, pr) {
-    if (pr === 'bw')    return 'grayscale(1)';
-    if (pr === 'sepia') return 'sepia(1)';
-    let parts = [];
-    let _br = br, _co = co, _sa = sa, _wa = wa;
-    if (pr === 'cool')          _wa = -0.5;
-    if (pr === 'warm')          _wa = 0.5;
-    if (pr === 'vivid')         { _sa = Math.max(_sa, 1.6); _co = Math.max(_co, 1.2); }
-    if (pr === 'auto_contrast') _co = Math.max(_co, 1.3);
-    if (pr === 'lucky')         { _co = Math.max(_co, 1.3); _br = Math.max(_br, 1.05); _sa = Math.max(_sa, 1.15); }
-    if (Math.abs(_br - 1) > 0.01) parts.push(`brightness(${_br.toFixed(2)})`);
-    if (Math.abs(_co - 1) > 0.01) parts.push(`contrast(${_co.toFixed(2)})`);
-    if (Math.abs(_sa - 1) > 0.01) parts.push(`saturate(${_sa.toFixed(2)})`);
-    if (_wa > 0.01)       parts.push(`sepia(${(_wa * 0.5).toFixed(2)})`);
-    else if (_wa < -0.01) parts.push(`hue-rotate(${(_wa * -25).toFixed(1)}deg)`);
-    return parts.join(' ') || 'none';
-  }
-
   // ── Presets ───────────────────────────────────────────────────────────────────
   const PRESETS = [
-    { id: 'auto_contrast', label: 'Auto' },
-    { id: 'lucky',         label: "I'm Lucky" },
-    { id: 'bw',            label: 'B&W' },
-    { id: 'sepia',         label: 'Sepia' },
-    { id: 'vivid',         label: 'Vivid' },
-    { id: 'cool',          label: 'Cool' },
-    { id: 'warm',          label: 'Warm' },
+    {id:'auto_contrast',label:'Auto'},
+    {id:'lucky',label:"Lucky"},
+    {id:'bw',label:'B&W'},
+    {id:'sepia',label:'Sepia'},
+    {id:'vivid',label:'Vivid'},
+    {id:'cool',label:'Cool'},
+    {id:'warm',label:'Warm'},
   ];
 
   function applyPreset(id) {
-    preset = preset === id ? null : id;
-    if (preset) resetSliders();
+    preset = preset===id ? null : id;
+    if (preset) { brightness=1; contrast=1; saturation=1; sharpness=1; warmth=0; }
   }
 
-  function resetSliders() {
-    brightness = 1.0; contrast = 1.0; saturation = 1.0;
-    sharpness  = 1.0; warmth   = 0.0;
+  function resetAll() {
+    black_in=0; white_in=255; gamma_mid=1; black_out=0; white_out=255;
+    brightness=1; contrast=1; saturation=1; sharpness=1; warmth=0; preset=null;
   }
-
-  function resetLevels() {
-    black_in = 0; white_in = 255; gamma_mid = 1.0;
-    black_out = 0; white_out = 255;
-  }
-
-  function resetAll() { resetLevels(); resetSliders(); preset = null; }
 
   // ── Apply ─────────────────────────────────────────────────────────────────────
   async function doAdjust() {
-    saving = true; error = ''; done = false; result = null;
+    saving=true; error=''; done=false; result=null;
     try {
       result = await adjustImage({
-        image_id: imageId,
-        black_in, white_in, gamma_mid, black_out, white_out,
-        brightness, contrast, saturation, sharpness, warmth,
-        preset: preset || null,
-        save_as: saveAs, suffix,
+        image_id:imageId,
+        black_in,white_in,gamma_mid,black_out,white_out,
+        brightness,contrast,saturation,sharpness,warmth,
+        preset:preset||null, save_as:saveAs, suffix,
       });
-      done = true;
-    } catch (e) {
-      error = e.message || 'Adjustment failed';
-    } finally {
-      saving = false;
-    }
+      done=true;
+    } catch(e) { error=e.message||'Adjustment failed'; }
+    finally { saving=false; }
   }
 
   function handleClose() {
-    if (done && result) dispatch('adjusted', result);
+    if (done&&result) dispatch('adjusted',result);
     else dispatch('close');
   }
 
-  function onKey(e) { if (e.key === 'Escape') handleClose(); }
-
   onMount(() => {
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', e => { if(e.key==='Escape') handleClose(); });
     window.addEventListener('mousemove', onWindowMove);
     window.addEventListener('mouseup',  onWindowUp);
-    if (previewEl?.complete && previewEl?.naturalWidth) computeHistogram();
+    loadSource();
   });
   onDestroy(() => {
-    window.removeEventListener('keydown', onKey);
     window.removeEventListener('mousemove', onWindowMove);
     window.removeEventListener('mouseup',  onWindowUp);
   });
 
-  function fmtSigned(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
+  function fmtS(v) { return (v>=0?'+':'')+v.toFixed(2); }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
-<div class="modal-overlay" on:click|self={handleClose}>
+<div class="overlay" on:click|self={handleClose}>
   <div class="modal">
-    <div class="modal-header">
-      <span class="title">Adjust: {imageFilename || `Image #${imageId}`}</span>
-      <button class="close-btn" on:click={handleClose}>✕</button>
+
+    <div class="mhead">
+      <span class="title">Adjust — {imageFilename||`#${imageId}`}</span>
+      <button class="xbtn" on:click={handleClose}>✕</button>
     </div>
 
-    <div class="modal-body">
+    <div class="mbody">
       {#if done && result}
-        <div class="done-panel">
-          <div class="done-title">✓ Saved</div>
-          <div class="result-path" title={result.filepath}>{result.filepath}</div>
-          <div class="done-size">{result.width} × {result.height} px</div>
-          <div class="done-actions">
+        <div class="done">
+          <div class="done-ok">✓ Saved</div>
+          <div class="done-path" title={result.filepath}>{result.filepath}</div>
+          <div class="done-dim">{result.width} × {result.height} px</div>
+          <div class="done-btns">
             {#if result.new_image_id}
-              <button class="dl-btn" on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>⬇ Download</button>
+              <button class="dl" on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>⬇ Download</button>
             {/if}
             <button class="primary" on:click={handleClose}>Close</button>
           </div>
         </div>
       {:else}
-        <div class="two-col">
+        <div class="cols">
 
-          <!-- ── LEFT: preview + levels ── -->
-          <div class="left-col">
+          <!-- ─── LEFT: live preview + levels ─── -->
+          <div class="lcol">
 
-            <!-- Preview -->
-            <div class="preview-wrap">
-              <img
-                bind:this={previewEl}
-                src={thumbnailUrl(imageId, 280)}
-                alt="preview"
-                style="filter:{cssFilter};"
-                on:load={onPreviewLoad}
-                crossorigin="anonymous"
-              />
-              <span class="preview-note" title="Levels and sharpness are rendered server-side">ⓘ</span>
+            <!-- Live preview canvas -->
+            <div class="prev-wrap">
+              {#if srcPixels}
+                <canvas bind:this={displayCanvas} class="prev-canvas"></canvas>
+              {:else}
+                <!-- Fallback while loading -->
+                <img src={thumbnailUrl(imageId, 280)} alt="preview" class="prev-fallback" />
+              {/if}
             </div>
 
             <!-- INPUT LEVELS -->
-            <div class="section-label">
+            <div class="slabel">
               Input Levels
-              <button class="tiny-btn" on:click={resetLevels} title="Reset levels">↺</button>
+              <button class="tinybtn" on:click={() => { black_in=0; white_in=255; gamma_mid=1; }}>↺</button>
             </div>
-
-            <!-- Histogram + input handle canvas -->
             <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <canvas
-              bind:this={levelsCanvas}
-              class="levels-canvas"
-              on:mousedown={onLevelsDown}
-              style="cursor:{dragging && dragging !== 'black_out' && dragging !== 'white_out' ? 'ew-resize' : 'default'}"
-            ></canvas>
-
-            <!-- Numeric inputs for input levels -->
-            <div class="lvl-nums">
-              <input class="lvl-num" type="number" min="0" max="252" step="1"
-                bind:value={black_in}
-                on:change={() => { black_in = Math.max(0, Math.min(white_in-2, black_in)); }}
+            <canvas bind:this={levelsCanvas} class="lvl-canvas" on:mousedown={onLevelsDown}
+              style="cursor:{dragging&&dragging!=='black_out'&&dragging!=='white_out'?'ew-resize':'crosshair'}">
+            </canvas>
+            <div class="nrow">
+              <input class="nbox" type="number" min="0" max="252" bind:value={black_in}
+                on:change={() => black_in=Math.max(0,Math.min(white_in-2,+black_in||0))}
                 title="Input black point" />
-              <input class="lvl-num mid" type="number" min="0.10" max="9.99" step="0.01"
-                bind:value={gamma_mid}
-                on:change={() => { gamma_mid = Math.max(0.10, Math.min(9.99, gamma_mid)); }}
-                title="Midtone gamma (1.00 = neutral; <1 = brighter, >1 = darker)" />
-              <input class="lvl-num" type="number" min="3" max="255" step="1"
-                bind:value={white_in}
-                on:change={() => { white_in = Math.max(black_in+2, Math.min(255, white_in)); }}
+              <input class="nbox mid" type="number" min="0.10" max="9.99" step="0.01" bind:value={gamma_mid}
+                on:change={() => gamma_mid=Math.max(0.10,Math.min(9.99,+gamma_mid||1))}
+                title="Midtone gamma (1.00 = neutral)" />
+              <input class="nbox" type="number" min="3" max="255" bind:value={white_in}
+                on:change={() => white_in=Math.max(black_in+2,Math.min(255,+white_in||255))}
                 title="Input white point" style="text-align:right" />
             </div>
 
             <!-- OUTPUT LEVELS -->
-            <div class="section-label">Output Levels</div>
-
-            <!-- Output gradient + handle canvas -->
+            <div class="slabel">
+              Output
+              <button class="tinybtn" on:click={() => { black_out=0; white_out=255; }}>↺</button>
+            </div>
             <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <canvas
-              bind:this={outputCanvas}
-              class="output-canvas"
-              on:mousedown={onOutputDown}
-              style="cursor:{dragging === 'black_out' || dragging === 'white_out' ? 'ew-resize' : 'default'}"
-            ></canvas>
-
-            <div class="lvl-nums">
-              <input class="lvl-num" type="number" min="0" max="252" step="1"
-                bind:value={black_out}
-                on:change={() => { black_out = Math.max(0, Math.min(white_out-2, black_out)); }}
+            <canvas bind:this={outputCanvas} class="out-canvas" on:mousedown={onOutputDown}
+              style="cursor:{dragging==='black_out'||dragging==='white_out'?'ew-resize':'crosshair'}">
+            </canvas>
+            <div class="nrow">
+              <input class="nbox" type="number" min="0" max="252" bind:value={black_out}
+                on:change={() => black_out=Math.max(0,Math.min(white_out-2,+black_out||0))}
                 title="Output black point" />
-              <input class="lvl-num" type="number" min="3" max="255" step="1"
-                bind:value={white_out}
-                on:change={() => { white_out = Math.max(black_out+2, Math.min(255, white_out)); }}
+              <input class="nbox" type="number" min="3" max="255" bind:value={white_out}
+                on:change={() => white_out=Math.max(black_out+2,Math.min(255,+white_out||255))}
                 title="Output white point" style="text-align:right" />
             </div>
 
             <!-- Curve preview -->
-            <div class="section-label" style="margin-top:6px">Transfer curve</div>
             <canvas bind:this={curveCanvas} class="curve-canvas"></canvas>
 
-          </div><!-- /left-col -->
+          </div>
 
-          <!-- ── RIGHT: sliders ── -->
-          <div class="right-col">
+          <!-- ─── RIGHT: sliders ─── -->
+          <div class="rcol">
 
-            <!-- Presets -->
-            <div class="section-label">Presets</div>
-            <div class="preset-row">
+            <div class="slabel">Presets</div>
+            <div class="presets">
               {#each PRESETS as p}
-                <button class="preset-btn" class:active={preset === p.id} on:click={() => applyPreset(p.id)}>{p.label}</button>
+                <button class="pbtn" class:on={preset===p.id} on:click={() => applyPreset(p.id)}>{p.label}</button>
               {/each}
             </div>
 
-            <!-- Light -->
-            <div class="section-label">Light</div>
-
-            <div class="slider-row">
+            <div class="slabel">Light</div>
+            <div class="srow">
               <span class="lbl">Brightness</span>
               <input type="range" min="0.1" max="2" step="0.05" bind:value={brightness} />
               <span class="val">{brightness.toFixed(2)}</span>
-              <button class="reset-btn" on:click={() => brightness = 1.0}>↺</button>
+              <button class="rb" on:click={() => brightness=1}>↺</button>
             </div>
-            <div class="slider-row">
+            <div class="srow">
               <span class="lbl">Contrast</span>
               <input type="range" min="0.1" max="2" step="0.05" bind:value={contrast} />
               <span class="val">{contrast.toFixed(2)}</span>
-              <button class="reset-btn" on:click={() => contrast = 1.0}>↺</button>
+              <button class="rb" on:click={() => contrast=1}>↺</button>
             </div>
 
-            <!-- Colour -->
-            <div class="section-label">Colour</div>
-            <div class="slider-row">
+            <div class="slabel">Colour</div>
+            <div class="srow">
               <span class="lbl">Saturation</span>
               <input type="range" min="0" max="2" step="0.05" bind:value={saturation} />
               <span class="val">{saturation.toFixed(2)}</span>
-              <button class="reset-btn" on:click={() => saturation = 1.0}>↺</button>
+              <button class="rb" on:click={() => saturation=1}>↺</button>
             </div>
-            <div class="slider-row">
+            <div class="srow">
               <span class="lbl">Warmth</span>
               <input type="range" min="-1" max="1" step="0.05" bind:value={warmth} />
-              <span class="val">{fmtSigned(warmth)}</span>
-              <button class="reset-btn" on:click={() => warmth = 0}>↺</button>
+              <span class="val">{fmtS(warmth)}</span>
+              <button class="rb" on:click={() => warmth=0}>↺</button>
             </div>
 
-            <!-- Detail -->
-            <div class="section-label">Detail <span class="server-note">(server-rendered)</span></div>
-            <div class="slider-row">
+            <div class="slabel">Detail</div>
+            <div class="srow">
               <span class="lbl">Sharpness</span>
               <input type="range" min="0" max="2" step="0.05" bind:value={sharpness} />
               <span class="val">{sharpness.toFixed(2)}</span>
-              <button class="reset-btn" on:click={() => sharpness = 1.0}>↺</button>
+              <button class="rb" on:click={() => sharpness=1}>↺</button>
             </div>
 
-            <!-- Save -->
-            <div class="section-label">Save as</div>
+            <div class="slabel">Save as</div>
             <div class="save-row">
               <label class="radio"><input type="radio" bind:group={saveAs} value="replace"  /> Replace original</label>
               <label class="radio"><input type="radio" bind:group={saveAs} value="new_file" /> New file</label>
             </div>
-            {#if saveAs === 'new_file'}
-              <div class="slider-row">
+            {#if saveAs==='new_file'}
+              <div class="srow">
                 <span class="lbl">Suffix</span>
-                <input type="text" bind:value={suffix} class="text-input" />
+                <input type="text" bind:value={suffix} class="tinput" />
               </div>
             {/if}
 
-            {#if error}
-              <div class="error">{error}</div>
-            {/if}
+            {#if error}<div class="err">{error}</div>{/if}
 
-            <div class="action-row">
+            <div class="acts">
               <button class="primary" on:click={doAdjust} disabled={saving}>
                 {saving ? 'Applying…' : 'Apply'}
               </button>
-              <button on:click={resetAll} disabled={saving}>Reset All</button>
-              <button on:click={handleClose} disabled={saving}>Cancel</button>
+              <button class="sec" on:click={resetAll} disabled={saving}>Reset All</button>
+              <button class="sec" on:click={handleClose} disabled={saving}>Cancel</button>
             </div>
 
-          </div><!-- /right-col -->
-        </div><!-- /two-col -->
+          </div>
+        </div>
       {/if}
     </div>
+
   </div>
 </div>
 
 <style>
-  .modal-overlay {
+  .overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.82);
     z-index: 3000; display: flex; align-items: center; justify-content: center;
   }
   .modal {
-    background: #1a1a28; border-radius: 10px;
-    width: min(96vw, 860px); max-height: 94vh;
+    background: #181824; border-radius: 10px;
+    width: min(96vw, 720px); max-height: 90vh;
     display: flex; flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.7); overflow: hidden;
   }
-  .modal-header {
+  .mhead {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px; border-bottom: 1px solid #2a2a3a; flex-shrink: 0;
+    padding: 8px 12px; border-bottom: 1px solid #252535; flex-shrink: 0;
   }
-  .title { font-size: 13px; font-weight: 600; color: #c0c8e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .close-btn { background: transparent; border: none; color: #8090b8; font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
-  .close-btn:hover { color: #e0e0e0; background: #2a2a42; }
+  .title { font-size: 12px; font-weight: 600; color: #b0b8d0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xbtn { background: transparent; border: none; color: #707090; font-size: 14px; cursor: pointer; padding: 2px 5px; border-radius: 3px; }
+  .xbtn:hover { color: #e0e0e0; background: #2a2a42; }
 
-  .modal-body { padding: 12px; overflow-y: auto; flex: 1; }
-  .two-col { display: flex; gap: 14px; }
+  .mbody { padding: 10px; overflow-y: auto; flex: 1; }
 
-  /* ── Left column ── */
-  .left-col { flex-shrink: 0; width: 260px; display: flex; flex-direction: column; gap: 6px; }
+  .cols { display: flex; gap: 12px; }
 
-  .preview-wrap {
-    position: relative; background: #0e0e18; border-radius: 6px; overflow: hidden;
+  /* ─── Left column ─── */
+  .lcol { flex-shrink: 0; width: 190px; display: flex; flex-direction: column; gap: 5px; }
+
+  .prev-wrap { background: #080810; border-radius: 5px; overflow: hidden; min-height: 40px; }
+  .prev-canvas { display: block; width: 100%; height: auto; }
+  .prev-fallback { display: block; width: 100%; height: auto; }
+
+  .lvl-canvas {
+    display: block; width: 100%; height: 68px;   /* HH+HA = 48+20 */
+    border-radius: 3px; border: 1px solid #181828; user-select: none;
   }
-  .preview-wrap img { width: 100%; height: auto; display: block; }
-  .preview-note {
-    position: absolute; bottom: 3px; right: 5px;
-    font-size: 9px; color: #3a4060; background: rgba(0,0,0,0.6);
-    padding: 0 4px; border-radius: 6px; cursor: help;
+  .out-canvas {
+    display: block; width: 100%; height: 32px;   /* OGH+OHA = 14+18 */
+    border-radius: 3px; border: 1px solid #181828; user-select: none;
   }
-
-  /* INPUT LEVELS canvas */
-  .levels-canvas {
-    display: block; width: 100%;
-    height: 78px;   /* HH+HA = 56+22 */
-    border-radius: 4px; border: 1px solid #1a1a2e;
-    user-select: none;
-  }
-
-  /* OUTPUT canvas */
-  .output-canvas {
-    display: block; width: 100%;
-    height: 40px;   /* OGH+OHA = 18+22 */
-    border-radius: 4px; border: 1px solid #1a1a2e;
-    user-select: none;
+  .curve-canvas {
+    display: block; width: 100%; height: 60px;
+    border-radius: 3px; border: 1px solid #181828;
   }
 
-  /* Numeric rows */
-  .lvl-nums {
-    display: flex; gap: 4px;
-  }
-  .lvl-num {
-    flex: 1; background: #0e0e1c; border: 1px solid #2a2a3a; color: #8090b8;
-    padding: 3px 5px; border-radius: 3px; font-size: 11px; font-family: monospace;
+  .nrow { display: flex; gap: 3px; }
+  .nbox {
+    flex: 1; background: #0c0c18; border: 1px solid #222232; color: #7090b8;
+    padding: 2px 4px; border-radius: 3px; font-size: 10px; font-family: monospace;
     text-align: center; min-width: 0;
   }
-  .lvl-num:focus { border-color: #4a6abf; outline: none; color: #c0c8e0; }
-  .lvl-num.mid { color: #7090b0; }
+  .nbox:focus { border-color: #4a6abf; outline: none; color: #b0c0d8; }
+  .nbox.mid { color: #6090b0; }
 
-  /* Curve preview */
-  .curve-canvas {
-    display: block; width: 100%; aspect-ratio: 16/9;
-    border-radius: 4px; border: 1px solid #1a1a2e;
-  }
+  /* ─── Right column ─── */
+  .rcol { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 
-  /* ── Right column ── */
-  .right-col { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-
-  .section-label {
+  .slabel {
     font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
-    color: #505070; padding: 4px 0 2px; border-bottom: 1px solid #1e1e30;
-    margin-top: 6px; display: flex; align-items: center; gap: 6px;
+    color: #454565; border-bottom: 1px solid #1c1c2c; padding: 4px 0 2px;
+    margin-top: 5px; display: flex; align-items: center; gap: 5px;
   }
-  .server-note { font-size: 8px; color: #404060; text-transform: none; letter-spacing: 0; }
-  .tiny-btn {
-    background: transparent; border: none; color: #3a4060; font-size: 11px;
+  .slabel:first-child { margin-top: 0; }
+  .tinybtn {
+    background: transparent; border: none; color: #333355; font-size: 10px;
     cursor: pointer; padding: 0 3px; border-radius: 3px; margin-left: auto;
   }
-  .tiny-btn:hover { color: #7090c0; background: #1e1e38; }
+  .tinybtn:hover { color: #6090c0; background: #1e1e38; }
 
-  .preset-row { display: flex; flex-wrap: wrap; gap: 4px; }
-  .preset-btn {
-    font-size: 10px; padding: 3px 9px; border-radius: 10px;
-    background: #252540; color: #7080a0; border: 1px solid #333355; cursor: pointer;
+  .presets { display: flex; flex-wrap: wrap; gap: 3px; }
+  .pbtn {
+    font-size: 10px; padding: 2px 7px; border-radius: 8px;
+    background: #20203a; color: #606090; border: 1px solid #2a2a50; cursor: pointer;
   }
-  .preset-btn:hover { background: #303060; color: #a0c4ff; }
-  .preset-btn.active { background: #3a5080; color: #a0d4ff; border-color: #4a6090; }
+  .pbtn:hover { background: #28286a; color: #a0b8ff; }
+  .pbtn.on { background: #30508a; color: #90c4ff; border-color: #3a6090; }
 
-  .slider-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
-  .lbl { font-size: 10px; color: #8090b8; min-width: 68px; flex-shrink: 0; }
-  .slider-row input[type="range"] { flex: 1; min-width: 60px; accent-color: #4a7acf; cursor: pointer; }
-  .val { font-size: 10px; color: #6070a0; min-width: 38px; text-align: right; font-family: monospace; }
-  .reset-btn {
-    background: transparent; border: none; color: #3a4060;
-    font-size: 12px; cursor: pointer; padding: 0 2px; border-radius: 3px;
+  .srow { display: flex; align-items: center; gap: 5px; padding: 1px 0; }
+  .lbl { font-size: 10px; color: #7080a8; min-width: 62px; flex-shrink: 0; }
+  .srow input[type=range] { flex: 1; min-width: 50px; accent-color: #4a7acf; cursor: pointer; }
+  .val { font-size: 10px; color: #505578; min-width: 34px; text-align: right; font-family: monospace; }
+  .rb {
+    background: transparent; border: none; color: #30305a; font-size: 11px;
+    cursor: pointer; padding: 0 2px; border-radius: 3px; line-height: 1;
   }
-  .reset-btn:hover { color: #8090c0; background: #2a2a40; }
+  .rb:hover { color: #7090c0; background: #1e1e38; }
 
-  .save-row { display: flex; gap: 14px; flex-wrap: wrap; padding: 2px 0; }
-  .radio { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #c0c8e0; cursor: pointer; }
-  .text-input { flex: 1; background: #1e1e2e; border: 1px solid #3a3a5a; color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+  .save-row { display: flex; gap: 12px; flex-wrap: wrap; padding: 2px 0; }
+  .radio { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #a0b0c8; cursor: pointer; }
+  .tinput { flex: 1; background: #14141e; border: 1px solid #2a2a4a; color: #c0c8e0; padding: 3px 6px; border-radius: 3px; font-size: 11px; }
 
-  .error { color: #ff8080; font-size: 11px; background: #3a1a1a; padding: 6px 8px; border-radius: 4px; }
+  .err { color: #ff7070; font-size: 11px; background: #2a1010; padding: 5px 8px; border-radius: 4px; }
 
-  .action-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .action-row button { font-size: 12px; padding: 5px 14px; border-radius: 4px; cursor: pointer; border: none; }
-  button.primary { background: #3a6abf; color: white; }
-  button.primary:hover { background: #4a7acf; }
-  button.primary:disabled, .action-row button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .action-row button:not(.primary) { background: #252540; color: #9090c0; border: 1px solid #333355; }
-  .action-row button:not(.primary):hover { background: #303060; color: #c0c8e0; }
+  .acts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .acts button { font-size: 11px; padding: 4px 12px; border-radius: 4px; cursor: pointer; border: none; }
+  button.primary { background: #3060b0; color: #dde8ff; }
+  button.primary:hover { background: #4070c0; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .sec { background: #1e1e38; color: #7080a8; border: 1px solid #2a2a50 !important; }
+  .sec:hover { background: #252550; color: #a0b0d0; }
+  .sec:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* Done panel */
-  .done-panel { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
-  .done-title { font-size: 14px; color: #80d080; }
-  .result-path { font-family: monospace; font-size: 11px; color: #7090c0; overflow-wrap: break-word; }
-  .done-size { font-size: 11px; color: #506080; }
-  .done-actions { display: flex; gap: 8px; }
-  .dl-btn { background: #1e3a1e; color: #60c060; border: 1px solid #2a4a2a; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-  .dl-btn:hover { background: #2a4a2a; }
+  .done { display: flex; flex-direction: column; gap: 8px; padding: 6px 0; }
+  .done-ok { font-size: 14px; color: #70c870; }
+  .done-path { font-family: monospace; font-size: 11px; color: #6080b8; overflow-wrap: break-word; }
+  .done-dim { font-size: 10px; color: #404860; }
+  .done-btns { display: flex; gap: 8px; }
+  .dl { background: #183018; color: #60c060; border: 1px solid #284028; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .dl:hover { background: #224022; }
 </style>
