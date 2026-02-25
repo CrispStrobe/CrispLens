@@ -472,6 +472,10 @@ export function convertImages(params) {
   return post('/edit/convert', params);
 }
 
+export function adjustImage(params) {
+  return post('/edit/adjust', params);
+}
+
 export function convertBatch(params, onEvent) {
   const ctrl = new AbortController();
   fetch(`${BASE}/edit/convert-batch`, {

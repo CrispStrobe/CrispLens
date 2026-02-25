@@ -4,12 +4,14 @@
   import { onMount, onDestroy } from 'svelte';
   import MetaPanel from './MetaPanel.svelte';
   import CropModal from './CropModal.svelte';
+  import AdjustModal from './AdjustModal.svelte';
 
   let image = null;
   let loading = false;
   let showMeta = true;      // toggled by I key
   let imgVersion = 0;       // incremented after rotate to bust browser cache
   let showCrop = false;
+  let showAdjust = false;
 
   // Zoom + pan state
   let zoomLevel = 1;
@@ -138,6 +140,9 @@
     // Crop
     if (key === 'c' || key === 'C') { showCrop = true; return; }
 
+    // Adjust
+    if (key === 'a' || key === 'A') { showAdjust = true; return; }
+
     // Fullscreen
     if (key === 'f' || key === 'F' || key === 'F11') {
       if (!document.fullscreenElement) {
@@ -183,10 +188,13 @@
           <span class="zoom-badge">{Math.round(zoomLevel * 100)}%</span>
         {/if}
         <div class="header-actions">
-          <button on:click={() => doRotate('ccw')} title="Rotate CCW (L)">↺</button>
-          <button on:click={() => doRotate('cw')}  title="Rotate CW (R)">↻</button>
-          <button on:click={resetZoom}             title="Fit to window (*)">⊡</button>
-          <button on:click={() => showCrop = true} title="Crop (C)">✂</button>
+          <button on:click={() => doRotate('ccw')}   title="Rotate CCW (L)">↺</button>
+          <button on:click={() => doRotate('cw')}    title="Rotate CW (R)">↻</button>
+          <button on:click={() => doRotate('flip_h')} title="Flip horizontal">↔</button>
+          <button on:click={() => doRotate('flip_v')} title="Flip vertical">↕</button>
+          <button on:click={resetZoom}               title="Fit to window (*)">⊡</button>
+          <button on:click={() => showCrop = true}   title="Crop (C)">✂</button>
+          <button on:click={() => showAdjust = true} title="Adjust image (A)">🎨</button>
           <button
             on:click={() => showMeta = !showMeta}
             class:active-btn={showMeta}
@@ -242,6 +250,21 @@
     imageUrl={previewUrl(image.id)}
     on:close={() => showCrop = false}
     on:cropped={() => { showCrop = false; imgVersion++; }}
+  />
+{/if}
+
+{#if showAdjust && image}
+  <AdjustModal
+    imageId={image.id}
+    imageFilename={image.filename}
+    on:close={() => showAdjust = false}
+    on:adjusted={(e) => {
+      showAdjust = false;
+      if (e.detail.save_as === 'replace' || e.detail.image_id === image.id) {
+        imgVersion++;
+        loadImage(image.id);
+      }
+    }}
   />
 {/if}
 

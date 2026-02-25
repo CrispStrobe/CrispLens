@@ -7,6 +7,7 @@ Endpoints:
   POST /api/edit/convert       — convert/resize one or more images (small batches)
   POST /api/edit/convert-batch — SSE streaming batch convert
   GET  /api/edit/formats       — list supported output formats
+  POST /api/edit/adjust        — tonal/colour adjustments + presets (brightness, contrast, etc.)
 """
 import glob
 import io
@@ -83,6 +84,122 @@ class ConvertRequest(BaseModel):
     save_as: str = 'new_file'       # replace | new_file | output_folder
     output_folder: Optional[str] = None
     suffix: str = '_converted'
+
+
+class AdjustRequest(BaseModel):
+    image_id: int
+    # PIL ImageEnhance (1.0 = neutral)
+    brightness: float = 1.0     # 0.0–2.0
+    contrast:   float = 1.0     # 0.0–2.0
+    saturation: float = 1.0     # 0.0–2.0  (ImageEnhance.Color)
+    sharpness:  float = 1.0     # 0.0–2.0
+    # Tonal / LUT adjustments
+    gamma:      float = 1.0     # 0.5–3.0
+    shadows:    float = 0.0     # –1.0–+1.0 (lift/crush blacks)
+    highlights: float = 0.0     # –1.0–+1.0 (recover/boost whites)
+    warmth:     float = 0.0     # –1.0–+1.0 (cool↔warm)
+    # One-click preset applied BEFORE sliders
+    preset: Optional[str] = None  # 'bw' | 'sepia' | 'auto_contrast' | 'lucky'
+    # Save options
+    save_as: str = 'new_file'   # 'replace' | 'new_file'
+    suffix:  str = '_adj'
+
+
+# ── Adjust helpers ────────────────────────────────────────────────────────────
+
+def _apply_gamma(img, gamma: float):
+    """Apply gamma correction via a per-channel LUT. gamma=1.0 → no change."""
+    if abs(gamma - 1.0) < 1e-4:
+        return img
+    from PIL import Image
+    inv = 1.0 / max(gamma, 0.001)
+    lut = [int(255 * (i / 255.0) ** inv + 0.5) for i in range(256)]
+    if img.mode in ('RGB', 'L'):
+        return img.point(lut * (3 if img.mode == 'RGB' else 1))
+    if img.mode == 'RGBA':
+        r, g, b, a = img.split()
+        r = r.point(lut); g = g.point(lut); b = b.point(lut)
+        return Image.merge('RGBA', (r, g, b, a))
+    return img
+
+
+def _apply_tonal(img, shadows: float, highlights: float):
+    """Lift/crush shadows and pull/push highlights via a combined per-channel LUT."""
+    if abs(shadows) < 1e-4 and abs(highlights) < 1e-4:
+        return img
+    lut = []
+    for i in range(256):
+        t = i / 255.0
+        # shadows: quadratic lift for dark pixels
+        shadow_lift = shadows * ((1.0 - t) ** 2) * 255
+        # highlights: quadratic pull for bright pixels (negative highlights = darken)
+        hi_pull = highlights * (t ** 2) * 128
+        v = int(i + shadow_lift - hi_pull + 0.5)
+        lut.append(max(0, min(255, v)))
+    if img.mode in ('RGB', 'L'):
+        return img.point(lut * (3 if img.mode == 'RGB' else 1))
+    if img.mode == 'RGBA':
+        from PIL import Image
+        r, g, b, a = img.split()
+        r = r.point(lut); g = g.point(lut); b = b.point(lut)
+        return Image.merge('RGBA', (r, g, b, a))
+    return img
+
+
+def _apply_warmth(img, warmth: float):
+    """Shift colour temperature: positive = warm (more red/yellow), negative = cool (more blue)."""
+    if abs(warmth) < 1e-4:
+        return img
+    from PIL import Image
+    shift = int(warmth * 25)
+    has_alpha = img.mode == 'RGBA'
+    work = img.convert('RGB') if has_alpha else img
+    r, g, b = work.split()
+
+    def clamp_shift(ch, delta):
+        lut = [max(0, min(255, i + delta)) for i in range(256)]
+        return ch.point(lut)
+
+    r = clamp_shift(r, shift)
+    b = clamp_shift(b, -shift)
+    result = Image.merge('RGB', (r, g, b))
+    if has_alpha:
+        result.putalpha(img.split()[3])
+    return result
+
+
+def _apply_preset(img, preset: str):
+    """Apply a one-click preset. Returns (modified_img, extra_slider_overrides_dict)."""
+    from PIL import Image, ImageOps, ImageEnhance
+    overrides = {}
+    if preset == 'bw':
+        img = img.convert('L').convert('RGB')
+        overrides['saturation'] = 1.0   # no further color enhancement
+    elif preset == 'sepia':
+        grey = img.convert('L').convert('RGB')
+        r, g, b = grey.split()
+        # classic sepia matrix
+        sepia_r = r.point(lambda i: min(255, int(i * 0.393 + i * 0.769 * 0.5 + i * 0.189 * 0.1)))
+        sepia_g = g.point(lambda i: min(255, int(i * 0.349 + i * 0.686 * 0.5 + i * 0.168 * 0.1)))
+        sepia_b = b.point(lambda i: min(255, int(i * 0.272 + i * 0.534 * 0.5 + i * 0.131 * 0.1)))
+        img = Image.merge('RGB', (sepia_r, sepia_g, sepia_b))
+        overrides['saturation'] = 1.0
+    elif preset == 'auto_contrast':
+        rgb = img.convert('RGB')
+        img = ImageOps.autocontrast(rgb, cutoff=1)
+    elif preset == 'lucky':
+        rgb = img.convert('RGB')
+        img = ImageOps.autocontrast(rgb, cutoff=1)
+        img = ImageEnhance.Brightness(img).enhance(1.05)
+        img = ImageEnhance.Color(img).enhance(1.15)
+    elif preset == 'vivid':
+        img = ImageEnhance.Color(img.convert('RGB')).enhance(1.6)
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+    elif preset == 'cool':
+        img = _apply_warmth(img, -0.5)
+    elif preset == 'warm':
+        img = _apply_warmth(img, 0.5)
+    return img, overrides
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -332,3 +449,118 @@ def convert_batch(body: ConvertRequest, user=Depends(get_current_user)):
         yield f"data: {json.dumps({'done': True, 'total': total, 'ok': ok})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/adjust")
+def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+    """Apply tonal / colour adjustments to a single image.
+
+    Pipeline order: preset → gamma → tonal (shadows/highlights) → warmth → PIL enhancers
+    (brightness / contrast / saturation / sharpness).
+    """
+    from PIL import ImageEnhance
+    PILImage = _get_pil()
+    s = _state()
+
+    if not can_access_image(body.image_id, user, s.db_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        row = conn.execute("SELECT filepath, filename FROM images WHERE id=?", (body.image_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Image not found")
+    filepath = row['filepath']
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    try:
+        img = PILImage.open(filepath)
+        orig_mode = img.mode
+        # Ensure workable mode
+        if img.mode not in ('RGB', 'RGBA', 'L'):
+            img = img.convert('RGB')
+
+        # 1. Preset
+        overrides: Dict[str, float] = {}
+        if body.preset:
+            img, overrides = _apply_preset(img, body.preset)
+
+        # 2. Gamma
+        img = _apply_gamma(img, body.gamma)
+
+        # 3. Tonal (shadows / highlights)
+        img = _apply_tonal(img, body.shadows, body.highlights)
+
+        # 4. Warmth
+        img = _apply_warmth(img, body.warmth)
+
+        # 5. PIL enhancers — use override values from preset where applicable
+        sat_val = overrides.get('saturation', body.saturation)
+        if abs(body.brightness - 1.0) > 1e-4:
+            img = ImageEnhance.Brightness(img).enhance(body.brightness)
+        if abs(body.contrast - 1.0) > 1e-4:
+            img = ImageEnhance.Contrast(img).enhance(body.contrast)
+        if abs(sat_val - 1.0) > 1e-4:
+            img = ImageEnhance.Color(img).enhance(sat_val)
+        if abs(body.sharpness - 1.0) > 1e-4:
+            img = ImageEnhance.Sharpness(img).enhance(body.sharpness)
+
+    except Exception as e:
+        logger.error("Adjust failed for image %d: %s", body.image_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Adjustment failed")
+
+    # Determine output path
+    if body.save_as == 'replace':
+        out_path = filepath
+    else:
+        p = Path(filepath)
+        # Preserve original extension
+        out_path = str(p.parent / (p.stem + body.suffix + p.suffix))
+
+    # Restore alpha if needed
+    if orig_mode == 'RGBA' and img.mode != 'RGBA':
+        img = img.convert('RGBA')
+
+    fmt = img.format or Path(filepath).suffix.lstrip('.').upper() or 'JPEG'
+    if fmt.upper() == 'JPG':
+        fmt = 'JPEG'
+    save_kwargs: Dict[str, Any] = {}
+    if fmt.upper() in ('JPEG', 'WEBP'):
+        save_kwargs['quality'] = 92
+
+    try:
+        img.save(out_path, format=fmt, **save_kwargs)
+    except Exception as e:
+        logger.error("Adjust save failed for %s: %s", out_path, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save adjusted image")
+
+    w, h = img.size
+    new_image_id: Optional[int] = None
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        if body.save_as == 'replace':
+            conn.execute("UPDATE images SET width=?, height=? WHERE id=?", (w, h, body.image_id))
+            conn.commit()
+            _delete_thumbnails(s.thumb_dir, body.image_id)
+            new_image_id = body.image_id
+        else:
+            new_image_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+    finally:
+        if conn:
+            conn.close()
+
+    return {
+        "ok": True,
+        "image_id": body.image_id,
+        "new_image_id": new_image_id,
+        "filepath": out_path,
+        "width": w,
+        "height": h,
+    }

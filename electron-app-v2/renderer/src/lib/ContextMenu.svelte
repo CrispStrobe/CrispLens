@@ -108,6 +108,7 @@
 
   <div class="divider"></div>
   <button on:click={() => handleAction('crop')}>✂ Crop image</button>
+  <button on:click={() => handleAction('adjust')}>🎨 Adjust image</button>
   <button on:click={() => handleAction('convert')}>🔁 Convert / Export</button>
   <div class="divider"></div>
   <button on:click={() => handleAction('download')}>⬇ Download file</button>

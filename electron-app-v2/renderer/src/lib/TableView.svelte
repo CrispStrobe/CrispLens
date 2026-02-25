@@ -2,6 +2,7 @@
   import { galleryImages, selectedId, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums } from '../stores.js';
   import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
   import ContextMenu from './ContextMenu.svelte';
+  import AdjustModal from './AdjustModal.svelte';
 
   function openLightbox(id) {
     selectedId.set(id);
@@ -63,6 +64,7 @@
   let menuPos = { x: 0, y: 0 };
   let menuShow = false;
   let menuImg = null;
+  let adjustItem = null;
 
   function onContextMenu(e, img) {
     e.preventDefault();
@@ -114,6 +116,8 @@
       sidebarView.set('all');
     } else if (action === 'copy-path') {
       navigator.clipboard.writeText(item.filepath).catch(() => {});
+    } else if (action === 'adjust') {
+      adjustItem = item;
     }
   }
 </script>
@@ -213,6 +217,15 @@
     />
   {/if}
 </div>
+
+{#if adjustItem}
+  <AdjustModal
+    imageId={adjustItem.id}
+    imageFilename={adjustItem.filename}
+    on:close={() => adjustItem = null}
+    on:adjusted={() => adjustItem = null}
+  />
+{/if}
 
 <style>
   .table-container { flex: 1; overflow: auto; background: #121218; padding: 10px; display: flex; flex-direction: column; }
