@@ -33,22 +33,23 @@
   }
 
   // ── Collapsed / expanded rows ──────────────────────────────────────────────
-  let expandedRows = new Set();
+  // Use a plain object keyed by id — reassigning triggers Svelte reactivity
+  let expandedRows = {};
   let expandAll = false;
 
-  function toggleRow(id) {
-    expandedRows = expandedRows.has(id)
-      ? (expandedRows.delete(id), new Set(expandedRows))
-      : new Set([...expandedRows, id]);
+  function toggleRow(id, e) {
+    e.stopPropagation();
+    if (expandedRows[id]) {
+      const { [id]: _, ...rest } = expandedRows;
+      expandedRows = rest;
+    } else {
+      expandedRows = { ...expandedRows, [id]: true };
+    }
   }
 
   function toggleExpandAll() {
     expandAll = !expandAll;
-    expandedRows = new Set();
-  }
-
-  function isExpanded(id) {
-    return expandAll || expandedRows.has(id);
+    expandedRows = {};
   }
 
   // ── Tag click → filter ─────────────────────────────────────────────────────
@@ -126,76 +127,77 @@
   <table>
     <thead>
       <tr>
-        <th class="thumb">Preview</th>
+        <th class="col-thumb">Preview</th>
         <th>{$t('person_name')}</th>
         <th class="col-date">{$t('search_by_date')}</th>
         <th class="col-detail">{$t('details')} / {$t('tags')}</th>
         <th>Path</th>
-        <th class="col-expand"></th>
+        <th class="col-toggle"></th>
       </tr>
     </thead>
     <tbody>
-      {#each $galleryImages as img}
+      {#each $galleryImages as img (img.id)}
         {@const originPath = img.origin_path ?? img.local_path ?? ''}
         {@const serverPath = img.server_path ?? img.filepath ?? ''}
         {@const originDiffers = originPath && originPath !== serverPath}
         {@const displayPath = originPath || serverPath}
-        {@const expanded = isExpanded(img.id)}
+        <!-- Inline reference to expandAll and expandedRows so Svelte tracks them -->
+        {@const rowExpanded = expandAll || !!expandedRows[img.id]}
         <tr
           class:selected={$selectedItems.has(img.id)}
-          class:expanded
+          class:expanded={rowExpanded}
           on:click={(e) => handleSelect(e, img)}
           on:dblclick={() => openLightbox(img.id)}
           on:contextmenu={(e) => onContextMenu(e, img)}
         >
-          <td class="thumb">
+          <td class="col-thumb">
             <img src={thumbnailUrl(img.id, 60)} alt={img.filename} loading="lazy" />
           </td>
           <td class="people">
             {img.people_names || '-'}
-            {#if expanded}
+            {#if rowExpanded}
               <div class="camera-sub">{img.camera_model || ''}</div>
             {/if}
           </td>
-          {#if expanded}
+          {#if rowExpanded}
             <td class="date">
               <div title="Taken">{img.taken_at || '-'}</div>
               <div class="sub-date" title="Created">{img.created_at || '-'}</div>
             </td>
-            <td class="tags">
+            <td class="col-detail tags">
               <div class="desc">{img.ai_description || ''}</div>
               <div class="tag-chips">
                 {#each (img.ai_tags_list || []) as tag}
-                  <span class="chip" on:click={(e) => filterByTag(tag, e)} title="Filter by tag: {tag}">{tag}</span>
+                  <span class="chip" on:click={(e) => filterByTag(tag, e)} title="Filter by: {tag}">{tag}</span>
                 {/each}
               </div>
             </td>
           {:else}
             <td class="date collapsed-date">
-              <div>{img.taken_at ? img.taken_at.slice(0,10) : '-'}</div>
+              {img.taken_at ? img.taken_at.slice(0, 10) : '-'}
             </td>
-            <td class="tags">
+            <td class="col-detail tags">
               <div class="tag-chips">
-                {#each (img.ai_tags_list || []).slice(0, 3) as tag}
-                  <span class="chip" on:click={(e) => filterByTag(tag, e)} title="Filter by tag: {tag}">{tag}</span>
+                {#each (img.ai_tags_list || []).slice(0, 4) as tag}
+                  <span class="chip" on:click={(e) => filterByTag(tag, e)} title="Filter by: {tag}">{tag}</span>
                 {/each}
-                {#if (img.ai_tags_list || []).length > 3}
-                  <span class="chip chip-more">+{(img.ai_tags_list || []).length - 3}</span>
+                {#if (img.ai_tags_list || []).length > 4}
+                  <span class="chip chip-more">+{(img.ai_tags_list || []).length - 4}</span>
                 {/if}
               </div>
             </td>
           {/if}
           <td class="path">
             <div class="path-origin" title={displayPath}>{displayPath}</div>
-            {#if expanded && originDiffers}
+            {#if rowExpanded && originDiffers}
               <div class="path-vps" title={serverPath}>
                 <span class="path-label">server</span>{serverPath}
               </div>
             {/if}
           </td>
-          <td class="col-expand">
-            <button class="expand-btn" on:click|stopPropagation={() => toggleRow(img.id)} title={expanded ? 'Collapse' : 'Expand'}>
-              {expanded ? '▲' : '▼'}
+          <td class="col-toggle">
+            <button class="expand-btn" on:click={(e) => toggleRow(img.id, e)} title={rowExpanded ? 'Collapse row' : 'Expand row'}>
+              {rowExpanded ? '▲' : '▼'}
             </button>
           </td>
         </tr>
@@ -213,12 +215,13 @@
 </div>
 
 <style>
-  .table-container { flex: 1; overflow: auto; background: #121218; padding: 10px; }
+  .table-container { flex: 1; overflow: auto; background: #121218; padding: 10px; display: flex; flex-direction: column; }
 
   .table-toolbar {
     display: flex;
     justify-content: flex-end;
     margin-bottom: 6px;
+    flex-shrink: 0;
   }
   .expand-all-btn {
     font-size: 11px;
@@ -237,8 +240,9 @@
   tr:hover { background: #1e1e2e; }
   tr.selected { background: #222a45; border-left-color: #a0c4ff; }
 
-  .thumb { width: 70px; }
-  .thumb img { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; display: block; background: #1a1a28; }
+  .col-thumb { width: 70px; }
+  .col-thumb img { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; display: block; background: #1a1a28; }
+
   .people { font-weight: 600; color: #a0c4ff; min-width: 80px; }
   .camera-sub { font-size: 9px; color: #505070; font-weight: 400; margin-top: 2px; }
 
@@ -248,11 +252,12 @@
   .sub-date { font-size: 9px; color: #505070; margin-top: 2px; }
 
   .col-detail { min-width: 160px; }
+  .tags {}
   .desc { font-size: 11px; color: #e0e0e0; margin-bottom: 4px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
   .tag-chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .chip {
     background: #252545; color: #8090b8; font-size: 9px; padding: 1px 5px; border-radius: 8px;
-    cursor: pointer; transition: background 0.1s, color 0.1s;
+    cursor: pointer; transition: background 0.1s, color 0.1s; user-select: none;
   }
   .chip:hover { background: #3a3a6a; color: #a0c4ff; }
   .chip-more { background: #1e1e38; color: #4a5070; cursor: default; }
@@ -272,15 +277,10 @@
     margin-right: 4px; letter-spacing: 0.5px;
   }
 
-  .col-expand { width: 28px; }
+  .col-toggle { width: 28px; }
   .expand-btn {
-    background: transparent;
-    border: none;
-    color: #3a3a58;
-    font-size: 9px;
-    padding: 2px 4px;
-    cursor: pointer;
-    border-radius: 4px;
+    background: transparent; border: none; color: #3a3a58;
+    font-size: 9px; padding: 2px 4px; cursor: pointer; border-radius: 4px;
   }
   .expand-btn:hover { color: #7080a0; background: #1e1e2e; }
 </style>

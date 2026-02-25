@@ -125,9 +125,9 @@
     on:input={onPathSearch}
   />
 
-  <div class="mode-switch">
-    <button class:active={$galleryMode === 'grid'} on:click={() => galleryMode.set('grid')}>⊞</button>
-    <button class:active={$galleryMode === 'table'} on:click={() => galleryMode.set('table')}>≡</button>
+  <div class="mode-switch" title="View mode">
+    <button class:active={$galleryMode === 'grid'} on:click={() => galleryMode.set('grid')} title="Grid view">⊞</button>
+    <button class:active={$galleryMode === 'table'} on:click={() => galleryMode.set('table')} title="List view">☰</button>
   </div>
 
   <!-- Sort -->
@@ -143,8 +143,8 @@
   {/if}
 
   <!-- Thumb size slider — only functional in grid mode -->
-  <label class="size-label" class:disabled={$galleryMode !== 'grid'} title={$galleryMode !== 'grid' ? 'Thumbnail size only applies in grid view' : ''}>
-    <span>⊞</span>
+  <label class="size-label" class:disabled={$galleryMode !== 'grid'} title={$galleryMode !== 'grid' ? 'Thumbnail size (grid mode only)' : 'Thumbnail size'}>
+    <span class="size-lbl">Size</span>
     <input
       type="range" min="100" max="400" step="10"
       bind:value={$thumbSize}
@@ -201,17 +201,22 @@
   .size-label {
     display: flex;
     align-items: center;
-    gap: 6px;
-    color: #7080a0;
-    font-size: 16px;
+    gap: 4px;
     transition: opacity 0.2s;
   }
+  .size-lbl {
+    font-size: 10px;
+    color: #505070;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+  }
   .size-label.disabled {
-    opacity: 0.35;
+    opacity: 0.3;
     cursor: not-allowed;
   }
   .size-label input[type=range] {
-    width: 90px;
+    width: 80px;
     padding: 0;
     border: none;
     background: transparent;

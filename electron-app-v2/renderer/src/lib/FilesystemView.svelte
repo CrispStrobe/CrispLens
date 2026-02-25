@@ -1,9 +1,10 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { fsCurrentPath, backgroundTask, galleryRefreshTick } from '../stores.js';
+  import { fsCurrentPath, backgroundTask, galleryRefreshTick, filters, sidebarView, selectedId } from '../stores.js';
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
-           renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem } from '../api.js';
+           renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
+           downloadImage, openInOs, openFolderInOs } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const hasFSA      = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -297,6 +298,89 @@
     selected = new Set(entries.filter(e => isSelectable(e)).map(e => e.path));
   }
   function clearSelection() { selected = new Set(); lastClickedPath = null; }
+
+  // ── Context menu ───────────────────────────────────────────────────────────
+  let ctxMenu = null;   // { entry, x, y } | null
+  let ctxVisible = false;
+  let ctxMenuEl;
+
+  function showCtxMenu(e, entry) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { entry, x: e.clientX, y: e.clientY };
+    ctxVisible = false;
+  }
+
+  function closeCtxMenu() { ctxMenu = null; ctxVisible = false; }
+
+  // After ctxMenuEl binds, check overflow and make visible
+  $: if (ctxMenu && ctxMenuEl) {
+    const rect = ctxMenuEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 8;
+    if (rect.right  > vw - pad) ctxMenu = { ...ctxMenu, x: Math.max(pad, ctxMenu.x - rect.width) };
+    if (rect.bottom > vh - pad) ctxMenu = { ...ctxMenu, y: Math.max(pad, ctxMenu.y - rect.height) };
+    ctxVisible = true;
+  }
+
+  async function handleCtxAction(action) {
+    const entry = ctxMenu?.entry;
+    closeCtxMenu();
+    if (!entry) return;
+
+    if (action === 'navigate') {
+      navigate(entry.path);
+    } else if (action === 'browse-gallery') {
+      // Show images in this folder in the gallery
+      const folderPath = entry.is_dir ? entry.path : entry.path.substring(0, entry.path.lastIndexOf('/'));
+      filters.set({ person: '', tag: '', scene: '', path: '', dateFrom: '', dateTo: '', folder: folderPath });
+      sidebarView.set('all');
+    } else if (action === 'view-lightbox') {
+      if (entry.image_id) selectedId.set(entry.image_id);
+    } else if (action === 'download') {
+      if (entry.image_id) downloadImage(entry.image_id, entry.name);
+    } else if (action === 'open-os') {
+      if (entry.image_id) {
+        const res = await openInOs(entry.image_id).catch(() => null);
+        if (res && !res.ok && res.headless) alert(`Server path:\n${res.path}`);
+      }
+    } else if (action === 'open-folder-os') {
+      if (entry.image_id) {
+        const res = await openFolderInOs(entry.image_id).catch(() => null);
+        if (res && !res.ok && res.headless) {
+          await navigator.clipboard.writeText(res.path).catch(() => {});
+          alert(`Server folder (copied):\n${res.path}`);
+        }
+      }
+    } else if (action === 'add-to-db') {
+      selected = new Set([entry.path]);
+      startAddToDb();
+    } else if (action === 'rename') {
+      selected = new Set([entry.path]);
+      openRename();
+    } else if (action === 'trash') {
+      selected = new Set([entry.path]);
+      doTrash();
+    } else if (action === 'copy-path') {
+      navigator.clipboard.writeText(entry.path).catch(() => {});
+    }
+  }
+
+  // ── Download selected (server mode, in-DB files) ───────────────────────────
+  async function downloadSelected() {
+    const inDbEntries = [...selected]
+      .map(p => entries.find(e => e.path === p))
+      .filter(e => e && !e.is_dir && e.in_db && e.image_id);
+    for (let i = 0; i < inDbEntries.length; i++) {
+      downloadImage(inDbEntries[i].image_id, inDbEntries[i].name);
+      if (i < inDbEntries.length - 1) await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  $: selectedInDbCount = [...selected]
+    .map(p => entries.find(e => e.path === p))
+    .filter(e => e && !e.is_dir && e?.in_db && e?.image_id).length;
 
   // ── Server mode helpers ────────────────────────────────────────────────────
   function dbStatusClass(entry) {
@@ -855,6 +939,7 @@
                   ? navigate(entry.path)
                   : toggleSelect(entry.path, e.shiftKey, e.metaKey || e.ctrlKey)}
                 on:keydown={e => e.key === 'Enter' && (entry.is_dir ? navigate(entry.path) : toggleSelect(entry.path))}
+                on:contextmenu={(e) => showCtxMenu(e, entry)}
               >
                 {#if selectable}
                   <div class="cb"
@@ -936,6 +1021,7 @@
                     ? navigate(entry.path)
                     : toggleSelect(entry.path, e.shiftKey, e.metaKey || e.ctrlKey)}
                   on:keydown={e => e.key === 'Enter' && (entry.is_dir ? navigate(entry.path) : toggleSelect(entry.path))}
+                  on:contextmenu={(e) => showCtxMenu(e, entry)}
                   role="row"
                   tabindex="0"
                 >
@@ -1044,6 +1130,11 @@
         <button class="primary" on:click={startAddToDb}>
           {cloudMode ? '⬇ Add to DB from cloud' : localMode ? '⬆ Upload to DB' : 'Add to DB'}
         </button>
+        {#if !cloudMode && !localMode && selectedInDbCount > 0}
+          <button class="btn-sm" on:click={downloadSelected} title="Download {selectedInDbCount} file{selectedInDbCount === 1 ? '' : 's'} from DB">
+            ⬇ Download ({selectedInDbCount})
+          </button>
+        {/if}
         {#if cloudMode && cloudDriveId !== null}
           <button class="btn-sm" on:click={openRename}
             disabled={selected.size !== 1} title="Rename selected item">✏ Rename</button>
@@ -1057,6 +1148,52 @@
     </div>
   {/if}
 </div>
+
+<!-- Context menu (filesystem entries) -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<svelte:window on:click={closeCtxMenu} on:keydown={(e) => e.key === 'Escape' && closeCtxMenu()} />
+{#if ctxMenu}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <div
+    class="fs-ctx-menu"
+    bind:this={ctxMenuEl}
+    style="top:{ctxMenu.y}px; left:{ctxMenu.x}px; opacity:{ctxVisible ? 1 : 0};"
+    on:click|stopPropagation
+  >
+    {#if ctxMenu.entry.is_dir}
+      <button on:click={() => handleCtxAction('navigate')}>📁 Open folder</button>
+      <button on:click={() => handleCtxAction('browse-gallery')}>🔍 Browse in Gallery</button>
+      <div class="ctx-divider"></div>
+      <button on:click={() => handleCtxAction('add-to-db')}>＋ Add all to DB</button>
+      {#if cloudMode}
+        <div class="ctx-divider"></div>
+        <button on:click={() => handleCtxAction('rename')}>✏ Rename</button>
+        <button on:click={() => handleCtxAction('trash')}>🗑 Trash</button>
+      {/if}
+    {:else}
+      {#if !cloudMode && !localMode && ctxMenu.entry.in_db && ctxMenu.entry.image_id}
+        <button on:click={() => handleCtxAction('view-lightbox')}>👁 View in Lightbox</button>
+        <button on:click={() => handleCtxAction('browse-gallery')}>🔍 Browse siblings</button>
+        <div class="ctx-divider"></div>
+        <button on:click={() => handleCtxAction('download')}>⬇ Download</button>
+        <button on:click={() => handleCtxAction('open-os')}>🖼 Open in OS</button>
+        <button on:click={() => handleCtxAction('open-folder-os')}>📂 Open folder in OS</button>
+        <div class="ctx-divider"></div>
+      {:else if !cloudMode && !localMode}
+        <button on:click={() => handleCtxAction('add-to-db')}>＋ Add to DB</button>
+        <div class="ctx-divider"></div>
+      {/if}
+      {#if cloudMode}
+        <button on:click={() => handleCtxAction('add-to-db')}>⬇ Add to DB from cloud</button>
+        <div class="ctx-divider"></div>
+        <button on:click={() => handleCtxAction('rename')}>✏ Rename</button>
+        <button on:click={() => handleCtxAction('trash')}>🗑 Trash</button>
+        <div class="ctx-divider"></div>
+      {/if}
+      <button on:click={() => handleCtxAction('copy-path')}>📋 Copy path</button>
+    {/if}
+  </div>
+{/if}
 
 <!-- Rename modal -->
 {#if renameModal}
@@ -1538,4 +1675,35 @@
     padding: 6px 8px;
   }
   .rename-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ── Filesystem context menu ── */
+  .fs-ctx-menu {
+    position: fixed;
+    background: #2a2a42;
+    border: 1px solid #4a4a6a;
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 190px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.55);
+    z-index: 3000;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.07s;
+  }
+  .fs-ctx-menu button {
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    text-align: left;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .fs-ctx-menu button:hover { background: #3a3a5a; color: #a0c4ff; }
+  .ctx-divider { height: 1px; background: #3a3a5a; margin: 4px; }
 </style>

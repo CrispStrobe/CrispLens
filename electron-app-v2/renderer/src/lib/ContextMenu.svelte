@@ -9,6 +9,10 @@
   const dispatch = createEventDispatcher();
 
   let showAlbumSubmenu = false;
+  let menuEl;
+  let adjustedX = x;
+  let adjustedY = y;
+  let visible = false;
 
   // Parse people in this image
   $: people = item?.people_names
@@ -34,6 +38,18 @@
   onMount(() => {
     window.addEventListener('click', onWindowClick);
     window.addEventListener('keydown', onKey);
+
+    // Adjust position to stay inside viewport
+    if (menuEl) {
+      const rect = menuEl.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const pad = 8;
+
+      adjustedX = rect.right  > vw - pad ? Math.max(pad, x - rect.width)  : x;
+      adjustedY = rect.bottom > vh - pad ? Math.max(pad, y - rect.height)  : y;
+    }
+    visible = true;
   });
   onDestroy(() => {
     window.removeEventListener('click', onWindowClick);
@@ -42,11 +58,16 @@
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
-<div class="context-menu" style="top: {y}px; left: {x}px" on:click|stopPropagation>
+<div
+  class="context-menu"
+  bind:this={menuEl}
+  style="top: {adjustedY}px; left: {adjustedX}px; opacity: {visible ? 1 : 0};"
+  on:click|stopPropagation
+>
   <button on:click={() => handleAction('view')}>👁 {$t('view')}</button>
   <button on:click={() => handleAction('open')}>🖼 {$t('view')} (External)</button>
-  <button on:click={() => handleAction('open-folder')}>📂 {$t('tab_folders')} (External)</button>
-  <button on:click={() => handleAction('browse-folder')}>🔍 {$t('tab_folders')} (Internal)</button>
+  <button on:click={() => handleAction('open-folder')}>📂 Open Folder</button>
+  <button on:click={() => handleAction('browse-folder')}>🔍 Browse Folder</button>
 
   <!-- Add to Album submenu -->
   <div class="divider"></div>
@@ -111,6 +132,7 @@
     z-index: 2000;
     display: flex;
     flex-direction: column;
+    transition: opacity 0.08s;
   }
   button {
     background: transparent;
