@@ -82,6 +82,13 @@ PROVIDER_CONFIGS: Dict[str, Dict] = {
         'default_model': 'llava',
         'requires_key': False,
     },
+    'bfl': {
+        'display_name': 'BFL (FLUX Image Editing)',
+        'base_url': 'https://api.bfl.ai',
+        'models_endpoint': None,
+        'default_model': None,
+        'requires_key': True,
+    },
 }
 
 

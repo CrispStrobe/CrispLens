@@ -5,6 +5,7 @@
   import MetaPanel from './MetaPanel.svelte';
   import CropModal from './CropModal.svelte';
   import AdjustModal from './AdjustModal.svelte';
+  import AIEditModal from './AIEditModal.svelte';
 
   let image = null;
   let loading = false;
@@ -12,6 +13,7 @@
   let imgVersion = 0;       // incremented after rotate to bust browser cache
   let showCrop = false;
   let showAdjust = false;
+  let showAIEdit = false;
 
   // Zoom + pan state
   let zoomLevel = 1;
@@ -195,6 +197,7 @@
           <button on:click={resetZoom}               title="Fit to window (*)">⊡</button>
           <button on:click={() => showCrop = true}   title="Crop (C)">✂</button>
           <button on:click={() => showAdjust = true} title="Adjust image (A)">🎨</button>
+          <button on:click={() => showAIEdit = true} title="AI Edit (BFL)">🤖</button>
           <button
             on:click={() => showMeta = !showMeta}
             class:active-btn={showMeta}
@@ -265,6 +268,15 @@
         loadImage(image.id);
       }
     }}
+  />
+{/if}
+
+{#if showAIEdit && image}
+  <AIEditModal
+    imageId={image.id}
+    imageFilename={image.filename}
+    on:close={() => showAIEdit = false}
+    on:edited={() => { showAIEdit = false; imgVersion++; loadImage(image.id); }}
   />
 {/if}
 

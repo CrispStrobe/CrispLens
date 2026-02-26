@@ -6,7 +6,7 @@
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../stores.js';
-  import { fetchEditFormats, convertImages, convertBatch, downloadImage } from '../api.js';
+  import { fetchEditFormats, convertImages, convertBatch, downloadImage, outpaintImage } from '../api.js';
 
   export let imageIds = [];
 
@@ -29,6 +29,13 @@
   let done = false;
   let results = [];
   let _sse = null;
+
+  // Outpaint state
+  let addTop    = 256;
+  let addBottom = 256;
+  let addLeft   = 256;
+  let addRight  = 256;
+  let outpaintPrompt = '';
 
   $: currentFormat = formats.find(f => f.id === selectedFormat);
   $: isBatch = imageIds.length > 1;
@@ -58,6 +65,29 @@
     results = [];
     progress = 0;
     progressTotal = imageIds.length;
+
+    // Outpaint is a separate BFL endpoint, not a standard convert
+    if (resizeMode === 'outpaint') {
+      try {
+        const r = await outpaintImage({
+          image_id:   imageIds[0],
+          add_top:    addTop,
+          add_bottom: addBottom,
+          add_left:   addLeft,
+          add_right:  addRight,
+          prompt:     outpaintPrompt,
+          save_as:    saveAs,
+          suffix,
+        });
+        results = [{ ok: true, filepath: r.filepath, new_image_id: r.new_image_id }];
+        done = true;
+      } catch (e) {
+        error = e.message;
+      } finally {
+        saving = false;
+      }
+      return;
+    }
 
     const params = {
       image_ids: imageIds,
@@ -141,27 +171,27 @@
           <button class="primary" on:click={handleClose}>{$t('close')}</button>
         </div>
       {:else}
-        <!-- Format buttons -->
-        <div class="row">
-          <span class="lbl">{$t('conv_format')}</span>
-          <div class="fmt-btns">
-            {#each formats as f}
-              <button
-                class="fmt-btn"
-                class:active={selectedFormat === f.id}
-                on:click={() => selectedFormat = f.id}
-              >{f.label}</button>
-            {/each}
-          </div>
-        </div>
-
-        <!-- Quality (JPEG / WebP only) -->
-        {#if currentFormat?.quality_option}
+        <!-- Format + Quality (hidden when outpaint selected) -->
+        {#if resizeMode !== 'outpaint'}
           <div class="row">
-            <span class="lbl">{$t('conv_quality')}</span>
-            <input type="range" min="50" max="100" step="1" bind:value={quality} />
-            <span class="val">{quality}%</span>
+            <span class="lbl">{$t('conv_format')}</span>
+            <div class="fmt-btns">
+              {#each formats as f}
+                <button
+                  class="fmt-btn"
+                  class:active={selectedFormat === f.id}
+                  on:click={() => selectedFormat = f.id}
+                >{f.label}</button>
+              {/each}
+            </div>
           </div>
+          {#if currentFormat?.quality_option}
+            <div class="row">
+              <span class="lbl">{$t('conv_quality')}</span>
+              <input type="range" min="50" max="100" step="1" bind:value={quality} />
+              <span class="val">{quality}%</span>
+            </div>
+          {/if}
         {/if}
 
         <!-- Resize mode -->
@@ -171,10 +201,28 @@
             <option value="none">{$t('conv_no_resize')}</option>
             <option value="fit">{$t('conv_fit')}</option>
             <option value="exact">{$t('conv_exact')}</option>
+            <option value="outpaint" disabled={isBatch}>{$t('conv_resize_outpaint')}{isBatch ? ' (single only)' : ''}</option>
           </select>
         </div>
 
-        {#if resizeMode !== 'none'}
+        {#if resizeMode === 'outpaint'}
+          <div class="row">
+            <span class="lbl">{$t('bfl_add_top')}</span>
+            <input type="number" bind:value={addTop}    min="0" max="2048" step="16" style="width:70px" />
+            <span class="lbl" style="margin-left:6px">{$t('bfl_add_bottom')}</span>
+            <input type="number" bind:value={addBottom} min="0" max="2048" step="16" style="width:70px" />
+          </div>
+          <div class="row">
+            <span class="lbl">{$t('bfl_add_left')}</span>
+            <input type="number" bind:value={addLeft}   min="0" max="2048" step="16" style="width:70px" />
+            <span class="lbl" style="margin-left:6px">{$t('bfl_add_right')}</span>
+            <input type="number" bind:value={addRight}  min="0" max="2048" step="16" style="width:70px" />
+          </div>
+          <div class="row">
+            <span class="lbl">{$t('bfl_prompt_optional')}</span>
+            <input type="text" bind:value={outpaintPrompt} placeholder="auto" style="flex:1" />
+          </div>
+        {:else if resizeMode !== 'none'}
           <div class="row">
             <span class="lbl">{$t('conv_max_size')}</span>
             <input type="number" bind:value={maxWidth}  min="1" max="10000" style="width:72px" />

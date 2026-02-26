@@ -506,7 +506,7 @@ def _start_background_scanner():
 
 # ─── Include routers ──────────────────────────────────────────────────────────
 
-from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives
+from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives, bfl_edit
 
 app.include_router(images.router,       prefix="/api/images",        tags=["images"])
 app.include_router(users.router,        prefix="/api/users",         tags=["users"])
@@ -524,6 +524,7 @@ app.include_router(face_cluster.router, prefix="/api/faces",         tags=["face
 app.include_router(editing.router,      prefix="/api/edit",          tags=["editing"])
 app.include_router(ingest.router,       prefix="/api/ingest",        tags=["ingest"])
 app.include_router(cloud_drives.router, prefix="/api/cloud-drives",  tags=["cloud-drives"])
+app.include_router(bfl_edit.router,    prefix="/api/bfl",            tags=["bfl"])
 
 # ─── Tags & stats convenience routes ─────────────────────────────────────────
 

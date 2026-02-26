@@ -263,6 +263,20 @@ const EN = {
   adj_replace_orig: 'Replace original', adj_new_file: 'New file', adj_suffix: 'Suffix',
   adj_applying: 'Applying…', adj_reset_all: 'Reset All', adj_saved: '✓ Saved',
   selected_label: 'selected',
+  // BFL AI editing
+  bfl_outpaint: 'Outpaint', bfl_inpaint: 'Inpaint', bfl_ai_edit: 'AI Edit',
+  bfl_add_top: 'Add Top', bfl_add_bottom: 'Add Bottom',
+  bfl_add_left: 'Add Left', bfl_add_right: 'Add Right',
+  bfl_mask_x: 'Mask X', bfl_mask_y: 'Mask Y',
+  bfl_mask_w: 'Mask W', bfl_mask_h: 'Mask H',
+  bfl_prompt_optional: 'Prompt (optional)',
+  bfl_edit_prompt: 'Describe the edit…',
+  bfl_inpaint_prompt: 'What to generate in the masked area…',
+  bfl_model: 'Model',
+  bfl_applying: 'Generating…', bfl_done: '✓ Generated',
+  bfl_no_key: 'BFL API key not configured — add it in Settings → API Keys',
+  ctx_ai_edit: 'AI Edit (BFL)',
+  conv_resize_outpaint: 'Outpaint (AI)',
 };
 
 export const TRANSLATIONS = {
@@ -481,6 +495,20 @@ export const TRANSLATIONS = {
     adj_replace_orig: 'Original ersetzen', adj_new_file: 'Neue Datei', adj_suffix: 'Suffix',
     adj_applying: 'Wird angewendet…', adj_reset_all: 'Alles zurücksetzen', adj_saved: '✓ Gespeichert',
     selected_label: 'ausgewählt',
+    // BFL AI-Bildbearbeitung
+    bfl_outpaint: 'Ausmalen', bfl_inpaint: 'Einmalen', bfl_ai_edit: 'KI-Bearbeitung',
+    bfl_add_top: 'Oben hinzufügen', bfl_add_bottom: 'Unten hinzufügen',
+    bfl_add_left: 'Links hinzufügen', bfl_add_right: 'Rechts hinzufügen',
+    bfl_mask_x: 'Maske X', bfl_mask_y: 'Maske Y',
+    bfl_mask_w: 'Maske Breite', bfl_mask_h: 'Maske Höhe',
+    bfl_prompt_optional: 'Prompt (optional)',
+    bfl_edit_prompt: 'Bearbeitung beschreiben…',
+    bfl_inpaint_prompt: 'Was im markierten Bereich erzeugen…',
+    bfl_model: 'Modell',
+    bfl_applying: 'Wird generiert…', bfl_done: '✓ Generiert',
+    bfl_no_key: 'BFL-API-Schlüssel fehlt — in Einstellungen → API-Schlüssel hinzufügen',
+    ctx_ai_edit: 'KI-Bearbeitung (BFL)',
+    conv_resize_outpaint: 'Ausmalen (KI)',
   },
 };
 

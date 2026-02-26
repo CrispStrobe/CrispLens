@@ -3,6 +3,7 @@
   import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
   import ContextMenu from './ContextMenu.svelte';
   import AdjustModal from './AdjustModal.svelte';
+  import AIEditModal from './AIEditModal.svelte';
 
   function openLightbox(id) {
     selectedId.set(id);
@@ -65,6 +66,7 @@
   let menuShow = false;
   let menuImg = null;
   let adjustItem = null;
+  let aiEditItem = null;
 
   function onContextMenu(e, img) {
     e.preventDefault();
@@ -118,6 +120,8 @@
       navigator.clipboard.writeText(item.filepath).catch(() => {});
     } else if (action === 'adjust') {
       adjustItem = item;
+    } else if (action === 'ai-edit') {
+      aiEditItem = item;
     }
   }
 </script>
@@ -224,6 +228,15 @@
     imageFilename={adjustItem.filename}
     on:close={() => adjustItem = null}
     on:adjusted={() => adjustItem = null}
+  />
+{/if}
+
+{#if aiEditItem}
+  <AIEditModal
+    imageId={aiEditItem.id}
+    imageFilename={aiEditItem.filename}
+    on:close={() => aiEditItem = null}
+    on:edited={() => aiEditItem = null}
   />
 {/if}
 

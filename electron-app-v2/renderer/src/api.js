@@ -476,6 +476,12 @@ export function adjustImage(params) {
   return post('/edit/adjust', params);
 }
 
+// ── BFL AI Image Editing ──────────────────────────────────────────────────────
+
+export function outpaintImage(params) { return post('/bfl/outpaint', params); }
+export function inpaintImage(params)  { return post('/bfl/inpaint',  params); }
+export function aiEditImage(params)   { return post('/bfl/edit',     params); }
+
 export function convertBatch(params, onEvent) {
   const ctrl = new AbortController();
   fetch(`${BASE}/edit/convert-batch`, {

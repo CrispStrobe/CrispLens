@@ -109,6 +109,7 @@
   <div class="divider"></div>
   <button on:click={() => handleAction('crop')}>✂ {$t('ctx_crop_image')}</button>
   <button on:click={() => handleAction('adjust')}>🎨 {$t('ctx_adjust_image')}</button>
+  <button on:click={() => handleAction('ai-edit')}>🤖 {$t('ctx_ai_edit')}</button>
   <button on:click={() => handleAction('convert')}>🔁 {$t('ctx_convert_export')}</button>
   <div class="divider"></div>
   <button on:click={() => handleAction('download')}>⬇ {$t('ctx_download_file')}</button>

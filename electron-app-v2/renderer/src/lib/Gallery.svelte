@@ -6,6 +6,7 @@
   import CropModal from './CropModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
   import AdjustModal from './AdjustModal.svelte';
+  import AIEditModal from './AIEditModal.svelte';
 
   // Virtual scroll: only render items in/near viewport
   let containerEl;
@@ -89,6 +90,7 @@
   let cropItem = null;
   let convertIds = [];
   let adjustItem = null;
+  let aiEditItem = null;
 
   function onContextMenu(e, img) {
     e.preventDefault();
@@ -144,6 +146,8 @@
       cropItem = item;
     } else if (action === 'adjust') {
       adjustItem = item;
+    } else if (action === 'ai-edit') {
+      aiEditItem = item;
     } else if (action === 'convert') {
       convertIds = [item.id];
     }
@@ -279,6 +283,15 @@
     imageFilename={adjustItem.filename}
     on:close={() => adjustItem = null}
     on:adjusted={() => adjustItem = null}
+  />
+{/if}
+
+{#if aiEditItem}
+  <AIEditModal
+    imageId={aiEditItem.id}
+    imageFilename={aiEditItem.filename}
+    on:close={() => aiEditItem = null}
+    on:edited={() => aiEditItem = null}
   />
 {/if}
 
