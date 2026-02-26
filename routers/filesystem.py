@@ -60,22 +60,54 @@ def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
 
 def _check_path_allowed(path: Path, user) -> None:
     """
-    Raise 403 if a non-admin user tries to browse a path outside their allowed folders.
-    Admins and mediamanagers can browse anywhere on the server.
-    Regular users are restricted to FACE_REC_DATA_DIR and their explicit allowed_folders.
+    Raise 403 if the path is blocked or (for non-admin users) not in any allowed root.
+
+    Allowed roots for non-admin/non-mediamanager users (in priority order):
+      1. security.paths.allowed_paths from config.yaml
+      2. FACE_REC_DATA_DIR environment variable
+      3. user.allowed_folders (per-user DB column)
+
+    Blocked paths (security.paths.blocked_paths) are enforced for ALL users including admins.
     """
+    s = _state()
+    cfg_sec = (s.config or {}).get('security', {}).get('paths', {})
+    blocked: list[Path] = [Path(p).resolve() for p in (cfg_sec.get('blocked_paths') or [])]
+
+    resolved = path.resolve()
+
+    # Blocked paths apply to everyone, including admins
+    for b in blocked:
+        if resolved == b or str(resolved).startswith(str(b) + os.sep):
+            logger.warning('_check_path_allowed: blocked path %s (blocked_paths rule %s)', resolved, b)
+            raise HTTPException(status_code=403, detail="Access to this path is not permitted")
+
     if user.role in ('admin', 'mediamanager'):
         return
+
     allowed_roots: list[Path] = []
+
+    # 1. config.yaml security.paths.allowed_paths
+    for p in (cfg_sec.get('allowed_paths') or []):
+        allowed_roots.append(Path(p).resolve())
+
+    # 2. FACE_REC_DATA_DIR env var
     data_dir = os.environ.get('FACE_REC_DATA_DIR', '')
     if data_dir:
         allowed_roots.append(Path(data_dir).resolve())
+
+    # 3. Per-user allowed_folders
     for folder in (user.allowed_folders or []):
         allowed_roots.append(Path(folder).resolve())
+
+    logger.debug('_check_path_allowed: user=%s role=%s path=%s allowed_roots=%s',
+                 user.username, user.role, resolved, allowed_roots)
+
     if not allowed_roots:
         raise HTTPException(status_code=403, detail="No accessible paths configured for your account")
-    resolved = path.resolve()
+
     if not any(resolved == r or str(resolved).startswith(str(r) + os.sep) for r in allowed_roots):
+        logger.warning('_check_path_allowed: denied user=%s path=%s not in allowed_roots=%s',
+                       user.username, resolved, allowed_roots)
         raise HTTPException(status_code=403, detail="Access to this path is not permitted")
 
 

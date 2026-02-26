@@ -102,6 +102,7 @@ security:
     - /home
     - /mnt
     - /media
+    - /opt
     blocked_paths:
     - /etc
     - /sys
