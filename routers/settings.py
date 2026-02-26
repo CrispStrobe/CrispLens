@@ -308,6 +308,15 @@ def get_effective_vlm_provider(user, state):
     else:
         enabled = global_vlm.get('enabled', False)
 
+    logger.info(
+        'get_effective_vlm_provider: user=%s | user.vlm_enabled=%s user.vlm_provider=%s user.vlm_model=%s'
+        ' | global_enabled=%s global_provider=%s global_model=%s | resolved_enabled=%s',
+        user.username,
+        user.vlm_enabled, user.vlm_provider, user.vlm_model,
+        global_vlm.get('enabled'), global_vlm.get('provider'), global_vlm.get('model'),
+        enabled,
+    )
+
     if not enabled:
         return None
 
@@ -315,7 +324,13 @@ def get_effective_vlm_provider(user, state):
     model    = user.vlm_model    or global_vlm.get('model') or None
 
     api_key  = state.api_key_manager.get_effective_key(provider, user.username)
+    has_key  = bool(api_key)
     endpoint = global_vlm.get('api', {}).get('endpoint') or None
+
+    logger.info(
+        'get_effective_vlm_provider: resolved provider=%s model=%s has_key=%s endpoint=%s',
+        provider, model, has_key, endpoint,
+    )
 
     return create_vlm_provider(
         provider=provider, api_key=api_key,
@@ -334,6 +349,10 @@ def get_user_vlm(user=Depends(get_current_user)):
     """Return the current user's personal VLM preferences + global defaults."""
     s = _state()
     global_vlm = (s.config or {}).get('vlm', {})
+    logger.info(
+        'get_user_vlm: user=%s | vlm_enabled=%s vlm_provider=%s vlm_model=%s',
+        user.username, user.vlm_enabled, user.vlm_provider, user.vlm_model,
+    )
     return {
         'user': {
             'vlm_enabled':  user.vlm_enabled,
@@ -361,6 +380,10 @@ def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
     import sqlite3 as _sqlite3
     # Encode: True→1, False→0, None→NULL (reset to global)
     enabled_val = (1 if body.vlm_enabled else 0) if body.vlm_enabled is not None else None
+    logger.info(
+        'put_user_vlm: user=%s id=%s | vlm_enabled=%s→%s vlm_provider=%s vlm_model=%s',
+        user.username, user.id, body.vlm_enabled, enabled_val, body.vlm_provider, body.vlm_model,
+    )
     conn = None
     try:
         conn = _sqlite3.connect(s.db_path)
@@ -384,7 +407,9 @@ def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
             else:
                 raise
         conn.commit()
+        logger.info('put_user_vlm: DB commit OK for user_id=%s', user.id)
     except Exception as e:
+        logger.error('put_user_vlm: DB write failed for user_id=%s: %s', user.id, e)
         raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")
     finally:
         if conn:

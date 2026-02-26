@@ -21,6 +21,7 @@ from image_ops import (
     update_image_metadata,
 )
 from routers.deps import can_access_image, get_current_user, require_admin_or_mediamanager
+from routers.settings import get_effective_vlm_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -573,7 +574,7 @@ def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_
     from image_ops import re_detect_faces
     s = _state()
     _check_modify(image_id, user, s.db_path)
-    vlm_prov = None if body.skip_vlm else s.vlm_provider
+    vlm_prov = None if body.skip_vlm else get_effective_vlm_provider(user, s)
     ok, msg, result = re_detect_faces(
         s.db_path, image_id,
         det_thresh=body.det_thresh,

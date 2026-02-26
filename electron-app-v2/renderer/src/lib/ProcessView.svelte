@@ -33,12 +33,15 @@
   }
 
   function addFiles(fileList) {
-    const files = [...fileList].filter(f => isImage(f.name) && !queue.find(q => q.path === f.name));
+    // Use f.path when available (Electron exposes it on <input> File objects even with contextIsolation).
+    // Fall back to f.name (browser mode — full path is not accessible).
+    const files = [...fileList].filter(f => isImage(f.name));
+    const newFiles = files.filter(f => !queue.find(q => q.path === (f.path || f.name)));
     queue = [
       ...queue,
-      ...files.map(f => ({
+      ...newFiles.map(f => ({
         id: nextId++,
-        path: f.name,
+        path: f.path || f.name,
         name: f.name,
         file: f,
         status: 'pending',
@@ -72,7 +75,15 @@
     dragOver = false;
     const files = [...(e.dataTransfer.files || [])];
     if (inElectron) {
-      addPaths(files.map(f => f.path).filter(Boolean));
+      const paths = files.map(f => f.path).filter(Boolean);
+      if (paths.length) {
+        // contextIsolation: false or Electron version that exposes f.path on drop
+        addPaths(paths);
+      } else {
+        // contextIsolation: true — f.path not injected on drag-and-drop events.
+        // addFiles() will pick up f.path from <input>-style File objects if available.
+        addFiles(files);
+      }
     } else {
       addFiles(files);
     }
@@ -132,6 +143,9 @@
   let finished = false;
   let cancelled = false;
   let visibility = 'shared'; // 'shared' | 'private'
+  // Optional base folder for browser mode (browser can't expose full path).
+  // Example: "/Users/alice/Downloads/pics" — prepended to bare filenames.
+  let localBasePath = '';
 
   $: pendingItems    = queue.filter(q => q.status === 'pending');
   $: processingItem  = queue.find(q => q.status === 'processing');
@@ -157,9 +171,18 @@
         const buffer = item.file
           ? await item.file.arrayBuffer()
           : await window.electronAPI.readLocalFile(item.path);
-        const pathForServer = item.file ? item.file.name : item.path;
-        console.log('[ProcessView] upload-local | file=%s | item.path=%s | pathForServer=%s',
-          item.file?.name ?? '(none)', item.path ?? '(none)', pathForServer);
+        // item.path is the best available path:
+        //   Electron + openFileDialog → full absolute path
+        //   Electron + drag-and-drop (contextIsolation:false) → full absolute path
+        //   Electron + <input> File → f.path (full) thanks to addFiles() fix
+        //   Browser mode → f.name (basename only — browser security limitation)
+        // If the user set localBasePath and the path is basename-only, prepend it.
+        const base = localBasePath.trim().replace(/\/+$/, '');
+        const pathForServer = (base && item.path && !item.path.includes('/'))
+          ? `${base}/${item.path}`
+          : item.path;
+        console.log('[ProcessView] upload-local | item.path=%s | localBasePath=%s | pathForServer=%s',
+          item.path ?? '(none)', base || '(none)', pathForServer);
         const resp   = await uploadLocal(buffer, pathForServer, visibility);
         console.log('[ProcessView] upload-local response | image_id=%s | skipped=%s | shared_duplicate=%s',
           resp.image_id, resp.skipped, resp.shared_duplicate ?? false);
@@ -378,6 +401,16 @@
            on:change={e => { addFiles(e.target.files); e.target.value = ''; }} />
   {/if}
 
+  <!-- Local base path (browser mode only — Electron has real paths) -->
+  {#if !inElectron}
+    <div class="base-path-row">
+      <label class="base-path-label" for="pv-base-path">Local base folder (optional):</label>
+      <input id="pv-base-path" class="base-path-input" type="text" placeholder="/Users/you/Downloads/pics"
+             bind:value={localBasePath}
+             title="Prepended to filenames when the browser cannot expose the full path" />
+    </div>
+  {/if}
+
   <!-- Drop zone: local files (always visible) -->
   <div
     class="drop-zone"
@@ -558,6 +591,19 @@
   .server-path-row .flex1 { flex: 1; }
   .server-path-input input { flex: 1; }
   .server-folder-row2 { display: flex; gap: 10px; align-items: center; }
+
+  /* ── Local base path (browser mode) ── */
+  .base-path-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px; padding: 6px 10px;
+    background: #1a1a2e; border-radius: 6px; border: 1px solid #2a2a42;
+  }
+  .base-path-label { font-size: 11px; color: #7080a0; white-space: nowrap; }
+  .base-path-input {
+    flex: 1; font-size: 11px; padding: 3px 8px;
+    background: #12121e; border: 1px solid #3a3a5a; border-radius: 4px; color: #c0c8e0;
+  }
+  .base-path-input::placeholder { color: #3a3a58; }
 
   /* ── Drop zone ── */
   .drop-zone {
