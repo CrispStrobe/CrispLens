@@ -45,11 +45,16 @@ def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
         if pp.is_file() and pp.suffix.lower() in IMAGE_EXTENSIONS:
             result.append(str(pp))
         elif pp.is_dir():
-            pattern = '**/*' if recursive else '*'
-            result.extend(
-                str(f) for f in pp.glob(pattern)
-                if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-            )
+            if recursive:
+                # os.walk with followlinks so symlinked subdirs are traversed
+                for dirpath, _dirs, files in os.walk(str(pp), followlinks=True):
+                    for fname in files:
+                        if Path(fname).suffix.lower() in IMAGE_EXTENSIONS:
+                            result.append(os.path.join(dirpath, fname))
+            else:
+                for entry in os.scandir(str(pp)):
+                    if entry.is_file(follow_symlinks=True) and Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
+                        result.append(entry.path)
     return result
 
 
@@ -92,9 +97,9 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
     s = _state()
 
     if not path:
-        # Default to the data/install dir so VPS users land in a useful place.
-        # Fall back to home dir if the env var is not set.
-        path = os.environ.get('FACE_REC_DATA_DIR') or os.path.expanduser('~')
+        # Priority: config.yaml paths.browse_root → FACE_REC_DATA_DIR env → home dir
+        cfg_root = (s.config or {}).get('paths', {}).get('browse_root', '')
+        path = cfg_root or os.environ.get('FACE_REC_DATA_DIR') or os.path.expanduser('~')
 
     target = Path(path)
     if not target.exists():
@@ -111,7 +116,8 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
         try:
             scan_iter = sorted(
                 os.scandir(path),
-                key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower())
+                # follow_symlinks=True so symlinked dirs sort with real dirs
+                key=lambda e: (not e.is_dir(follow_symlinks=True), e.name.lower())
             )
         except PermissionError:
             raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
@@ -121,7 +127,8 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
                 continue
 
             try:
-                if entry.is_dir(follow_symlinks=False):
+                is_symlink = entry.is_symlink()
+                if entry.is_dir(follow_symlinks=True):
                     # Count image files in this dir (non-recursive, shallow check)
                     try:
                         dir_images = [
@@ -148,20 +155,22 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
                         'name':        entry.name,
                         'path':        entry.path,
                         'is_dir':      True,
+                        'is_symlink':  is_symlink,
                         'total_files': total,
                         'db_count':    db_count,
                     })
 
-                elif entry.is_file() and Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
+                elif entry.is_file(follow_symlinks=True) and Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
                     row = conn.execute(
                         "SELECT id FROM images WHERE filepath=?", (entry.path,)
                     ).fetchone()
                     entries.append({
-                        'name':     entry.name,
-                        'path':     entry.path,
-                        'is_dir':   False,
-                        'in_db':    row is not None,
-                        'image_id': row['id'] if row else None,
+                        'name':       entry.name,
+                        'path':       entry.path,
+                        'is_dir':     False,
+                        'is_symlink': is_symlink,
+                        'in_db':      row is not None,
+                        'image_id':   row['id'] if row else None,
                     })
             except OSError:
                 continue

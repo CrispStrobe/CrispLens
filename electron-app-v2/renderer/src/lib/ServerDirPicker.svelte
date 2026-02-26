@@ -9,6 +9,8 @@
 
   export let open = false;
   export let title = 'Pick a server folder';
+  // If set, the picker starts at this path instead of the server default
+  export let startPath = '';
 
   const dispatch = createEventDispatcher();
 
@@ -18,8 +20,8 @@
   let loading = false;
   let error = '';
 
-  // Load root when opened for the first time
-  $: if (open && currentPath === '' && !loading) browse('');
+  // Load root when opened for the first time; start from startPath if provided
+  $: if (open && currentPath === '' && !loading) browse(startPath || '');
 
   async function browse(path) {
     loading = true;
@@ -31,6 +33,7 @@
       entries     = data.entries.filter(e => e.is_dir);
     } catch (e) {
       error = e.message;
+      console.error('[ServerDirPicker] browse error for', path, ':', e.message);
     } finally {
       loading = false;
     }
@@ -75,8 +78,9 @@
           <div class="sdp-empty">No subdirectories</div>
         {:else}
           {#each entries as entry}
-            <button class="sdp-entry" on:click={() => browse(entry.path)}>
-              📁 {entry.name}
+            <button class="sdp-entry" on:click={() => browse(entry.path)}
+              title={entry.is_symlink ? `symlink → ${entry.name}` : entry.name}>
+              {entry.is_symlink ? '🔗' : '📁'} {entry.name}{entry.is_symlink ? ' ⇢' : ''}
             </button>
           {/each}
         {/if}

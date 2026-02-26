@@ -118,12 +118,22 @@
   }
 
   // ── Batch folder mode (mode A — server-side path) ─────────────────────────
+  // Persisted to localStorage so it survives page refreshes.
   let batchFolder = '';
   let batchRecursive = true;
+
+  // Persist batchFolder to localStorage on change
+  $: if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('processView.batchFolder', batchFolder);
+  }
 
   // ── Electron / python path ─────────────────────────────────────────────────
   let pythonPath = '';
   onMount(async () => {
+    // Restore last batch folder
+    const saved = typeof localStorage !== 'undefined' && localStorage.getItem('processView.batchFolder');
+    if (saved) batchFolder = saved;
+
     if (typeof window.electronAPI !== 'undefined') {
       try {
         const s = await window.electronAPI.getSettings();
@@ -371,6 +381,7 @@
 </script>
 
 <ServerDirPicker bind:open={serverPickerOpen} title="Select server folder to process"
+  startPath={batchFolder}
   on:select={e => batchFolder = e.detail} />
 
 <div class="process-view">

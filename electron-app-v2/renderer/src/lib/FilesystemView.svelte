@@ -92,6 +92,7 @@
       }
     } catch (e) {
       error = e.message;
+      console.error('[FilesystemView] browse error for', browsePath, ':', e.message);
     } finally {
       loading = false;
     }
@@ -753,11 +754,11 @@
       <input
         class="path-input"
         type="text"
-        value={currentPath}
+        bind:value={currentPath}
         placeholder={$t('fs_path_placeholder')}
-        on:keydown={e => e.key === 'Enter' && navigate(e.target.value)}
+        on:keydown={e => { if (e.key === 'Enter') { error = ''; console.log('[FilesystemView] Go:', currentPath); navigate(currentPath); } }}
       />
-      <button on:click={() => browse(currentPath)} disabled={loading}>{$t('fs_go')}</button>
+      <button on:click={() => { error = ''; console.log('[FilesystemView] Go button:', currentPath); navigate(currentPath); }} disabled={loading}>{$t('fs_go')}</button>
     {/if}
   </div>
 
@@ -949,9 +950,9 @@
                 {/if}
 
                 {#if entry.is_dir}
-                  <div class="dir-icon">📁</div>
+                  <div class="dir-icon">{entry.is_symlink ? '🔗' : '📁'}</div>
                   <div class="entry-info">
-                    <div class="entry-name" title={entry.name}>{entry.name}</div>
+                    <div class="entry-name" title={entry.is_symlink ? `→ symlink: ${entry.name}` : entry.name}>{entry.name}{entry.is_symlink ? ' ⇢' : ''}</div>
                     {#if !localMode && !cloudMode}
                       <div class="db-badge {cls}">{dirLabel(entry) || $t('fs_no_images')}</div>
                     {:else if cloudMode}

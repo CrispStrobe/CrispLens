@@ -87,6 +87,10 @@ performance:
     max_dimension: 2048
     resize_large_images: true
   use_gpu: false
+paths:
+  # Initial folder for the filesystem browser (server mode).
+  # Leave empty to default to FACE_REC_DATA_DIR env var, then home directory.
+  browse_root: ''
 security:
   authentication:
     enabled: true
