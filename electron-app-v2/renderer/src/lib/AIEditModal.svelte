@@ -1,38 +1,272 @@
 <script>
   /**
    * AIEditModal — BFL AI image editing + generation.
-   * Props: imageId (number), imageFilename (string)
+   * Props: imageId (number), imageFilename (string), imageW (number), imageH (number)
    * Events: close, edited (detail: { new_image_id, filepath })
    */
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
   import { t } from '../stores.js';
   import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage, generateImage } from '../api.js';
 
-  export let imageId     = null;
+  export let imageId       = null;
   export let imageFilename = '';
+  export let imageW        = 0;   // original image width (optional, improves inpaint accuracy)
+  export let imageH        = 0;   // original image height (optional)
 
   const dispatch = createEventDispatcher();
 
   let tab = 'outpaint'; // 'outpaint' | 'inpaint' | 'ai-edit' | 'generate'
 
-  // Outpaint state
+  // ── Outpaint state ────────────────────────────────────────────────────────
   let addTop    = 256;
   let addBottom = 256;
   let addLeft   = 256;
   let addRight  = 256;
   let outpaintPrompt = '';
 
-  // Inpaint state
-  let maskX = 0;
-  let maskY = 0;
-  let maskW = 0;
-  let maskH = 0;
+  // Outpaint interactive
+  let opImgEl = null;
+  let opNatW = 1, opNatH = 1, opDispW = 200, opDispH = 200;
+  let opZoom = 1.0;
+  let opDrag = null; // { side, startX, startY, startVal }
+
+  function onOpImgLoad(e) {
+    opNatW  = e.target.naturalWidth  || 1;
+    opNatH  = e.target.naturalHeight || 1;
+    opDispW = e.target.offsetWidth   || 200;
+    opDispH = e.target.offsetHeight  || 200;
+  }
+
+  // Scale: how many display pixels per natural pixel
+  $: opScale = opDispW / opNatW;
+
+  // Scale for visualizing borders in the preview (capped so total area fits in ~opDispW)
+  $: opVisScale = Math.min(
+    opDispW / Math.max(opNatW + addLeft + addRight, 1),
+    opDispH / Math.max(opNatH + addTop + addBottom, 1)
+  ) * opZoom;
+
+  $: opImgVisW  = Math.round(opNatW  * opVisScale);
+  $: opImgVisH  = Math.round(opNatH  * opVisScale);
+  $: opAddTopPx    = Math.round(addTop    * opVisScale);
+  $: opAddBottomPx = Math.round(addBottom * opVisScale);
+  $: opAddLeftPx   = Math.round(addLeft   * opVisScale);
+  $: opAddRightPx  = Math.round(addRight  * opVisScale);
+
+  function onOpHandleDown(e, side) {
+    e.preventDefault();
+    const isV = side === 'top' || side === 'bottom';
+    const startPos = isV ? e.clientY : e.clientX;
+    const startVal = side === 'top' ? addTop : side === 'bottom' ? addBottom
+                   : side === 'left' ? addLeft : addRight;
+    opDrag = { side, startPos, startVal };
+    window.addEventListener('mousemove', onOpDragMove);
+    window.addEventListener('mouseup',   onOpDragUp);
+  }
+
+  function onOpDragMove(e) {
+    if (!opDrag) return;
+    const { side, startPos, startVal } = opDrag;
+    const isV = side === 'top' || side === 'bottom';
+    const delta = (isV ? e.clientY : e.clientX) - startPos;
+    // Dragging outward = increasing border
+    const naturalDelta = delta / (opVisScale || 0.01);
+    let raw;
+    if (side === 'top')    raw = startVal - naturalDelta; // drag up
+    else if (side === 'bottom') raw = startVal + naturalDelta; // drag down
+    else if (side === 'left')   raw = startVal - naturalDelta; // drag left
+    else                        raw = startVal + naturalDelta; // drag right
+    const snapped = Math.max(0, Math.round(raw / 16) * 16);
+    if (side === 'top')    addTop    = snapped;
+    else if (side === 'bottom') addBottom = snapped;
+    else if (side === 'left')   addLeft   = snapped;
+    else                        addRight  = snapped;
+  }
+
+  function onOpDragUp() {
+    opDrag = null;
+    window.removeEventListener('mousemove', onOpDragMove);
+    window.removeEventListener('mouseup',   onOpDragUp);
+  }
+
+  // ── Inpaint state ─────────────────────────────────────────────────────────
+  let maskX = 0, maskY = 0, maskW = 0, maskH = 0;
   let inpaintPrompt = '';
 
-  // AI Edit state (Kontext default)
+  // Inpaint canvas
+  let ipCanvasEl = null, ipImgEl = null;
+  let ipNatW = 1, ipNatH = 1, ipDispW = 200, ipDispH = 200;
+  let ipScale = 1;   // ipNatW / ipDispW
+  // coordScale: multiply canvas coords by this to get original image coords
+  $: ipCoordScale = (imageW > 0 && ipNatW > 0) ? imageW / ipNatW : 1;
+
+  function onIpImgLoad(e) {
+    ipNatW  = e.target.naturalWidth  || 1;
+    ipNatH  = e.target.naturalHeight || 1;
+    ipDispW = e.target.offsetWidth   || 200;
+    ipDispH = e.target.offsetHeight  || 200;
+    ipScale = ipNatW / ipDispW;
+    if (ipCanvasEl) {
+      ipCanvasEl.width  = ipDispW;
+      ipCanvasEl.height = ipDispH;
+    }
+    // Initialize mask to center 50% if not set
+    if (maskW === 0) {
+      const fullW = imageW > 0 ? imageW : ipNatW;
+      const fullH = imageH > 0 ? imageH : ipNatH;
+      maskX = Math.round(fullW * 0.25);
+      maskY = Math.round(fullH * 0.25);
+      maskW = Math.round(fullW * 0.5);
+      maskH = Math.round(fullH * 0.5);
+    }
+    tick().then(drawIpCanvas);
+  }
+
+  // Convert original image coordinates to canvas display pixels
+  function ipOrigToDisp(v, axis) {
+    const origDim = axis === 'x' ? (imageW > 0 ? imageW : ipNatW) : (imageH > 0 ? imageH : ipNatH);
+    const dispDim = axis === 'x' ? ipDispW : ipDispH;
+    return v * (dispDim / origDim);
+  }
+
+  function ipDispToOrig(v, axis) {
+    const origDim = axis === 'x' ? (imageW > 0 ? imageW : ipNatW) : (imageH > 0 ? imageH : ipNatH);
+    const dispDim = axis === 'x' ? ipDispW : ipDispH;
+    return v * (origDim / dispDim);
+  }
+
+  function ipCanvasPos(e) {
+    if (!ipCanvasEl) return { x: 0, y: 0 };
+    const r = ipCanvasEl.getBoundingClientRect();
+    const sx = ipCanvasEl.width  / r.width;
+    const sy = ipCanvasEl.height / r.height;
+    return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+  }
+
+  // Hit-testing in canvas (display) pixel space
+  const IP_HIT = 12;
+
+  function ipHitHandle(px, py) {
+    const dx = ipOrigToDisp(maskX, 'x'), dy = ipOrigToDisp(maskY, 'y');
+    const dw = ipOrigToDisp(maskW, 'x'), dh = ipOrigToDisp(maskH, 'y');
+    const inL = px >= dx - IP_HIT && px <= dx + IP_HIT;
+    const inR = px >= dx+dw - IP_HIT && px <= dx+dw + IP_HIT;
+    const inT = py >= dy - IP_HIT && py <= dy + IP_HIT;
+    const inB = py >= dy+dh - IP_HIT && py <= dy+dh + IP_HIT;
+    if (inL && inT) return 'tl';
+    if (inR && inT) return 'tr';
+    if (inL && inB) return 'bl';
+    if (inR && inB) return 'br';
+    return null;
+  }
+
+  function ipHitInside(px, py) {
+    const dx = ipOrigToDisp(maskX, 'x'), dy = ipOrigToDisp(maskY, 'y');
+    const dw = ipOrigToDisp(maskW, 'x'), dh = ipOrigToDisp(maskH, 'y');
+    return px > dx + IP_HIT && px < dx+dw - IP_HIT
+        && py > dy + IP_HIT && py < dy+dh - IP_HIT;
+  }
+
+  function drawIpCanvas() {
+    if (!ipCanvasEl || !ipDispW) return;
+    const ctx = ipCanvasEl.getContext('2d');
+    ctx.clearRect(0, 0, ipCanvasEl.width, ipCanvasEl.height);
+    if (maskW <= 0 || maskH <= 0) return;
+
+    const dx = ipOrigToDisp(maskX, 'x'), dy = ipOrigToDisp(maskY, 'y');
+    const dw = ipOrigToDisp(maskW, 'x'), dh = ipOrigToDisp(maskH, 'y');
+
+    // Fill mask area (the region to be inpainted)
+    ctx.fillStyle = 'rgba(255,120,40,0.35)';
+    ctx.fillRect(dx, dy, dw, dh);
+
+    // Dashed border
+    ctx.strokeStyle = '#ff9a50';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(dx, dy, dw, dh);
+    ctx.setLineDash([]);
+
+    // Corner handles
+    const hs = 8;
+    ctx.fillStyle = '#ff9a50';
+    [[dx, dy], [dx+dw-hs, dy], [dx, dy+dh-hs], [dx+dw-hs, dy+dh-hs]]
+      .forEach(([hx, hy]) => ctx.fillRect(hx, hy, hs, hs));
+
+    // Dim label
+    const lbl = `${maskW} × ${maskH}`;
+    ctx.font = '10px monospace';
+    const tw = ctx.measureText(lbl).width + 6;
+    const ly = dy >= 16 ? dy - 16 : dy + dh + 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(dx, ly, tw, 14);
+    ctx.fillStyle = '#ffa060';
+    ctx.fillText(lbl, dx + 3, ly + 10);
+  }
+
+  $: { maskX; maskY; maskW; maskH; drawIpCanvas(); }
+
+  let ipDragging = false;
+  let ipDragMode = null;
+  let ipDragStart = { x: 0, y: 0, sx: 0, sy: 0, sw: 0, sh: 0 };
+
+  function onIpMouseDown(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const { x, y } = ipCanvasPos(e);
+    const handle = ipHitHandle(x, y);
+    ipDragMode = handle ?? (ipHitInside(x, y) ? 'move' : 'create');
+    ipDragging = true;
+    ipDragStart = { x, y, sx: maskX, sy: maskY, sw: maskW, sh: maskH };
+  }
+
+  function onIpWindowMouseMove(e) {
+    if (!ipDragging || !ipCanvasEl) return;
+    const { x, y } = ipCanvasPos(e);
+    const fullW = imageW > 0 ? imageW : ipNatW;
+    const fullH = imageH > 0 ? imageH : ipNatH;
+    const ddx = ipDispToOrig(x - ipDragStart.x, 'x');
+    const ddy = ipDispToOrig(y - ipDragStart.y, 'y');
+
+    function cl(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    if (ipDragMode === 'create') {
+      let ox0 = ipDispToOrig(ipDragStart.x, 'x'), oy0 = ipDispToOrig(ipDragStart.y, 'y');
+      let ox1 = ipDispToOrig(x, 'x'), oy1 = ipDispToOrig(y, 'y');
+      if (ox1 < ox0) [ox0, ox1] = [ox1, ox0];
+      if (oy1 < oy0) [oy0, oy1] = [oy1, oy0];
+      maskX = Math.round(cl(ox0, 0, fullW)); maskY = Math.round(cl(oy0, 0, fullH));
+      maskW = Math.round(Math.max(1, cl(ox1, 0, fullW) - maskX));
+      maskH = Math.round(Math.max(1, cl(oy1, 0, fullH) - maskY));
+
+    } else if (ipDragMode === 'move') {
+      maskX = Math.round(cl(ipDragStart.sx + ddx, 0, fullW - maskW));
+      maskY = Math.round(cl(ipDragStart.sy + ddy, 0, fullH - maskH));
+
+    } else {
+      let { sx, sy, sw, sh } = ipDragStart;
+      let ox0 = sx, oy0 = sy, ox1 = sx+sw, oy1 = sy+sh;
+      if (ipDragMode === 'tl') { ox0 += ddx; oy0 += ddy; }
+      if (ipDragMode === 'tr') { ox1 += ddx; oy0 += ddy; }
+      if (ipDragMode === 'bl') { ox0 += ddx; oy1 += ddy; }
+      if (ipDragMode === 'br') { ox1 += ddx; oy1 += ddy; }
+      if (ox1 < ox0) [ox0, ox1] = [ox1, ox0];
+      if (oy1 < oy0) [oy0, oy1] = [oy1, oy0];
+      ox0 = cl(ox0, 0, fullW); ox1 = cl(ox1, 0, fullW);
+      oy0 = cl(oy0, 0, fullH); oy1 = cl(oy1, 0, fullH);
+      maskX = Math.round(ox0); maskY = Math.round(oy0);
+      maskW = Math.round(Math.max(1, ox1 - ox0));
+      maskH = Math.round(Math.max(1, oy1 - oy0));
+    }
+    drawIpCanvas();
+  }
+
+  function onIpWindowMouseUp() { ipDragging = false; }
+
+  // ── AI Edit state ─────────────────────────────────────────────────────────
   let editPrompt  = '';
   let editModel   = 'flux-kontext-pro';
-  let editAspect  = '';   // empty = auto (match input image)
+  let editAspect  = '';
   let editSeed    = '';
   const EDIT_MODELS = [
     'flux-kontext-pro',
@@ -40,14 +274,14 @@
   ];
   const ASPECT_RATIOS = ['', '1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
 
-  // Generate state
+  // ── Generate state ────────────────────────────────────────────────────────
   let genPrompt  = '';
   let genAspect  = '1:1';
   let genSeed    = '';
   let genFolder  = '';
   let genPrefix  = 'generated';
 
-  // Shared state
+  // ── Shared state ──────────────────────────────────────────────────────────
   let saveAs = 'new_file';
   $: suffix = tab === 'outpaint' ? '_outpainted'
             : tab === 'inpaint'  ? '_inpainted'
@@ -58,13 +292,23 @@
   let applying = false;
   let error    = '';
   let done     = false;
-  let result   = null;  // { new_image_id?, filepath, width, height }
+  let result   = null;
 
   function onKey(e) { if (e.key === 'Escape') handleClose(); }
-  onMount(() => window.addEventListener('keydown', onKey));
-  onDestroy(() => window.removeEventListener('keydown', onKey));
 
-  // Reset suffix override when tab changes
+  onMount(() => {
+    window.addEventListener('keydown',   onKey);
+    window.addEventListener('mousemove', onIpWindowMouseMove);
+    window.addEventListener('mouseup',   onIpWindowMouseUp);
+  });
+  onDestroy(() => {
+    window.removeEventListener('keydown',   onKey);
+    window.removeEventListener('mousemove', onIpWindowMouseMove);
+    window.removeEventListener('mouseup',   onIpWindowMouseUp);
+    window.removeEventListener('mousemove', onOpDragMove);
+    window.removeEventListener('mouseup',   onOpDragUp);
+  });
+
   $: tab, (suffixOverride = '');
 
   function handleClose() {
@@ -113,7 +357,6 @@
           suffix:       effectiveSuffix,
         });
       } else {
-        // generate
         r = await generateImage({
           prompt:          genPrompt,
           aspect_ratio:    genAspect,
@@ -135,28 +378,8 @@
     if (tab === 'outpaint') return (addTop + addBottom + addLeft + addRight) > 0;
     if (tab === 'inpaint')  return inpaintPrompt.trim().length > 0 && maskW > 0 && maskH > 0;
     if (tab === 'ai-edit')  return editPrompt.trim().length > 0;
-    return genPrompt.trim().length > 0;   // generate
+    return genPrompt.trim().length > 0;
   })();
-
-  // Mask overlay geometry (relative to thumbnail display)
-  let thumbDispW = 200;
-  let thumbDispH = 200;
-  let thumbNatW  = 1;
-  let thumbNatH  = 1;
-
-  function onThumbLoad(e) {
-    thumbNatW  = e.target.naturalWidth  || 1;
-    thumbNatH  = e.target.naturalHeight || 1;
-    thumbDispW = e.target.offsetWidth   || 200;
-    thumbDispH = e.target.offsetHeight  || 200;
-  }
-
-  $: scaleX        = thumbDispW / thumbNatW;
-  $: scaleY        = thumbDispH / thumbNatH;
-  $: overlayLeft   = maskX * scaleX;
-  $: overlayTop    = maskY * scaleY;
-  $: overlayWidth  = maskW * scaleX;
-  $: overlayHeight = maskH * scaleY;
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -168,7 +391,7 @@
     </div>
 
     {#if done && result}
-      <!-- ── Done panel ─────────────────────────────────────────────────── -->
+      <!-- ── Done panel ─────────────────────────────────────────────── -->
       <div class="modal-body">
         <div class="done-panel">
           <div class="done-title">{$t('bfl_done')}</div>
@@ -188,7 +411,7 @@
         </div>
       </div>
     {:else}
-      <!-- ── Tab bar ────────────────────────────────────────────────────── -->
+      <!-- ── Tab bar ─────────────────────────────────────────────────── -->
       <div class="tab-bar">
         <button class="tab-btn" class:active={tab === 'outpaint'} on:click={() => tab = 'outpaint'}>{$t('bfl_outpaint')}</button>
         <button class="tab-btn" class:active={tab === 'inpaint'}  on:click={() => tab = 'inpaint' }>{$t('bfl_inpaint')}</button>
@@ -197,23 +420,97 @@
       </div>
 
       <div class="modal-body two-col">
-        <!-- ── Left: thumbnail ──────────────────────────────────────────── -->
+        <!-- ── Left: interactive area ──────────────────────────────── -->
         <div class="thumb-wrap">
-          {#if tab === 'inpaint'}
-            <div class="thumb-container">
-              <img
-                src={thumbnailUrl(imageId, 200)}
-                alt={imageFilename}
-                class="thumb"
-                on:load={onThumbLoad}
-              />
-              {#if maskW > 0 && maskH > 0}
-                <div class="mask-overlay"
-                  style="left:{overlayLeft}px; top:{overlayTop}px; width:{overlayWidth}px; height:{overlayHeight}px;"
-                ></div>
-              {/if}
+
+          {#if tab === 'outpaint' && imageId}
+            <!-- Outpaint visual preview with draggable handles -->
+            <div class="op-preview">
+              <div class="op-scene"
+                style="width:{opImgVisW + opAddLeftPx + opAddRightPx}px; height:{opImgVisH + opAddTopPx + opAddBottomPx}px"
+              >
+                <!-- Top border -->
+                {#if opAddTopPx > 0}
+                  <div class="op-border op-top"
+                    style="height:{opAddTopPx}px; top:0; left:0; right:0;"
+                    on:mousedown={e => onOpHandleDown(e, 'top')}
+                  >
+                    <span class="op-label">{addTop}px</span>
+                  </div>
+                {/if}
+                <!-- Middle row -->
+                <div class="op-middle-row" style="top:{opAddTopPx}px; height:{opImgVisH}px;">
+                  {#if opAddLeftPx > 0}
+                    <div class="op-border op-left"
+                      style="width:{opAddLeftPx}px;"
+                      on:mousedown={e => onOpHandleDown(e, 'left')}
+                    >
+                      <span class="op-label op-label-v">{addLeft}px</span>
+                    </div>
+                  {/if}
+                  <img
+                    src={thumbnailUrl(imageId, 300)}
+                    alt=""
+                    bind:this={opImgEl}
+                    on:load={onOpImgLoad}
+                    style="width:{opImgVisW}px; height:{opImgVisH}px; object-fit:contain;"
+                    draggable="false"
+                    class="op-img"
+                  />
+                  {#if opAddRightPx > 0}
+                    <div class="op-border op-right"
+                      style="width:{opAddRightPx}px;"
+                      on:mousedown={e => onOpHandleDown(e, 'right')}
+                    >
+                      <span class="op-label op-label-v">{addRight}px</span>
+                    </div>
+                  {/if}
+                </div>
+                <!-- Bottom border -->
+                {#if opAddBottomPx > 0}
+                  <div class="op-border op-bottom"
+                    style="height:{opAddBottomPx}px; bottom:0; left:0; right:0;"
+                    on:mousedown={e => onOpHandleDown(e, 'bottom')}
+                  >
+                    <span class="op-label">{addBottom}px</span>
+                  </div>
+                {/if}
+                <!-- Always-visible thin drag handles at image edges (for when border=0) -->
+                <div class="op-edge-handle op-eh-top"  on:mousedown={e => onOpHandleDown(e, 'top')}></div>
+                <div class="op-edge-handle op-eh-bottom" on:mousedown={e => onOpHandleDown(e, 'bottom')}></div>
+                <div class="op-edge-handle op-eh-left"  on:mousedown={e => onOpHandleDown(e, 'left')}></div>
+                <div class="op-edge-handle op-eh-right" on:mousedown={e => onOpHandleDown(e, 'right')}></div>
+              </div>
             </div>
-          {:else}
+            <!-- Zoom slider -->
+            <div class="zoom-row">
+              <span class="zoom-lbl">{$t('bfl_zoom')}</span>
+              <input type="range" min="0.2" max="3" step="0.05" bind:value={opZoom} class="zoom-slider" />
+              <span class="zoom-val">{opZoom.toFixed(1)}×</span>
+            </div>
+            <div class="drag-hint">{$t('bfl_drag_hint')}</div>
+
+          {:else if tab === 'inpaint' && imageId}
+            <!-- Inpaint canvas mask -->
+            <div class="ip-canvas-wrap">
+              <img
+                src={thumbnailUrl(imageId, 300)}
+                alt={imageFilename}
+                bind:this={ipImgEl}
+                on:load={onIpImgLoad}
+                class="ip-img"
+                draggable="false"
+              />
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <canvas
+                bind:this={ipCanvasEl}
+                class="ip-canvas"
+                on:mousedown={onIpMouseDown}
+              ></canvas>
+            </div>
+            <div class="drag-hint">{$t('bfl_mask_hint')}</div>
+
+          {:else if imageId}
             <img src={thumbnailUrl(imageId, 200)} alt={imageFilename} class="thumb" />
             {#if tab === 'generate'}
               <div class="ref-hint">{$t('bfl_gen_hint')}</div>
@@ -221,7 +518,7 @@
           {/if}
         </div>
 
-        <!-- ── Right: tab controls ──────────────────────────────────────── -->
+        <!-- ── Right: tab controls ────────────────────────────────── -->
         <div class="controls">
 
           {#if tab === 'outpaint'}
@@ -247,15 +544,15 @@
             <!-- ── Inpaint ── -->
             <div class="row">
               <span class="lbl">{$t('bfl_mask_x')}</span>
-              <input type="number" bind:value={maskX} min="0" max="99999" class="num-in" />
+              <input type="number" bind:value={maskX} min="0" max="99999" class="num-in" on:change={drawIpCanvas}/>
               <span class="lbl ml">{$t('bfl_mask_y')}</span>
-              <input type="number" bind:value={maskY} min="0" max="99999" class="num-in" />
+              <input type="number" bind:value={maskY} min="0" max="99999" class="num-in" on:change={drawIpCanvas}/>
             </div>
             <div class="row">
               <span class="lbl">{$t('bfl_mask_w')}</span>
-              <input type="number" bind:value={maskW} min="0" max="99999" class="num-in" />
+              <input type="number" bind:value={maskW} min="0" max="99999" class="num-in" on:change={drawIpCanvas}/>
               <span class="lbl ml">{$t('bfl_mask_h')}</span>
-              <input type="number" bind:value={maskH} min="0" max="99999" class="num-in" />
+              <input type="number" bind:value={maskH} min="0" max="99999" class="num-in" on:change={drawIpCanvas}/>
             </div>
             <div class="row col">
               <span class="lbl">{$t('bfl_inpaint_prompt')} *</span>
@@ -283,7 +580,7 @@
                   <option value={ar}>{ar === '' ? 'auto (match input)' : ar}</option>
                 {/each}
               </select>
-              <span class="lbl ml">Seed</span>
+              <span class="lbl ml">{$t('bfl_seed')}</span>
               <input type="number" bind:value={editSeed} min="0" placeholder="random" class="num-in wide" />
             </div>
 
@@ -300,7 +597,7 @@
                   <option value={ar}>{ar}</option>
                 {/each}
               </select>
-              <span class="lbl ml">Seed</span>
+              <span class="lbl ml">{$t('bfl_seed')}</span>
               <input type="number" bind:value={genSeed} min="0" placeholder="random" class="num-in wide" />
             </div>
             <div class="row col">
@@ -362,7 +659,8 @@
   .modal {
     background: #1a1a28;
     border-radius: 10px;
-    width: min(94vw, 640px);
+    width: min(96vw, 720px);
+    max-height: 92vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.7);
@@ -377,6 +675,16 @@
     flex-shrink: 0;
   }
   .title { font-size: 13px; font-weight: 600; color: #c0c8e0; }
+  .modal-header button {
+    background: none;
+    border: none;
+    color: #6070a0;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .modal-header button:hover { color: #c0c8e0; background: #2a2a42; }
 
   .tab-bar {
     display: flex;
@@ -400,7 +708,7 @@
     flex-direction: column;
     gap: 10px;
     overflow-y: auto;
-    max-height: 70vh;
+    max-height: 76vh;
   }
   .modal-body.two-col {
     flex-direction: row;
@@ -408,17 +716,117 @@
     align-items: flex-start;
   }
 
-  .thumb-wrap { flex-shrink: 0; width: 160px; display: flex; flex-direction: column; gap: 6px; }
-  .thumb-container { position: relative; display: inline-block; }
-  .thumb { width: 160px; height: auto; border-radius: 4px; display: block; }
+  /* ── Left panel ── */
+  .thumb-wrap {
+    flex-shrink: 0;
+    width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+  }
+  .thumb { width: 200px; height: auto; border-radius: 4px; display: block; }
   .ref-hint { font-size: 9px; color: #505070; line-height: 1.4; text-align: center; }
-  .mask-overlay {
+
+  /* ── Outpaint preview ── */
+  .op-preview {
+    width: 100%;
+    max-height: 320px;
+    overflow: auto;
+    background: #0c0c18;
+    border-radius: 4px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 4px;
+  }
+  .op-scene {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .op-img {
+    display: block;
+    flex-shrink: 0;
+  }
+  .op-border {
     position: absolute;
-    background: rgba(255, 120, 40, 0.45);
-    border: 1.5px dashed #ff9a50;
+    background: rgba(74,158,255,0.3);
+    border: 1px dashed rgba(74,158,255,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 4px;
+    min-height: 4px;
+  }
+  .op-top, .op-bottom { cursor: ns-resize; width: 100%; }
+  .op-left, .op-right { cursor: ew-resize; height: 100%; }
+  .op-middle-row {
+    position: absolute;
+    left: 0;
+    display: flex;
+    align-items: stretch;
+  }
+  .op-label {
+    font-size: 9px;
+    color: #80c8ff;
     pointer-events: none;
+    white-space: nowrap;
+  }
+  .op-label-v { writing-mode: vertical-rl; }
+
+  /* Always-visible thin drag handles at the image boundaries */
+  .op-edge-handle {
+    position: absolute;
+    opacity: 0;
+    z-index: 10;
+  }
+  .op-eh-top    { top: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .op-eh-bottom { bottom: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .op-eh-left   { top: 0; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+  .op-eh-right  { top: 0; right: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+  .op-edge-handle:hover { opacity: 0.6; background: rgba(74,158,255,0.4); }
+
+  .zoom-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+  .zoom-lbl { font-size: 10px; color: #6070a0; }
+  .zoom-slider { flex: 1; }
+  .zoom-val { font-size: 10px; color: #6070a0; min-width: 28px; text-align: right; }
+
+  .drag-hint {
+    font-size: 9px;
+    color: #505070;
+    text-align: center;
+    line-height: 1.4;
   }
 
+  /* ── Inpaint canvas ── */
+  .ip-canvas-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+  .ip-img {
+    display: block;
+    max-width: 200px;
+    max-height: 280px;
+    border-radius: 4px;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .ip-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  /* ── Right controls ── */
   .controls { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
   .row {

@@ -86,6 +86,18 @@ class ConvertRequest(BaseModel):
     suffix: str = '_converted'
 
 
+class CanvasSizeRequest(BaseModel):
+    image_id:   int
+    add_top:    int = 0
+    add_bottom: int = 0
+    add_left:   int = 0
+    add_right:  int = 0
+    fill_mode:  str = 'solid'      # 'solid' | 'mirror'
+    fill_color: str = '#000000'    # CSS hex; used only for fill_mode='solid'
+    save_as:    str = 'new_file'   # 'replace' | 'new_file'
+    suffix:     str = '_border'
+
+
 class AdjustRequest(BaseModel):
     image_id: int
     # ── Levels (Photoshop-style) ─────────────────────────────────────
@@ -540,6 +552,151 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
         raise HTTPException(status_code=500, detail="Failed to save adjusted image")
 
     w, h = img.size
+    new_image_id: Optional[int] = None
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        if body.save_as == 'replace':
+            conn.execute("UPDATE images SET width=?, height=? WHERE id=?", (w, h, body.image_id))
+            conn.commit()
+            _delete_thumbnails(s.thumb_dir, body.image_id)
+            new_image_id = body.image_id
+        else:
+            new_image_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+    finally:
+        if conn:
+            conn.close()
+
+    return {
+        "ok": True,
+        "image_id": body.image_id,
+        "new_image_id": new_image_id,
+        "filepath": out_path,
+        "width": w,
+        "height": h,
+    }
+
+
+# ── Canvas Size helpers ────────────────────────────────────────────────────────
+
+def _hex_to_rgb(s: str) -> tuple:
+    """Parse '#rrggbb' or '#rgb' → (r, g, b)."""
+    s = s.lstrip('#')
+    if len(s) == 3:
+        s = s[0]*2 + s[1]*2 + s[2]*2
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except Exception:
+        return (0, 0, 0)
+
+
+@router.post("/canvas-size")
+def canvas_size_image(body: CanvasSizeRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+    """Add a border around an image using solid-color or mirror-edge fill.
+    For AI-generated fill, use /api/bfl/outpaint instead."""
+    PILImage = _get_pil()
+    s = _state()
+
+    if not can_access_image(body.image_id, user, s.db_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if body.fill_mode not in ('solid', 'mirror'):
+        raise HTTPException(status_code=400, detail=f"Unsupported fill_mode: {body.fill_mode!r}. Use 'solid' or 'mirror'.")
+
+    add_t = max(0, body.add_top)
+    add_b = max(0, body.add_bottom)
+    add_l = max(0, body.add_left)
+    add_r = max(0, body.add_right)
+
+    if add_t == 0 and add_b == 0 and add_l == 0 and add_r == 0:
+        raise HTTPException(status_code=400, detail="All border sizes are zero — nothing to do")
+
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        row = conn.execute("SELECT filepath FROM images WHERE id = ?", (body.image_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    filepath = row['filepath']
+
+    try:
+        img = PILImage.open(filepath)
+        if img.mode not in ('RGB', 'RGBA', 'L'):
+            img = img.convert('RGB')
+        orig_w, orig_h = img.size
+        new_w = orig_w + add_l + add_r
+        new_h = orig_h + add_t + add_b
+
+        if body.fill_mode == 'solid':
+            fill_rgb = _hex_to_rgb(body.fill_color)
+            # Convert fill to match image mode
+            if img.mode == 'RGBA':
+                fill = fill_rgb + (255,)
+            elif img.mode == 'L':
+                fill = int(0.299 * fill_rgb[0] + 0.587 * fill_rgb[1] + 0.114 * fill_rgb[2])
+            else:
+                fill = fill_rgb
+            canvas = PILImage.new(img.mode, (new_w, new_h), fill)
+            canvas.paste(img, (add_l, add_t))
+
+        else:  # mirror
+            canvas = PILImage.new(img.mode, (new_w, new_h))
+            canvas.paste(img, (add_l, add_t))
+            # Fill each border by stretching the edge pixel row/column
+            if add_t > 0:
+                top_strip = img.crop((0, 0, orig_w, 1)).resize((orig_w, add_t), PILImage.NEAREST)
+                canvas.paste(top_strip, (add_l, 0))
+            if add_b > 0:
+                bot_strip = img.crop((0, orig_h - 1, orig_w, orig_h)).resize((orig_w, add_b), PILImage.NEAREST)
+                canvas.paste(bot_strip, (add_l, add_t + orig_h))
+            if add_l > 0:
+                left_strip = img.crop((0, 0, 1, orig_h)).resize((add_l, orig_h), PILImage.NEAREST)
+                canvas.paste(left_strip, (0, add_t))
+            if add_r > 0:
+                right_strip = img.crop((orig_w - 1, 0, orig_w, orig_h)).resize((add_r, orig_h), PILImage.NEAREST)
+                canvas.paste(right_strip, (add_l + orig_w, add_t))
+            # Fill corners with the nearest corner pixel
+            if add_t > 0 and add_l > 0:
+                tl = img.getpixel((0, 0))
+                canvas.paste(PILImage.new(img.mode, (add_l, add_t), tl), (0, 0))
+            if add_t > 0 and add_r > 0:
+                tr = img.getpixel((orig_w - 1, 0))
+                canvas.paste(PILImage.new(img.mode, (add_r, add_t), tr), (add_l + orig_w, 0))
+            if add_b > 0 and add_l > 0:
+                bl = img.getpixel((0, orig_h - 1))
+                canvas.paste(PILImage.new(img.mode, (add_l, add_b), bl), (0, add_t + orig_h))
+            if add_b > 0 and add_r > 0:
+                br = img.getpixel((orig_w - 1, orig_h - 1))
+                canvas.paste(PILImage.new(img.mode, (add_r, add_b), br), (add_l + orig_w, add_t + orig_h))
+
+    except Exception as exc:
+        logger.error("canvas-size failed for image %d: %s", body.image_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Canvas size operation failed")
+
+    # Determine output path
+    p = Path(filepath)
+    if body.save_as == 'replace':
+        out_path = filepath
+    else:
+        stem = p.stem + body.suffix
+        out_path = str(p.parent / (stem + p.suffix))
+
+    try:
+        save_kwargs = {}
+        if p.suffix.lower() in ('.jpg', '.jpeg'):
+            save_kwargs['quality'] = 92
+            if canvas.mode == 'RGBA':
+                canvas = canvas.convert('RGB')
+        canvas.save(out_path, **save_kwargs)
+    except Exception as exc:
+        logger.error("canvas-size save failed for %s: %s", out_path, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save image with border")
+
+    w, h = canvas.size
     new_image_id: Optional[int] = None
     conn = None
     try:

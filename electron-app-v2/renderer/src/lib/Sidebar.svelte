@@ -13,6 +13,7 @@
   ];
   $: workItems = [
     { id: 'identify',      icon: '🔍', label: 'Identify' },
+    { id: 'generate',      icon: '✨', label: $t('tab_generate') },
     { id: 'faceclusters',  icon: '🫂', label: 'Face Clusters' },
     { id: 'filesystem',    icon: '💾', label: 'Filesystem' },
     { id: 'watchfolders',  icon: '📡', label: 'Watch Folders' },

@@ -1,12 +1,17 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { cropImage } from '../api.js';
+  import { cropImage, canvasSizeImage } from '../api.js';
+  import { t } from '../stores.js';
 
   export let imageId;
   export let imageUrl;
 
   const dispatch = createEventDispatcher();
 
+  // ── Tab state ─────────────────────────────────────────────────────────────
+  let cropTab = 'crop'; // 'crop' | 'canvas'
+
+  // ── Crop tab ──────────────────────────────────────────────────────────────
   const PRESETS = [
     ['Free', 0, 0],
     ['1:1',  1, 1],
@@ -32,8 +37,13 @@
   let dragMode = null; // 'create' | 'move' | 'tl' | 'tr' | 'bl' | 'br'
   let dragStart = { x: 0, y: 0, sx: 0, sy: 0, sw: 0, sh: 0 };
 
-  // Save options
-  let saveAs   = 'replace';
+  // ── Canvas Size tab ───────────────────────────────────────────────────────
+  let addTop = 0, addBottom = 0, addLeft = 0, addRight = 0;
+  let fillMode = 'solid';    // 'solid' | 'mirror' | 'outpaint'
+  let fillColor = '#000000';
+
+  // ── Shared save options ───────────────────────────────────────────────────
+  let saveAs   = 'new_file';
   let newFilename = '';
   let saving   = false;
   let errorMsg = '';
@@ -56,25 +66,20 @@
   function onImgLoad() {
     naturalW = imgEl.naturalWidth;
     naturalH = imgEl.naturalHeight;
-    // Use offsetWidth/Height — available immediately after load on a block element
     displayW = imgEl.offsetWidth;
     displayH = imgEl.offsetHeight;
     scale    = naturalW / displayW;
-    // Set canvas internal resolution to match the image pixel-for-pixel
     canvasEl.width  = displayW;
     canvasEl.height = displayH;
-    // Default selection = full image
     selX = 0; selY = 0; selW = naturalW; selH = naturalH;
     drawOverlay();
   }
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
 
-  // natural ↔ display pixel conversion
   function n2d(v) { return v / scale; }
   function d2n(v) { return v * scale; }
 
-  // Map a mouse event to canvas-pixel coordinates (handles CSS ≠ internal size)
   function canvasPos(e) {
     const r  = canvasEl.getBoundingClientRect();
     const sx = canvasEl.width  / r.width;
@@ -87,7 +92,7 @@
 
   // ── Hit testing ───────────────────────────────────────────────────────────
 
-  const HIT = 12; // px in canvas (display) space
+  const HIT = 12;
 
   function hitHandle(px, py) {
     const dx = n2d(selX), dy = n2d(selY), dw = n2d(selW), dh = n2d(selH);
@@ -112,22 +117,23 @@
 
   function drawOverlay() {
     if (!canvasEl || !displayW) return;
+    if (cropTab === 'canvas') {
+      drawBorderPreview();
+      return;
+    }
     const ctx = canvasEl.getContext('2d');
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
 
     const dx = n2d(selX), dy = n2d(selY), dw = n2d(selW), dh = n2d(selH);
 
-    // Darken everything outside selection
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
     ctx.clearRect(dx, dy, dw, dh);
 
-    // Selection border
     ctx.strokeStyle = '#4a9eff';
     ctx.lineWidth   = 2;
     ctx.strokeRect(dx, dy, dw, dh);
 
-    // Rule-of-thirds guides inside selection
     ctx.strokeStyle = 'rgba(74,158,255,0.25)';
     ctx.lineWidth   = 1;
     for (let i = 1; i < 3; i++) {
@@ -135,7 +141,6 @@
       ctx.beginPath(); ctx.moveTo(dx, dy + dh*i/3); ctx.lineTo(dx+dw, dy + dh*i/3); ctx.stroke();
     }
 
-    // Corner handles
     const hs = 8;
     ctx.fillStyle = '#4a9eff';
     [
@@ -145,7 +150,6 @@
       [dx+dw-hs, dy+dh-hs],
     ].forEach(([hx, hy]) => ctx.fillRect(hx, hy, hs, hs));
 
-    // Size label
     const lbl = `${selW} × ${selH}`;
     ctx.font = '11px monospace';
     const tw = ctx.measureText(lbl).width + 8;
@@ -156,7 +160,65 @@
     ctx.fillText(lbl, dx + 4, ly + 13);
   }
 
+  function drawBorderPreview() {
+    if (!canvasEl || !displayW) return;
+    const ctx = canvasEl.getContext('2d');
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+    const cw = canvasEl.width, ch = canvasEl.height;
+    // Convert natural pixel border values to display pixels
+    const dt = addTop    / scale;
+    const db = addBottom / scale;
+    const dl = addLeft   / scale;
+    const dr = addRight  / scale;
+
+    let fillRgba;
+    if (fillMode === 'solid') {
+      // parse hex color, add opacity
+      const hex = fillColor.replace('#', '');
+      const r = parseInt(hex.substring(0,2), 16) || 0;
+      const g = parseInt(hex.substring(2,4), 16) || 0;
+      const b = parseInt(hex.substring(4,6), 16) || 0;
+      fillRgba = `rgba(${r},${g},${b},0.75)`;
+    } else if (fillMode === 'mirror') {
+      fillRgba = 'rgba(160,80,220,0.5)';
+    } else {
+      fillRgba = 'rgba(60,200,120,0.5)';
+    }
+
+    ctx.fillStyle = fillRgba;
+    // Top border strip
+    if (dt > 0) ctx.fillRect(0, 0, cw, Math.min(dt, ch));
+    // Bottom border strip
+    if (db > 0) ctx.fillRect(0, Math.max(0, ch - db), cw, db);
+    // Left border strip (between top and bottom)
+    if (dl > 0) ctx.fillRect(0, dt, Math.min(dl, cw), Math.max(0, ch - dt - db));
+    // Right border strip (between top and bottom)
+    if (dr > 0) ctx.fillRect(Math.max(0, cw - dr), dt, dr, Math.max(0, ch - dt - db));
+
+    // Draw original image boundary
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(dl, dt, Math.max(0, cw - dl - dr), Math.max(0, ch - dt - db));
+    ctx.setLineDash([]);
+
+    // Dimension label
+    if (naturalW && (addTop || addBottom || addLeft || addRight)) {
+      const newW = naturalW + addLeft + addRight;
+      const newH = naturalH + addTop + addBottom;
+      const lbl = `${newW} × ${newH}`;
+      ctx.font = '11px monospace';
+      const tw = ctx.measureText(lbl).width + 8;
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(4, 4, tw, 18);
+      ctx.fillStyle = '#a0ffb0';
+      ctx.fillText(lbl, 8, 17);
+    }
+  }
+
   $: { selX; selY; selW; selH; drawOverlay(); }
+  $: { cropTab; addTop; addBottom; addLeft; addRight; fillMode; fillColor; drawOverlay(); }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -172,6 +234,7 @@
   // ── Mouse handlers ────────────────────────────────────────────────────────
 
   function onMouseDown(e) {
+    if (cropTab !== 'crop') return;
     if (e.button !== 0 || !displayW) return;
     e.preventDefault();
     const { x, y } = canvasPos(e);
@@ -202,7 +265,6 @@
       selY = clamp(dragStart.sy + ddy, 0, naturalH - selH);
 
     } else {
-      // Corner resize: recompute the rect from which corner moved
       let { sx, sy, sw, sh } = dragStart;
       let x0 = sx, y0 = sy, x1 = sx+sw, y1 = sy+sh;
       if (dragMode === 'tl') { x0 += ddx; y0 += ddy; }
@@ -254,14 +316,53 @@
       saving = false;
     }
   }
+
+  async function doCanvasSize() {
+    if (fillMode === 'outpaint') {
+      dispatch('openoutpaint', { imageId, addTop, addBottom, addLeft, addRight });
+      dispatch('close');
+      return;
+    }
+    if (addTop === 0 && addBottom === 0 && addLeft === 0 && addRight === 0) {
+      errorMsg = 'All border sizes are zero.';
+      return;
+    }
+    saving   = true;
+    errorMsg = '';
+    try {
+      const r = await canvasSizeImage({
+        image_id: imageId,
+        add_top: addTop, add_bottom: addBottom,
+        add_left: addLeft, add_right: addRight,
+        fill_mode: fillMode, fill_color: fillColor,
+        save_as: saveAs,
+      });
+      dispatch('cropped', r);
+      dispatch('close');
+    } catch (err) {
+      errorMsg = err.message;
+    } finally {
+      saving = false;
+    }
+  }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="modal-overlay" on:click|self={() => dispatch('close')}>
   <div class="modal">
     <div class="modal-header">
-      <span class="title">Crop Image</span>
+      <span class="title">{$t('crop_image')}</span>
       <button on:click={() => dispatch('close')}>✕</button>
+    </div>
+
+    <!-- Tab toggle -->
+    <div class="tab-bar">
+      <button class="tab-btn" class:active={cropTab === 'crop'}   on:click={() => cropTab = 'crop'}>
+        {$t('crop_image')}
+      </button>
+      <button class="tab-btn" class:active={cropTab === 'canvas'} on:click={() => cropTab = 'canvas'}>
+        {$t('canvas_size')}
+      </button>
     </div>
 
     <div class="modal-body">
@@ -279,6 +380,7 @@
           <canvas
             bind:this={canvasEl}
             class="crop-canvas"
+            class:crosshair={cropTab === 'crop'}
             on:mousedown={onMouseDown}
           ></canvas>
         </div>
@@ -287,96 +389,172 @@
       <!-- Controls panel -->
       <div class="controls-panel">
 
-        <!-- Aspect ratio presets -->
-        <div class="section-label">Aspect ratio</div>
-        <div class="preset-row">
-          {#each PRESETS as p, i}
-            <button
-              class="preset-btn"
-              class:active={presetIdx === i}
-              on:click={() => setPreset(i)}
-            >{p[0]}</button>
-          {/each}
-        </div>
+        {#if cropTab === 'crop'}
+          <!-- Aspect ratio presets -->
+          <div class="section-label">{$t('crop_aspect_ratio')}</div>
+          <div class="preset-row">
+            {#each PRESETS as p, i}
+              <button
+                class="preset-btn"
+                class:active={presetIdx === i}
+                on:click={() => setPreset(i)}
+              >{p[0]}</button>
+            {/each}
+          </div>
 
-        <!-- Pixel inputs -->
-        <div class="section-label">Selection (px)</div>
-        <div class="inputs-grid">
-          <label>X
-            <input type="number"
-              value={selX}
-              min="0" max={naturalW - 1}
-              on:change={e => { selX = clamp(+e.target.value || 0, 0, naturalW - selW); }}
-            />
-          </label>
-          <label>Y
-            <input type="number"
-              value={selY}
-              min="0" max={naturalH - 1}
-              on:change={e => { selY = clamp(+e.target.value || 0, 0, naturalH - selH); }}
-            />
-          </label>
-          <label>W
-            <input type="number"
-              value={selW}
-              min="1" max={naturalW}
-              on:change={e => {
-                const w = clamp(+e.target.value || 1, 1, naturalW - selX);
-                const r = applyAspect(w, selH);
-                selW = r.w; selH = r.h;
-              }}
-            />
-          </label>
-          <label>H
-            <input type="number"
-              value={selH}
-              min="1" max={naturalH}
-              on:change={e => {
-                const h = clamp(+e.target.value || 1, 1, naturalH - selY);
-                const r = applyAspect(selW, h);
-                selW = r.w; selH = r.h;
-              }}
-            />
-          </label>
-        </div>
+          <!-- Pixel inputs -->
+          <div class="section-label">{$t('crop_selection_px')}</div>
+          <div class="inputs-grid">
+            <label>X
+              <input type="number"
+                value={selX}
+                min="0" max={naturalW - 1}
+                on:change={e => { selX = clamp(+e.target.value || 0, 0, naturalW - selW); }}
+              />
+            </label>
+            <label>Y
+              <input type="number"
+                value={selY}
+                min="0" max={naturalH - 1}
+                on:change={e => { selY = clamp(+e.target.value || 0, 0, naturalH - selH); }}
+              />
+            </label>
+            <label>W
+              <input type="number"
+                value={selW}
+                min="1" max={naturalW}
+                on:change={e => {
+                  const w = clamp(+e.target.value || 1, 1, naturalW - selX);
+                  const r = applyAspect(w, selH);
+                  selW = r.w; selH = r.h;
+                }}
+              />
+            </label>
+            <label>H
+              <input type="number"
+                value={selH}
+                min="1" max={naturalH}
+                on:change={e => {
+                  const h = clamp(+e.target.value || 1, 1, naturalH - selY);
+                  const r = applyAspect(selW, h);
+                  selW = r.w; selH = r.h;
+                }}
+              />
+            </label>
+          </div>
 
-        <div class="dim-row">
-          Image: {naturalW} × {naturalH} px
-          <button class="reset-btn" on:click={resetSelection} title="Reset to full image">↺ Reset</button>
-        </div>
+          <div class="dim-row">
+            {naturalW} × {naturalH} px
+            <button class="reset-btn" on:click={resetSelection} title={$t('crop_reset')}>{$t('crop_reset')}</button>
+          </div>
 
-        <!-- Save options -->
-        <div class="section-label">Save as</div>
-        <div class="radio-group">
-          <label class="radio">
-            <input type="radio" bind:group={saveAs} value="replace" />
-            Replace original
-          </label>
-          <label class="radio">
-            <input type="radio" bind:group={saveAs} value="new_file" />
-            New file
-          </label>
-        </div>
+          <!-- Save options -->
+          <div class="section-label">{$t('save_as')}</div>
+          <div class="radio-group">
+            <label class="radio">
+              <input type="radio" bind:group={saveAs} value="replace" />
+              {$t('save_as_replace')}
+            </label>
+            <label class="radio">
+              <input type="radio" bind:group={saveAs} value="new_file" />
+              {$t('save_as_new_file')}
+            </label>
+          </div>
 
-        {#if saveAs === 'new_file'}
-          <input
-            type="text"
-            bind:value={newFilename}
-            placeholder="Filename (auto if blank)"
-            class="filename-input"
-          />
+          {#if saveAs === 'new_file'}
+            <input
+              type="text"
+              bind:value={newFilename}
+              placeholder={$t('crop_filename_hint')}
+              class="filename-input"
+            />
+          {/if}
+
+          {#if errorMsg}
+            <div class="error-msg">{errorMsg}</div>
+          {/if}
+
+          <div class="action-row">
+            <button class="btn-primary" on:click={doCrop} disabled={saving || !selW}>
+              {saving ? $t('saving') : $t('crop_and_save')}
+            </button>
+            <button on:click={() => dispatch('close')}>{$t('cancel')}</button>
+          </div>
+
+        {:else}
+          <!-- Canvas Size controls -->
+          <div class="section-label">{$t('canvas_add_border')}</div>
+          <div class="inputs-grid">
+            <label>{$t('bfl_add_top')}
+              <input type="number" bind:value={addTop}    min="0" />
+            </label>
+            <label>{$t('bfl_add_bottom')}
+              <input type="number" bind:value={addBottom} min="0" />
+            </label>
+            <label>{$t('bfl_add_left')}
+              <input type="number" bind:value={addLeft}   min="0" />
+            </label>
+            <label>{$t('bfl_add_right')}
+              <input type="number" bind:value={addRight}  min="0" />
+            </label>
+          </div>
+
+          <div class="dim-row">
+            {naturalW + addLeft + addRight} × {naturalH + addTop + addBottom} px
+          </div>
+
+          <div class="section-label">{$t('canvas_fill_mode')}</div>
+          <div class="radio-group">
+            <label class="radio">
+              <input type="radio" bind:group={fillMode} value="solid" />
+              {$t('canvas_fill_solid')}
+            </label>
+            <label class="radio">
+              <input type="radio" bind:group={fillMode} value="mirror" />
+              {$t('canvas_fill_mirror')}
+            </label>
+            <label class="radio">
+              <input type="radio" bind:group={fillMode} value="outpaint" />
+              {$t('canvas_fill_outpaint')}
+            </label>
+          </div>
+
+          {#if fillMode === 'solid'}
+            <div class="color-row">
+              <input type="color" bind:value={fillColor} class="color-picker" />
+              <input type="text"  bind:value={fillColor} class="color-text" placeholder="#000000" />
+            </div>
+          {:else if fillMode === 'outpaint'}
+            <div class="hint-text">{$t('canvas_fill_outpaint_hint')}</div>
+          {/if}
+
+          <!-- Save options (only for non-outpaint) -->
+          {#if fillMode !== 'outpaint'}
+            <div class="section-label">{$t('save_as')}</div>
+            <div class="radio-group">
+              <label class="radio">
+                <input type="radio" bind:group={saveAs} value="replace" />
+                {$t('save_as_replace')}
+              </label>
+              <label class="radio">
+                <input type="radio" bind:group={saveAs} value="new_file" />
+                {$t('save_as_new_file')}
+              </label>
+            </div>
+          {/if}
+
+          {#if errorMsg}
+            <div class="error-msg">{errorMsg}</div>
+          {/if}
+
+          <div class="action-row">
+            <button class="btn-primary" on:click={doCanvasSize} disabled={saving}>
+              {saving ? $t('saving') : fillMode === 'outpaint' ? $t('canvas_fill_outpaint') : $t('canvas_apply')}
+            </button>
+            <button on:click={() => dispatch('close')}>{$t('cancel')}</button>
+          </div>
         {/if}
 
-        {#if errorMsg}
-          <div class="error-msg">{errorMsg}</div>
-        {/if}
-
-        <div class="action-row">
-          <button class="btn-primary" on:click={doCrop} disabled={saving || !selW}>
-            {saving ? 'Saving…' : 'Crop & Save'}
-          </button>
-          <button on:click={() => dispatch('close')}>Cancel</button>
-        </div>
       </div>
     </div>
   </div>
@@ -424,6 +602,28 @@
   }
   .modal-header button:hover { color: #c0c8e0; background: #2a2a42; }
 
+  /* ── Tab bar ── */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    background: #141422;
+    border-bottom: 1px solid #2a2a3a;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 7px 14px;
+    font-size: 12px;
+    color: #5060a0;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .tab-btn:hover { color: #9090c0; background: #1a1a30; }
+  .tab-btn.active { color: #a0c4ff; border-bottom-color: #4a6aaa; background: #1a1a30; }
+
   /* ── Body layout ── */
   .modal-body {
     flex: 1;
@@ -444,21 +644,16 @@
     min-width: 0;
   }
 
-  /*
-   * canvas-wrapper shrinks to exactly the image's rendered size.
-   * The canvas is then pinned over it with inset:0.
-   * No JS positioning required.
-   */
   .canvas-wrapper {
     position: relative;
     display: inline-block;
-    line-height: 0; /* kill inline gap below img */
+    line-height: 0;
   }
 
   .canvas-wrapper img {
     display: block;
     max-width: 100%;
-    max-height: calc(94vh - 100px);
+    max-height: calc(94vh - 130px);
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
@@ -469,9 +664,9 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    cursor: crosshair;
     touch-action: none;
   }
+  .crop-canvas.crosshair { cursor: crosshair; }
 
   /* ── Controls panel ── */
   .controls-panel {
@@ -557,6 +752,41 @@
     font-size: 12px;
     color: #9098b8;
     cursor: pointer;
+  }
+
+  .color-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .color-picker {
+    width: 36px;
+    height: 28px;
+    padding: 2px;
+    border: 1px solid #2a2a42;
+    border-radius: 4px;
+    background: #121220;
+    cursor: pointer;
+  }
+  .color-text {
+    flex: 1;
+    font-size: 12px;
+    padding: 4px 6px;
+    background: #121220;
+    border: 1px solid #2a2a42;
+    border-radius: 4px;
+    color: #b0c0e0;
+    font-family: monospace;
+  }
+  .color-text:focus { border-color: #4a6aaa; outline: none; }
+
+  .hint-text {
+    font-size: 11px;
+    color: #70a070;
+    background: #101820;
+    border: 1px solid #2a4a2a;
+    padding: 6px 8px;
+    border-radius: 4px;
   }
 
   .filename-input {

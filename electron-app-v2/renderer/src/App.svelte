@@ -26,6 +26,7 @@
   import FaceClusterView    from './lib/FaceClusterView.svelte';
   import EventsView         from './lib/EventsView.svelte';
   import CloudDrivesView    from './lib/CloudDrivesView.svelte';
+  import GenerateView       from './lib/GenerateView.svelte';
   import PwaInstallBanner   from './lib/PwaInstallBanner.svelte';
   import LoginScreen        from './lib/LoginScreen.svelte';
 
@@ -285,6 +286,8 @@
         <TrainView />
       {:else if view === 'identify'}
         <IdentifyView />
+      {:else if view === 'generate'}
+        <GenerateView />
       {:else if view === 'filesystem'}
         <FilesystemView />
       {:else if view === 'watchfolders'}

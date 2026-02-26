@@ -235,6 +235,8 @@
   <AIEditModal
     imageId={aiEditItem.id}
     imageFilename={aiEditItem.filename}
+    imageW={aiEditItem.width || 0}
+    imageH={aiEditItem.height || 0}
     on:close={() => aiEditItem = null}
     on:edited={() => aiEditItem = null}
   />

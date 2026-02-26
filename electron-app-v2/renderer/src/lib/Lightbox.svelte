@@ -275,6 +275,8 @@
   <AIEditModal
     imageId={image.id}
     imageFilename={image.filename}
+    imageW={image.width || 0}
+    imageH={image.height || 0}
     on:close={() => showAIEdit = false}
     on:edited={() => { showAIEdit = false; imgVersion++; loadImage(image.id); }}
   />

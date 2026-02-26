@@ -482,6 +482,7 @@ export function outpaintImage(params)  { return post('/bfl/outpaint',  params); 
 export function inpaintImage(params)   { return post('/bfl/inpaint',   params); }
 export function aiEditImage(params)    { return post('/bfl/edit',      params); }
 export function generateImage(params)  { return post('/bfl/generate',  params); }
+export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
 
 export function convertBatch(params, onEvent) {
   const ctrl = new AbortController();
