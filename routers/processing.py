@@ -45,11 +45,21 @@ class SingleRequest(BaseModel):
     det_model:  str  = 'auto'  # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
 
 class BatchRequest(BaseModel):
-    folder:    str
-    recursive: bool = True
+    folder:        str
+    recursive:     bool            = True
+    det_thresh:    Optional[float] = None
+    min_face_size: Optional[int]   = None
+    rec_thresh:    Optional[float] = None
+    det_model:     str             = 'auto'
+    max_size:      int             = 0
 
 class BatchFilesRequest(BaseModel):
-    paths: List[str]   # explicit list of absolute file paths
+    paths:         List[str]       # explicit list of absolute file paths
+    det_thresh:    Optional[float] = None
+    min_face_size: Optional[int]   = None
+    rec_thresh:    Optional[float] = None
+    det_model:     str             = 'auto'
+    max_size:      int             = 0
 
 class TrainRequest(BaseModel):
     person_name:  str
@@ -113,7 +123,8 @@ def _build_payload(i, total, path, result=None, error=None):
     }
 
 
-async def _stream_paths(paths, s, vlm_provider):
+async def _stream_paths(paths, s, vlm_provider, det_thresh=None, min_face_size=None,
+                        rec_thresh=None, det_model='auto', max_size=0):
     """Shared SSE generator: process a list of paths and yield SSE events."""
     import asyncio
     total = len(paths)
@@ -122,7 +133,11 @@ async def _stream_paths(paths, s, vlm_provider):
     for i, path in enumerate(paths, 1):
         try:
             result = await loop.run_in_executor(
-                None, lambda p=path: s.engine.process_image(p, vlm_provider)
+                None, lambda p=path: s.engine.process_image(
+                    p, vlm_provider,
+                    det_thresh=det_thresh, min_face_size=min_face_size,
+                    rec_thresh=rec_thresh, det_model=det_model, max_size=max_size,
+                )
             )
             payload = _build_payload(i, total, path, result=result)
         except Exception as e:
@@ -144,7 +159,12 @@ async def process_batch(body: BatchRequest, user=Depends(get_current_user)):
     s = _state_with_engine()
     paths = _get_image_paths(body.folder, body.recursive)
     vlm = get_effective_vlm_provider(user, s)
-    return StreamingResponse(_stream_paths(paths, s, vlm), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_paths(paths, s, vlm,
+                      det_thresh=body.det_thresh, min_face_size=body.min_face_size,
+                      rec_thresh=body.rec_thresh, det_model=body.det_model, max_size=body.max_size),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/batch-files")
@@ -156,7 +176,12 @@ async def process_batch_files(body: BatchFilesRequest, user=Depends(get_current_
         if Path(p).is_file() and Path(p).suffix.lower() in IMAGE_EXTENSIONS
     ]
     vlm = get_effective_vlm_provider(user, s)
-    return StreamingResponse(_stream_paths(paths, s, vlm), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_paths(paths, s, vlm,
+                      det_thresh=body.det_thresh, min_face_size=body.min_face_size,
+                      rec_thresh=body.rec_thresh, det_model=body.det_model, max_size=body.max_size),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/train")

@@ -131,11 +131,16 @@ export function importProcessed(data) {
  * Mode B: upload a full local image to VPS for processing.
  * Accepts an ArrayBuffer (from IPC readLocalFile) and the original local path.
  */
-export async function uploadLocal(buffer, localPath, visibility = 'shared') {
+export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
   form.append('local_path', localPath);
   form.append('visibility', visibility);
+  if (detParams.det_thresh    != null) form.append('det_thresh',    String(detParams.det_thresh));
+  if (detParams.min_face_size != null) form.append('min_face_size', String(detParams.min_face_size));
+  if (detParams.rec_thresh    != null) form.append('rec_thresh',    String(detParams.rec_thresh));
+  if (detParams.det_model)             form.append('det_model',     detParams.det_model);
+  if (detParams.max_size      != null) form.append('max_size',      String(detParams.max_size));
   const res = await fetch(`${BASE}/ingest/upload-local`, {
     method: 'POST',
     credentials: 'include',
@@ -158,8 +163,8 @@ export function streamBatchFiles(paths, onEvent) {
   return _streamSSE(`${BASE}/process/batch-files`, { paths }, onEvent);
 }
 
-export function streamBatch(folder, recursive, onEvent) {
-  return _streamSSE(`${BASE}/process/batch`, { folder, recursive }, onEvent);
+export function streamBatch(folder, recursive, onEvent, detParams = {}) {
+  return _streamSSE(`${BASE}/process/batch`, { folder, recursive, ...detParams }, onEvent);
 }
 
 function _streamSSE(url, body, onEvent) {
@@ -429,13 +434,13 @@ export function browseFilesystem(path = '') {
  * onEvent(data) called per SSE message.
  * Returns { close() } to abort.
  */
-export function addToDb(paths, recursive, onEvent, visibility = 'shared') {
+export function addToDb(paths, recursive, onEvent, visibility = 'shared', detParams = {}) {
   const ctrl = new AbortController();
   fetch(`${BASE}/filesystem/add`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ paths, recursive, visibility }),
+    body: JSON.stringify({ paths, recursive, visibility, ...detParams }),
     signal: ctrl.signal,
   }).then(async res => {
     const reader = res.body.getReader();

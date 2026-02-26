@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from routers.deps import require_admin_or_mediamanager
+from routers.deps import get_current_user, require_admin_or_mediamanager
 
 router = APIRouter()
 
@@ -129,7 +129,7 @@ def merge_people(body: MergeRequest, _=Depends(require_admin_or_mediamanager)):
 
 
 @router.post("/reassign-face")
-def do_reassign_face(body: ReassignFaceRequest, _=Depends(require_admin_or_mediamanager)):
+def do_reassign_face(body: ReassignFaceRequest, _user=Depends(get_current_user)):
     from image_ops import reassign_face
     import logging as _logging
     _log = _logging.getLogger(__name__)

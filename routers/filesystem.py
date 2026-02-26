@@ -6,13 +6,14 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from routers.deps import get_current_user
+from routers.settings import get_effective_vlm_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,9 +34,14 @@ def _connect(db_path: str):
 
 
 class AddRequest(BaseModel):
-    paths:      List[str]
-    recursive:  bool = True
-    visibility: str  = 'shared'
+    paths:         List[str]
+    recursive:     bool            = True
+    visibility:    str             = 'shared'
+    det_thresh:    Optional[float] = None
+    min_face_size: Optional[int]   = None
+    rec_thresh:    Optional[float] = None
+    det_model:     str             = 'auto'
+    max_size:      int             = 0
 
 
 def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
@@ -232,6 +238,7 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
     total = len(all_paths)
     vis = body.visibility if body.visibility in ('shared', 'private') else 'shared'
     owner_id = user.id
+    vlm_prov = get_effective_vlm_provider(user, s)
 
     async def event_stream():
         import asyncio
@@ -258,7 +265,14 @@ async def add_to_db(body: AddRequest, user=Depends(get_current_user)):
             try:
                 # Run blocking process_image in a thread so SSE frames flush between images
                 result = await loop.run_in_executor(
-                    None, lambda p=path: s.engine.process_image(p, s.vlm_provider)
+                    None, lambda p=path: s.engine.process_image(
+                        p, vlm_prov,
+                        det_thresh=body.det_thresh,
+                        min_face_size=body.min_face_size,
+                        rec_thresh=body.rec_thresh,
+                        det_model=body.det_model,
+                        max_size=body.max_size,
+                    )
                 )
                 r = result if isinstance(result, dict) else {}
                 image_id = r.get('image_id')

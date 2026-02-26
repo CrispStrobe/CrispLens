@@ -142,6 +142,30 @@
     }
   });
 
+  // ── Detection settings ─────────────────────────────────────────────────────
+  let detThresh    = 0.5;
+  let minFaceSize  = 60;
+  let recThresh    = 0.4;
+  let detModel     = 'auto';
+  let maxSize      = 0;
+  let showDetParams = false;
+
+  const DET_MODELS = [
+    { value: 'auto',       label: 'Auto (Standard)' },
+    { value: 'retinaface', label: 'RetinaFace' },
+    { value: 'scrfd',      label: 'SCRFD' },
+    { value: 'yunet',      label: 'YuNet' },
+    { value: 'mediapipe',  label: 'MediaPipe' },
+  ];
+
+  $: detParams = {
+    det_thresh:    detThresh,
+    min_face_size: minFaceSize,
+    rec_thresh:    recThresh,
+    det_model:     detModel,
+    max_size:      maxSize,
+  };
+
   // ── Processing state ───────────────────────────────────────────────────────
   let running = false;
   let batchSource = null;
@@ -193,7 +217,7 @@
           : item.path;
         console.log('[ProcessView] upload-local | item.path=%s | localBasePath=%s | pathForServer=%s',
           item.path ?? '(none)', base || '(none)', pathForServer);
-        const resp   = await uploadLocal(buffer, pathForServer, visibility);
+        const resp   = await uploadLocal(buffer, pathForServer, visibility, detParams);
         console.log('[ProcessView] upload-local response | image_id=%s | skipped=%s | shared_duplicate=%s',
           resp.image_id, resp.skipped, resp.shared_duplicate ?? false);
         if (resp.skipped) {
@@ -367,7 +391,7 @@
         if (ev.error) errorCount++;
         queue = [...queue.slice(-199), item];
       }
-    });
+    }, detParams);
   }
 
   async function refreshGlobalData() {
@@ -488,6 +512,42 @@
     </div>
   </div>
 
+  <!-- Detection settings (collapsible) -->
+  <div class="det-settings">
+    <button class="det-toggle" on:click={() => showDetParams = !showDetParams}>
+      ⚙ Erkennungseinstellungen {showDetParams ? '▲' : '▼'}
+    </button>
+    {#if showDetParams}
+      <div class="det-params-box">
+        <div class="det-param-row">
+          <label>Erkennungsschwelle: <strong>{detThresh}</strong></label>
+          <input type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} />
+        </div>
+        <div class="det-param-row">
+          <label>Min. Gesichtsgröße: <strong>{minFaceSize}px</strong></label>
+          <input type="range" min="10" max="200" step="5" bind:value={minFaceSize} />
+        </div>
+        <div class="det-param-row">
+          <label>Gewissheit: <strong>{recThresh}</strong></label>
+          <input type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
+        </div>
+        <div class="det-param-row">
+          <label>Erkennungsmodell</label>
+          <select bind:value={detModel}>
+            {#each DET_MODELS as m}
+              <option value={m.value}>{m.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="det-param-row">
+          <label>Verkleinern auf (px) <span class="hint">0 = Original</span></label>
+          <input type="number" bind:value={maxSize} min="0" max="9999" step="100"
+                 placeholder="0" class="num-input" />
+        </div>
+      </div>
+    {/if}
+  </div>
+
   <!-- Progress bar -->
   {#if running || finished || cancelled}
     <div class="progress-section">
@@ -602,6 +662,40 @@
   .server-path-row .flex1 { flex: 1; }
   .server-path-input input { flex: 1; }
   .server-folder-row2 { display: flex; gap: 10px; align-items: center; }
+
+  /* ── Detection settings ── */
+  .det-settings {
+    display: flex; flex-direction: column; gap: 0;
+    background: #141422; border: 1px solid #2a2a3a; border-radius: 8px;
+    flex-shrink: 0; overflow: hidden;
+  }
+  .det-toggle {
+    background: none; border: none; text-align: left;
+    padding: 8px 14px; font-size: 11px; color: #6080a0; cursor: pointer;
+    width: 100%;
+  }
+  .det-toggle:hover { color: #90b0d0; background: #1a1a2e; }
+  .det-params-box {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 14px; border-top: 1px solid #2a2a3a;
+  }
+  .det-param-row {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .det-param-row label {
+    font-size: 11px; color: #8090b0; white-space: nowrap; min-width: 200px;
+  }
+  .det-param-row label strong { color: #c0d0f0; }
+  .det-param-row input[type="range"] { flex: 1; accent-color: #5080c0; }
+  .det-param-row select {
+    flex: 1; font-size: 11px; padding: 3px 6px;
+    background: #0e0e1e; border: 1px solid #3a3a5a; border-radius: 4px; color: #c0c8e0;
+  }
+  .det-param-row .num-input {
+    width: 90px; font-size: 11px; padding: 3px 8px;
+    background: #0e0e1e; border: 1px solid #3a3a5a; border-radius: 4px; color: #c0c8e0;
+  }
+  .det-param-row .hint { font-size: 10px; color: #505070; margin-left: 4px; }
 
   /* ── Local base path (browser mode) ── */
   .base-path-row {

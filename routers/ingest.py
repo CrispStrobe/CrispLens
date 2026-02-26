@@ -89,9 +89,14 @@ class ImportProcessedRequest(BaseModel):
 
 @router.post('/upload-local')
 async def upload_local(
-    file:       UploadFile = File(...),
-    local_path: str        = Form(...),
-    visibility: str        = Form('shared'),
+    file:          UploadFile     = File(...),
+    local_path:    str            = Form(...),
+    visibility:    str            = Form('shared'),
+    det_thresh:    Optional[float] = Form(None),
+    min_face_size: Optional[int]   = Form(None),
+    rec_thresh:    Optional[float] = Form(None),
+    det_model:     str             = Form('auto'),
+    max_size:      int             = Form(0),
     user=Depends(get_current_user),
 ):
     """
@@ -193,7 +198,9 @@ async def upload_local(
     try:
         # Normal VPS processing (filepath stored in DB = perm_path — stays on disk)
         vlm = get_effective_vlm_provider(user, s)
-        result = await _run_in_executor(s, perm_path, vlm)
+        result = await _run_in_executor(s, perm_path, vlm,
+                                        det_thresh=det_thresh, min_face_size=min_face_size,
+                                        rec_thresh=rec_thresh, det_model=det_model, max_size=max_size)
 
         if not result.get('success'):
             try:
@@ -251,12 +258,18 @@ async def upload_local(
         raise
 
 
-async def _run_in_executor(s, path: str, vlm_provider=None):
+async def _run_in_executor(s, path: str, vlm_provider=None,
+                           det_thresh=None, min_face_size=None, rec_thresh=None,
+                           det_model='auto', max_size=0):
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
-        lambda: s.engine.process_image(path, vlm_provider),
+        lambda: s.engine.process_image(
+            path, vlm_provider,
+            det_thresh=det_thresh, min_face_size=min_face_size, rec_thresh=rec_thresh,
+            det_model=det_model, max_size=max_size,
+        ),
     )
 
 
