@@ -171,6 +171,17 @@ async def upload_local(
     finally:
         _dedup_conn2.close()
     if _shared:
+        # Record local_path for the uploading user if not already set
+        try:
+            _lp_conn = _connect(s.db_path)
+            _lp_conn.execute(
+                "UPDATE images SET local_path = COALESCE(local_path, ?) WHERE id = ?",
+                (local_path, _shared['id']),
+            )
+            _lp_conn.commit()
+            _lp_conn.close()
+        except Exception:
+            pass
         return {'image_id': _shared['id'], 'face_count': _shared['face_count'],
                 'skipped': True, 'shared_duplicate': True}
 

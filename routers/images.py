@@ -32,22 +32,24 @@ def _state():
 
 
 def _check_modify(image_id: int, user, db_path: str):
-    """Raise 403 if user can't modify this image (must be owner or admin/mediamanager).
-    Images with owner_id = NULL (legacy / server-processed) are modifiable by any user.
+    """Raise 403 if user can't modify this image.
+    Allow: admin/mediamanager, owner, unowned (NULL), or visibility='shared'.
+    Block: another user's private image.
     """
     if user.role in ('admin', 'mediamanager'):
         return
     conn = sqlite3.connect(db_path, timeout=5.0)
     try:
-        row = conn.execute("SELECT owner_id FROM images WHERE id=?", (image_id,)).fetchone()
+        row = conn.execute(
+            "SELECT owner_id, visibility FROM images WHERE id=?", (image_id,)
+        ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Image not found")
-        owner_id = row[0]
-        # owner_id IS NULL  → unowned / legacy image, any user may modify
-        # owner_id == user.id → user owns it
-        # owner_id != user.id → another user's image → forbidden
-        if owner_id is not None and owner_id != user.id:
-            raise HTTPException(status_code=403, detail="You don't have permission to modify this image")
+        owner_id, visibility = row[0], row[1]
+        # Allow: unowned (NULL owner), owned by this user, or visibility='shared'
+        if owner_id is None or owner_id == user.id or visibility == 'shared':
+            return
+        raise HTTPException(status_code=403, detail="You don't have permission to modify this image")
     finally:
         conn.close()
 

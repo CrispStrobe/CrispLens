@@ -344,12 +344,17 @@ def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_
     try:
         conn = _connect(db_path)
         cur = conn.execute(
-            "INSERT OR IGNORE INTO images (filepath, filename, width, height, processed, owner_id) "
-            "VALUES (?, ?, ?, ?, 0, ?)",
+            "INSERT OR IGNORE INTO images "
+            "(filepath, filename, width, height, processed, owner_id, visibility) "
+            "VALUES (?, ?, ?, ?, 0, ?, 'shared')",
             (out_path, Path(out_path).name, w, h, owner_id),
         )
         conn.commit()
-        return cur.lastrowid if cur.lastrowid else None
+        if cur.lastrowid:
+            return cur.lastrowid
+        # INSERT was ignored (filepath already exists) — return the existing row's id
+        row = conn.execute("SELECT id FROM images WHERE filepath = ?", (out_path,)).fetchone()
+        return row['id'] if row else None
     except Exception as exc:
         logger.warning("Could not register converted file %s: %s", out_path, exc)
         return None

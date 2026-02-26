@@ -23,7 +23,8 @@
   $: canDelete = $currentUser?.role === 'admin'
     || $currentUser?.role === 'mediamanager'
     || item?.owner_id == null
-    || item?.owner_id === $currentUser?.id;
+    || item?.owner_id === $currentUser?.id
+    || item?.visibility === 'shared';
 
   function close() { dispatch('close'); }
 

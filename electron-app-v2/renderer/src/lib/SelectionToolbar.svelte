@@ -10,7 +10,8 @@
     || $currentUser?.role === 'mediamanager'
     || [...$selectedItems].every(id => {
         const img = $galleryImages.find(i => i.id === id);
-        return !img || img.owner_id == null || img.owner_id === $currentUser?.id;
+        return !img || img.owner_id == null || img.owner_id === $currentUser?.id
+            || img.visibility === 'shared';
       });
 
   let showEditModal = false;

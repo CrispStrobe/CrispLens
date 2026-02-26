@@ -9,7 +9,8 @@
   $: canDelete = $currentUser?.role === 'admin'
     || $currentUser?.role === 'mediamanager'
     || image?.owner_id == null
-    || image?.owner_id === $currentUser?.id;
+    || image?.owner_id === $currentUser?.id
+    || image?.visibility === 'shared';
 
   const dispatch = createEventDispatcher();
 

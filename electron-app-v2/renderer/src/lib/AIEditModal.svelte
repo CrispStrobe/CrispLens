@@ -5,7 +5,7 @@
    * Events: close, edited (detail: { new_image_id, filepath })
    */
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
-  import { t, sidebarView } from '../stores.js';
+  import { t, sidebarView, selectedId } from '../stores.js';
   import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage, generateImage } from '../api.js';
 
   export let imageId       = null;
@@ -409,12 +409,23 @@
       <div class="modal-body">
         <div class="done-panel">
           <div class="done-title">{$t('bfl_done')}</div>
+          {#if result.new_image_id}
+            <img
+              src={thumbnailUrl(result.new_image_id, 400)}
+              alt="Result"
+              class="result-thumb"
+            />
+          {/if}
           <div class="result-path">{result.filepath}</div>
           {#if result.width}
             <div class="result-dim">{result.width} × {result.height} px</div>
           {/if}
           <div class="action-row">
             {#if result.new_image_id}
+              <button class="primary"
+                on:click={() => { selectedId.set(result.new_image_id); dispatch('edited', result); }}>
+                🔍 {$t('view')}
+              </button>
               <button class="primary"
                 on:click={() => { sidebarView.set('all'); dispatch('edited', result); }}>
                 🖼 {$t('gen_view_in_gallery')}
@@ -424,7 +435,7 @@
                 ⬇ {$t('download')}
               </button>
             {/if}
-            <button class="primary" on:click={handleClose}>{$t('close')}</button>
+            <button on:click={handleClose}>{$t('close')}</button>
           </div>
         </div>
       </div>
@@ -916,8 +927,16 @@
   .action-row { display: flex; gap: 8px; margin-top: 4px; }
   .action-row button { font-size: 12px; padding: 5px 14px; border-radius: 4px; }
 
-  .done-panel { display: flex; flex-direction: column; gap: 8px; }
+  .done-panel { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
   .done-title  { font-size: 13px; color: #80e080; font-weight: 600; }
+  .result-thumb {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 6px;
+    border: 1px solid #2a2a3a;
+    object-fit: contain;
+    align-self: center;
+  }
   .result-path {
     font-family: monospace;
     font-size: 10px;

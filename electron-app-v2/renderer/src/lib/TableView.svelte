@@ -147,7 +147,7 @@
       {#each $galleryImages as img (img.id)}
         {@const originPath = img.origin_path ?? img.local_path ?? ''}
         {@const serverPath = img.server_path ?? img.filepath ?? ''}
-        {@const originDiffers = originPath && originPath !== serverPath}
+        {@const originDiffers = originPath && originPath !== serverPath && originPath.includes('/')}
         {@const displayPath = originPath || serverPath}
         <!-- Inline reference to expandAll and expandedRows so Svelte tracks them -->
         {@const rowExpanded = expandAll || !!expandedRows[img.id]}
@@ -197,7 +197,7 @@
           {/if}
           <td class="path">
             <div class="path-origin" title={displayPath}>{displayPath}</div>
-            {#if rowExpanded && originDiffers}
+            {#if originDiffers}
               <div class="path-vps" title={serverPath}>
                 <span class="path-label">server</span>{serverPath}
               </div>
