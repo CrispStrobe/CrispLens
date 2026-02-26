@@ -172,6 +172,8 @@ async def upload_local(
         _dedup_conn2.close()
     if _shared:
         # Record local_path for the uploading user if not already set
+        logger.info('upload_local: shared_duplicate detected image_id=%s, saving local_path=%r for user %s',
+                    _shared['id'], local_path, user.id)
         try:
             _lp_conn = _connect(s.db_path)
             _lp_conn.execute(
@@ -215,6 +217,11 @@ async def upload_local(
                     (local_path, user.id, vis, image_id),
                 )
                 conn.commit()
+                logger.info('upload_local: saved image_id=%s | local_path=%r | owner_id=%s | visibility=%s',
+                            image_id, local_path, user.id, vis)
+            else:
+                logger.info('upload_local: image_id=%s already owned by owner_id=%s, skipping local_path update (local_path=%r)',
+                            image_id, cur_owner, local_path)
 
             # Write thumbnail blob to disk so GET /api/images/{id}/thumbnail works
             thumb_row = conn.execute(
@@ -331,6 +338,8 @@ def import_processed(body: ImportProcessedRequest, user=Depends(get_current_user
             ),
         )
         image_id = cursor.lastrowid
+        logger.info('import_processed: inserted image_id=%s | local_path=%r | owner_id=%s | visibility=%s | faces=%s',
+                    image_id, body.local_path, user.id, vis, len(body.faces))
 
         # ── 4. Save thumbnail to disk for fast serving ─────────────────────────
         thumb_path = os.path.join(s.thumb_dir, f'{image_id}_200.jpg')

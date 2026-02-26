@@ -41,6 +41,9 @@
 
   function toggleRow(id, e) {
     e.stopPropagation();
+    const img = $galleryImages.find(i => i.id === id);
+    console.log('[TableView] toggleRow id=%s | origin_path=%s | local_path=%s | server_path=%s | filepath=%s',
+      id, img?.origin_path, img?.local_path, img?.server_path, img?.filepath);
     if (expandedRows[id]) {
       const { [id]: _, ...rest } = expandedRows;
       expandedRows = rest;
@@ -147,8 +150,6 @@
       {#each $galleryImages as img (img.id)}
         {@const originPath = img.origin_path ?? img.local_path ?? ''}
         {@const serverPath = img.server_path ?? img.filepath ?? ''}
-        {@const originDiffers = originPath && originPath !== serverPath && originPath.includes('/')}
-        {@const displayPath = originPath || serverPath}
         <!-- Inline reference to expandAll and expandedRows so Svelte tracks them -->
         {@const rowExpanded = expandAll || !!expandedRows[img.id]}
         <tr
@@ -196,11 +197,12 @@
             </td>
           {/if}
           <td class="path">
-            <div class="path-origin" title={displayPath}>{displayPath}</div>
-            {#if originDiffers}
-              <div class="path-vps" title={serverPath}>
-                <span class="path-label">server</span>{serverPath}
-              </div>
+            <div class="path-filename" title={img.filename}>{img.filename}</div>
+            {#if originPath}
+              <div class="path-origin" title={originPath}>{originPath}</div>
+            {/if}
+            {#if serverPath}
+              <div class="path-vps" title={serverPath}>{serverPath}</div>
             {/if}
           </td>
           <td class="col-toggle">
@@ -292,17 +294,17 @@
   .chip-more:hover { background: #1e1e38; color: #4a5070; }
 
   .path { color: #607090; font-size: 10px; max-width: 340px; }
+  .path-filename {
+    font-size: 11px; color: #8090b8; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px;
+  }
   .path-origin {
-    font-size: 11px; color: #6070a0;
+    font-size: 9px; color: #506080; margin-top: 1px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px;
   }
   .path-vps {
     font-size: 9px; color: #3a3a58; margin-top: 1px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px;
-  }
-  .path-label {
-    font-size: 8px; color: #3a3a58; text-transform: uppercase;
-    margin-right: 4px; letter-spacing: 0.5px;
   }
 
   .col-toggle { width: 28px; }

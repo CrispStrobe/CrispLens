@@ -158,7 +158,11 @@
           ? await item.file.arrayBuffer()
           : await window.electronAPI.readLocalFile(item.path);
         const pathForServer = item.file ? item.file.name : item.path;
+        console.log('[ProcessView] upload-local | file=%s | item.path=%s | pathForServer=%s',
+          item.file?.name ?? '(none)', item.path ?? '(none)', pathForServer);
         const resp   = await uploadLocal(buffer, pathForServer, visibility);
+        console.log('[ProcessView] upload-local response | image_id=%s | skipped=%s | shared_duplicate=%s',
+          resp.image_id, resp.skipped, resp.shared_duplicate ?? false);
         if (resp.skipped) {
           if (resp.shared_duplicate) {
             sharedDupCount++;

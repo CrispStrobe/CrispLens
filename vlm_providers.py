@@ -577,7 +577,7 @@ class OpenRouterVLM(OpenAICompatibleVLM):
 
 class MistralVLM(OpenAICompatibleVLM):
     BASE_URL = "https://api.mistral.ai/v1"
-    DEFAULT_MODEL = "pixtral-large-latest"
+    DEFAULT_MODEL = "ministral-14b-2512"
 
 
 class GroqVLM(OpenAICompatibleVLM):
