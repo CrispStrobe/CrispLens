@@ -364,10 +364,25 @@ def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
     conn = None
     try:
         conn = _sqlite3.connect(s.db_path)
-        conn.execute(
-            'UPDATE users SET vlm_enabled = ?, vlm_provider = ?, vlm_model = ? WHERE id = ?',
-            (enabled_val, body.vlm_provider, body.vlm_model, user.id),
-        )
+        try:
+            conn.execute(
+                'UPDATE users SET vlm_enabled = ?, vlm_provider = ?, vlm_model = ? WHERE id = ?',
+                (enabled_val, body.vlm_provider, body.vlm_model, user.id),
+            )
+        except _sqlite3.OperationalError as col_err:
+            if 'no such column' in str(col_err) or 'no column named' in str(col_err):
+                # Columns added in a later migration — add them and retry
+                for col, typ in [('vlm_enabled', 'INTEGER'), ('vlm_provider', 'TEXT'), ('vlm_model', 'TEXT')]:
+                    try:
+                        conn.execute(f'ALTER TABLE users ADD COLUMN {col} {typ}')
+                    except _sqlite3.OperationalError:
+                        pass  # already exists
+                conn.execute(
+                    'UPDATE users SET vlm_enabled = ?, vlm_provider = ?, vlm_model = ? WHERE id = ?',
+                    (enabled_val, body.vlm_provider, body.vlm_model, user.id),
+                )
+            else:
+                raise
         conn.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")
