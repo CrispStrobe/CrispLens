@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { fsCurrentPath, backgroundTask, galleryRefreshTick, filters, sidebarView, selectedId } from '../stores.js';
+  import { t, fsCurrentPath, backgroundTask, galleryRefreshTick, filters, sidebarView, selectedId } from '../stores.js';
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
@@ -393,8 +393,8 @@
 
   function dirLabel(entry) {
     if (entry.total_files === 0) return '';
-    if (entry.db_count >= entry.total_files) return `${entry.db_count} in DB`;
-    return `${entry.db_count}/${entry.total_files} in DB`;
+    if (entry.db_count >= entry.total_files) return `${entry.db_count} ${$t('fs_in_db')}`;
+    return `${entry.db_count}/${entry.total_files} ${$t('fs_in_db')}`;
   }
 
   // ── Server mode: add-to-DB via SSE ────────────────────────────────────────
@@ -686,20 +686,17 @@
           class="mode-btn"
           class:active={mode === 'server'}
           on:click={() => switchMode('server')}
-          title="Browse server filesystem"
-        >📡 Server</button>
+        >📡 {$t('fs_server_mode')}</button>
         <button
           class="mode-btn"
           class:active={mode === 'local'}
           on:click={() => switchMode('local')}
-          title="Browse local filesystem"
-        >{hasElectron ? '💻' : '📂'} Local</button>
+        >{hasElectron ? '💻' : '📂'} {$t('fs_local_mode')}</button>
         <button
           class="mode-btn"
           class:active={mode === 'cloud'}
           on:click={() => switchMode('cloud')}
-          title="Browse cloud & network drives"
-        >☁ Cloud</button>
+        >☁ {$t('fs_cloud_mode')}</button>
       </div>
     {/if}
 
@@ -743,7 +740,7 @@
       <div class="breadcrumbs"></div>
     {:else if cloudMode && cloudDriveId === null}
       <!-- Picker: no breadcrumbs -->
-      <div class="breadcrumbs"><span class="crumb-hint">Select a drive below</span></div>
+      <div class="breadcrumbs"><span class="crumb-hint">{$t('select_drive_below')}</span></div>
     {:else}
       <!-- Server mode: absolute path breadcrumbs + path input -->
       <div class="breadcrumbs">
@@ -757,10 +754,10 @@
         class="path-input"
         type="text"
         value={currentPath}
-        placeholder="Enter path…"
+        placeholder={$t('fs_path_placeholder')}
         on:keydown={e => e.key === 'Enter' && navigate(e.target.value)}
       />
-      <button on:click={() => browse(currentPath)} disabled={loading}>Go</button>
+      <button on:click={() => browse(currentPath)} disabled={loading}>{$t('fs_go')}</button>
     {/if}
   </div>
 
@@ -769,21 +766,20 @@
     <div class="mode-banner cloud-banner">
       ☁ <strong>{cloudDriveName}</strong>
       <span class="drive-type-tag">{cloudDriveType.toUpperCase()}</span>
-      — select images or folders to add to DB
+      — {$t('fs_select_drive_to_add')}
       <button class="btn-sm" style="margin-left:10px;" on:click={leaveCloudDrive}>← Drives</button>
     </div>
   {:else if localMode}
     <div class="mode-banner local-banner">
       {#if hasElectron}
-        💻 Local filesystem — select images to upload to server DB
+        💻 {$t('fs_upload_to_server')}
       {:else if hasFSA && fsaStack.length > 0}
-        📂 {fsaStack.map(s => s.name).join('/')} — select images to upload
-        <button class="btn-sm" style="margin-left:8px;" on:click={pickFSARoot}>Change folder…</button>
+        📂 {fsaStack.map(s => s.name).join('/')} — {$t('fs_upload_to_db')}
+        <button class="btn-sm" style="margin-left:8px;" on:click={pickFSARoot}>{$t('fs_change_folder')}</button>
       {:else if hasFSA}
-        📂 Local folder — click "Grant access" to browse your device
+        📂 {$t('fs_local_folder_hint')}
       {:else}
-        📂 Local upload — pick images or a folder from your device
-        <span class="fsa-hint">(File System Access API not available in this browser — using file picker)</span>
+        📂 {$t('fs_local_upload_hint')}
       {/if}
     </div>
   {/if}
@@ -797,15 +793,15 @@
   {#if cloudMode && cloudDriveId === null}
     <div class="cloud-picker">
       {#if cloudLoading}
-        <div class="picker-loading">Loading drives…</div>
+        <div class="picker-loading">{$t('fs_loading_drives')}</div>
       {:else if cloudDrives.length === 0}
         <div class="picker-empty">
           <div class="picker-icon">☁️</div>
-          <p>No cloud drives configured.</p>
-          <p class="hint">Add drives in Settings → Cloud Drives.</p>
+          <p>{$t('fs_no_cloud_drives_fs')}</p>
+          <p class="hint">{$t('fs_add_in_settings')}</p>
         </div>
       {:else}
-        <div class="picker-title">Select a cloud or network drive to browse:</div>
+        <div class="picker-title">{$t('fs_select_cloud_drive')}</div>
         <div class="picker-list">
           {#each cloudDrives as drive (drive.id)}
             <div
@@ -816,7 +812,7 @@
               tabindex="0"
               on:click={() => selectCloudDrive(drive)}
               on:keydown={e => e.key === 'Enter' && selectCloudDrive(drive)}
-              title={drive.is_mounted ? `Browse ${drive.name}` : 'Not connected — connect in Cloud Drives first'}
+              title={drive.is_mounted ? `Browse ${drive.name}` : $t('fs_not_connected')}
             >
               <span class="picker-icon-sm">
                 {drive.type === 'smb' ? '🗄' : drive.type === 'sftp' ? '🔒' : drive.type === 'filen' ? '☁' : '🌐'}
@@ -827,7 +823,7 @@
               </div>
               <div class="picker-status">
                 <span class="status-dot" class:on={drive.is_mounted}></span>
-                <span class="status-text">{drive.is_mounted ? 'Connected' : 'Offline'}</span>
+                <span class="status-text">{drive.is_mounted ? $t('drive_status_connected') : $t('drive_status_offline')}</span>
               </div>
             </div>
           {/each}
@@ -842,8 +838,8 @@
     {#if hasFSA && !fsaDirHandle}
       <div class="fsa-prompt">
         <div class="fsa-icon">📂</div>
-        <p>Pick a local folder — the browser will ask for permission to read it.</p>
-        <button class="primary" on:click={pickFSARoot}>Grant access to folder…</button>
+        <p>{$t('fs_pick_local_folder')}</p>
+        <button class="primary" on:click={pickFSARoot}>{$t('fs_grant_access')}</button>
       </div>
     {:else if !hasFSA}
       <input type="file" id="fb-files"  multiple accept="image/*" style="display:none"
@@ -853,9 +849,9 @@
       <div class="fallback-local">
         <div class="fallback-pick-row">
           <button on:click={() => document.getElementById('fb-files').click()}
-                  disabled={fallbackRunning}>Select images…</button>
+                  disabled={fallbackRunning}>{$t('fs_select_images')}</button>
           <button on:click={() => document.getElementById('fb-folder').click()}
-                  disabled={fallbackRunning}>Select folder…</button>
+                  disabled={fallbackRunning}>{$t('fs_select_folder_btn')}</button>
         </div>
         {#if fallbackFiles.length > 0 && !fallbackRunning}
           <div class="fallback-file-list">
@@ -869,8 +865,8 @@
           </div>
           <div class="fallback-actions">
             <select bind:value={visibility} class="vis-select">
-              <option value="shared">Shared</option>
-              <option value="private">Private</option>
+              <option value="shared">{$t('fs_shared')}</option>
+              <option value="private">{$t('fs_private')}</option>
             </select>
             <button class="primary" on:click={startFallbackUpload}>
               ⬆ Upload {fallbackFiles.length} image{fallbackFiles.length !== 1 ? 's' : ''}
@@ -879,20 +875,20 @@
           </div>
         {:else if fallbackRunning}
           <div class="dv-progress">
-            Uploading {fallbackDone}/{fallbackTotal}…
+            {$t('fs_uploading')} {fallbackDone}/{fallbackTotal}…
             <div class="prog-bar-wrap" style="width:100px;display:inline-block;margin-left:8px;">
               <div class="prog-bar" style="width:{fallbackTotal ? (fallbackDone/fallbackTotal)*100 : 0}%"></div>
             </div>
           </div>
         {:else if fallbackFinished}
           <div class="dv-done">
-            ✓ {fallbackDone - fallbackErrors} uploaded
-            {#if fallbackErrors > 0}<span class="err-count">, {fallbackErrors} failed</span>{/if}
+            ✓ {fallbackDone - fallbackErrors} {$t('fs_uploading')} OK
+            {#if fallbackErrors > 0}<span class="err-count">, {fallbackErrors} {$t('errors_label')}</span>{/if}
             <button class="btn-sm" style="margin-left:8px;"
-                    on:click={() => { fallbackFinished = false; }}>Dismiss</button>
+                    on:click={() => { fallbackFinished = false; }}>{$t('dismiss')}</button>
           </div>
         {:else}
-          <p class="fallback-hint">Pick images or a folder from your device to upload to the server database.</p>
+          <p class="fallback-hint">{$t('fs_pick_local_folder')}</p>
         {/if}
       </div>
     {/if}
@@ -903,19 +899,19 @@
   {#if !(cloudMode && cloudDriveId === null) && !(localMode && !hasElectron && !hasFSA)}
     <div class="content">
       {#if loading}
-        <div class="empty-state">Loading…</div>
+        <div class="empty-state">{$t('loading')}</div>
       {:else if entries.length === 0 && (!localMode || hasElectron || (hasFSA && fsaDirHandle))}
-        <div class="empty-state">This folder is empty.</div>
+        <div class="empty-state">{$t('fs_empty_folder')}</div>
       {:else if entries.length > 0}
         <!-- Select toolbar -->
         <div class="select-bar">
-          <button on:click={selectAll} class="btn-sm">Select all</button>
-          <button on:click={clearSelection} class="btn-sm">Deselect</button>
-          <span class="sel-count">{selected.size} selected</span>
+          <button on:click={selectAll} class="btn-sm">{$t('select_all')}</button>
+          <button on:click={clearSelection} class="btn-sm">{$t('deselect')}</button>
+          <span class="sel-count">{selected.size} {$t('selected_label')}</span>
           {#if localMode}
-            <span class="sel-hint">(images only)</span>
+            <span class="sel-hint">{$t('fs_images_only')}</span>
           {:else if cloudMode}
-            <span class="sel-hint">(images + folders)</span>
+            <span class="sel-hint">{$t('fs_images_folders')}</span>
           {/if}
         </div>
 
@@ -957,9 +953,9 @@
                   <div class="entry-info">
                     <div class="entry-name" title={entry.name}>{entry.name}</div>
                     {#if !localMode && !cloudMode}
-                      <div class="db-badge {cls}">{dirLabel(entry) || 'no images'}</div>
+                      <div class="db-badge {cls}">{dirLabel(entry) || $t('fs_no_images')}</div>
                     {:else if cloudMode}
-                      <div class="db-badge dir-cloud">folder</div>
+                      <div class="db-badge dir-cloud">{$t('fs_folder_label')}</div>
                     {/if}
                   </div>
                 {:else}
@@ -976,13 +972,13 @@
                     <div class="entry-name" title={entry.name}>{entry.name}</div>
                     {#if cloudMode}
                       <div class="db-badge {cls}">
-                        {isCloudImageFile(entry) ? 'image' : 'file'}
+                        {isCloudImageFile(entry) ? $t('fs_image_label') : $t('fs_file_label')}
                         {#if entry.size}{' · '}{(entry.size/1024).toFixed(0)} KB{/if}
                       </div>
                     {:else if localMode}
-                      <div class="db-badge {entry.is_image ? 'local-img' : 'not-db'}">{entry.is_image ? 'image' : 'file'}</div>
+                      <div class="db-badge {entry.is_image ? 'local-img' : 'not-db'}">{entry.is_image ? $t('fs_image_label') : $t('fs_file_label')}</div>
                     {:else}
-                      <div class="db-badge {cls}">{entry.in_db ? 'In DB' : 'Not in DB'}</div>
+                      <div class="db-badge {cls}">{entry.in_db ? $t('fs_in_db') : $t('fs_not_in_db')}</div>
                     {/if}
                   </div>
                 {/if}
@@ -997,12 +993,12 @@
               <tr>
                 <th class="lt-cb"></th>
                 <th class="lt-icon"></th>
-                <th class="lt-name">Name</th>
+                <th class="lt-name">{$t('fs_name_col')}</th>
                 {#if !localMode}
-                  <th class="lt-status">Status</th>
+                  <th class="lt-status">{$t('fs_status_col')}</th>
                 {/if}
                 {#if cloudMode || (!localMode && !cloudMode)}
-                  <th class="lt-size">Size</th>
+                  <th class="lt-size">{$t('fs_size_col')}</th>
                 {/if}
               </tr>
             </thead>
@@ -1053,9 +1049,9 @@
                     <td class="lt-status-cell">
                       <span class="db-badge {cls}">
                         {#if cloudMode}
-                          {entry.is_dir ? 'folder' : isCloudImageFile(entry) ? 'image' : 'file'}
+                          {entry.is_dir ? $t('fs_folder_label') : isCloudImageFile(entry) ? $t('fs_image_label') : $t('fs_file_label')}
                         {:else}
-                          {entry.is_dir ? (dirLabel(entry) || 'no images') : (entry.in_db ? 'In DB' : 'Not in DB')}
+                          {entry.is_dir ? (dirLabel(entry) || $t('fs_no_images')) : (entry.in_db ? $t('fs_in_db') : $t('fs_not_in_db'))}
                         {/if}
                       </span>
                     </td>
@@ -1088,11 +1084,11 @@
       {#if adding}
         <div class="progress-area">
           <div class="prog-label">
-            {cloudMode ? 'Fetching' : localMode ? 'Uploading' : 'Adding'}
+            {cloudMode ? $t('fs_fetching') : localMode ? $t('fs_uploading') : $t('fs_adding')}
             {addProgress.done}/{addProgress.total}
             {#if addProgress.current}— {addProgress.current}{/if}
             {#if addProgress.errors > 0}
-              <span class="err-count">({addProgress.errors} errors)</span>
+              <span class="err-count">({addProgress.errors} {$t('errors_label')})</span>
             {/if}
           </div>
           <div class="prog-bar-wrap">
@@ -1101,49 +1097,48 @@
               style="width: {addProgress.total ? (addProgress.done / addProgress.total) * 100 : 0}%"
             ></div>
           </div>
-          <button class="btn-sm" on:click={cancelAdd}>Cancel</button>
+          <button class="btn-sm" on:click={cancelAdd}>{$t('cancel')}</button>
         </div>
       {:else if addDone}
         <div class="done-block">
           <span class="done-msg">
-            ✅ {addProgress.done - addProgress.errors - addProgress.skipped} image{(addProgress.done - addProgress.errors - addProgress.skipped) === 1 ? '' : 's'}
-            {cloudMode ? 'fetched from cloud' : localMode ? 'uploaded' : 'processed'} OK.
-            {#if addProgress.skipped > 0}<span class="skip-count">{addProgress.skipped} already in DB.</span>{/if}
-            {#if addProgress.errors > 0}<span class="err-count">{addProgress.errors} failed.</span>{/if}
+            ✅ {addProgress.done - addProgress.errors - addProgress.skipped}
+            {cloudMode ? $t('fs_fetching') : localMode ? $t('fs_uploading') : $t('fs_adding')} OK.
+            {#if addProgress.skipped > 0}<span class="skip-count">{addProgress.skipped} {$t('fs_already_in_db')}</span>{/if}
+            {#if addProgress.errors > 0}<span class="err-count">{addProgress.errors} {$t('errors_label')}</span>{/if}
           </span>
           {#if addErrorList.length > 0}
             <details class="err-details">
-              <summary>{addErrorList.length} error{addErrorList.length > 1 ? 's' : ''} — click to expand</summary>
+              <summary>{addErrorList.length} {$t('errors_label')}</summary>
               {#each addErrorList as {name, error}}
                 <div class="err-item"><b>{name}</b>: {error}</div>
               {/each}
             </details>
           {/if}
-          <button class="btn-sm" on:click={() => { addDone = false; addErrorList = []; clearSelection(); }}>Dismiss</button>
+          <button class="btn-sm" on:click={() => { addDone = false; addErrorList = []; clearSelection(); }}>{$t('dismiss')}</button>
         </div>
       {:else}
-        <span class="sel-summary">{selected.size} item{selected.size === 1 ? '' : 's'} selected</span>
+        <span class="sel-summary">{selected.size} {$t('selected_label')}</span>
         <select bind:value={visibility} class="vis-select" title="Visibility">
-          <option value="shared">Shared</option>
-          <option value="private">Private</option>
+          <option value="shared">{$t('fs_shared')}</option>
+          <option value="private">{$t('fs_private')}</option>
         </select>
         <button class="primary" on:click={startAddToDb}>
-          {cloudMode ? '⬇ Add to DB from cloud' : localMode ? '⬆ Upload to DB' : 'Add to DB'}
+          {cloudMode ? '⬇ ' + $t('fs_add_to_db_cloud') : localMode ? '⬆ ' + $t('fs_upload_to_db') : $t('fs_add_to_db')}
         </button>
         {#if !cloudMode && !localMode && selectedInDbCount > 0}
-          <button class="btn-sm" on:click={downloadSelected} title="Download {selectedInDbCount} file{selectedInDbCount === 1 ? '' : 's'} from DB">
-            ⬇ Download ({selectedInDbCount})
+          <button class="btn-sm" on:click={downloadSelected}>
+            ⬇ {$t('download')} ({selectedInDbCount})
           </button>
         {/if}
         {#if cloudMode && cloudDriveId !== null}
           <button class="btn-sm" on:click={openRename}
-            disabled={selected.size !== 1} title="Rename selected item">✏ Rename</button>
-          <button class="btn-sm btn-trash" on:click={doTrash}
-            title={cloudDriveType === 'smb' || cloudDriveType === 'sftp' ? 'Delete' : 'Move to trash'}>
-            🗑 {cloudDriveType === 'smb' || cloudDriveType === 'sftp' ? 'Delete' : 'Trash'}
+            disabled={selected.size !== 1}>✏ {$t('fs_rename')}</button>
+          <button class="btn-sm btn-trash" on:click={doTrash}>
+            🗑 {cloudDriveType === 'smb' || cloudDriveType === 'sftp' ? $t('delete') : $t('fs_trash')}
           </button>
         {/if}
-        <button class="btn-sm" on:click={clearSelection}>Deselect</button>
+        <button class="btn-sm" on:click={clearSelection}>{$t('deselect')}</button>
       {/if}
     </div>
   {/if}
@@ -1161,36 +1156,36 @@
     on:click|stopPropagation
   >
     {#if ctxMenu.entry.is_dir}
-      <button on:click={() => handleCtxAction('navigate')}>📁 Open folder</button>
-      <button on:click={() => handleCtxAction('browse-gallery')}>🔍 Browse in Gallery</button>
+      <button on:click={() => handleCtxAction('navigate')}>📁 {$t('ctx_open_folder')}</button>
+      <button on:click={() => handleCtxAction('browse-gallery')}>🔍 {$t('ctx_browse_folder')}</button>
       <div class="ctx-divider"></div>
-      <button on:click={() => handleCtxAction('add-to-db')}>＋ Add all to DB</button>
+      <button on:click={() => handleCtxAction('add-to-db')}>＋ {$t('fs_add_to_db')}</button>
       {#if cloudMode}
         <div class="ctx-divider"></div>
-        <button on:click={() => handleCtxAction('rename')}>✏ Rename</button>
-        <button on:click={() => handleCtxAction('trash')}>🗑 Trash</button>
+        <button on:click={() => handleCtxAction('rename')}>✏ {$t('fs_rename')}</button>
+        <button on:click={() => handleCtxAction('trash')}>🗑 {$t('fs_trash')}</button>
       {/if}
     {:else}
       {#if !cloudMode && !localMode && ctxMenu.entry.in_db && ctxMenu.entry.image_id}
-        <button on:click={() => handleCtxAction('view-lightbox')}>👁 View in Lightbox</button>
-        <button on:click={() => handleCtxAction('browse-gallery')}>🔍 Browse siblings</button>
+        <button on:click={() => handleCtxAction('view-lightbox')}>👁 {$t('view')}</button>
+        <button on:click={() => handleCtxAction('browse-gallery')}>🔍 {$t('ctx_browse_folder')}</button>
         <div class="ctx-divider"></div>
-        <button on:click={() => handleCtxAction('download')}>⬇ Download</button>
-        <button on:click={() => handleCtxAction('open-os')}>🖼 Open in OS</button>
-        <button on:click={() => handleCtxAction('open-folder-os')}>📂 Open folder in OS</button>
+        <button on:click={() => handleCtxAction('download')}>⬇ {$t('download')}</button>
+        <button on:click={() => handleCtxAction('open-os')}>🖼 {$t('ctx_open_external')}</button>
+        <button on:click={() => handleCtxAction('open-folder-os')}>📂 {$t('ctx_open_folder')}</button>
         <div class="ctx-divider"></div>
       {:else if !cloudMode && !localMode}
-        <button on:click={() => handleCtxAction('add-to-db')}>＋ Add to DB</button>
+        <button on:click={() => handleCtxAction('add-to-db')}>＋ {$t('fs_add_to_db')}</button>
         <div class="ctx-divider"></div>
       {/if}
       {#if cloudMode}
-        <button on:click={() => handleCtxAction('add-to-db')}>⬇ Add to DB from cloud</button>
+        <button on:click={() => handleCtxAction('add-to-db')}>⬇ {$t('fs_add_to_db_cloud')}</button>
         <div class="ctx-divider"></div>
-        <button on:click={() => handleCtxAction('rename')}>✏ Rename</button>
-        <button on:click={() => handleCtxAction('trash')}>🗑 Trash</button>
+        <button on:click={() => handleCtxAction('rename')}>✏ {$t('fs_rename')}</button>
+        <button on:click={() => handleCtxAction('trash')}>🗑 {$t('fs_trash')}</button>
         <div class="ctx-divider"></div>
       {/if}
-      <button on:click={() => handleCtxAction('copy-path')}>📋 Copy path</button>
+      <button on:click={() => handleCtxAction('copy-path')}>📋 {$t('ctx_copy_path')}</button>
     {/if}
   </div>
 {/if}
@@ -1200,7 +1195,7 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="modal-backdrop" on:click|self={() => renameModal = null}>
     <div class="rename-modal">
-      <div class="rename-title">Rename</div>
+      <div class="rename-title">{$t('fs_rename')}</div>
       <div class="rename-path">{renameModal.path}</div>
       <input
         class="rename-input"
@@ -1210,9 +1205,9 @@
         autofocus
       />
       <div class="rename-actions">
-        <button on:click={() => renameModal = null}>Cancel</button>
+        <button on:click={() => renameModal = null}>{$t('cancel')}</button>
         <button class="primary" on:click={doRename} disabled={!renameValue.trim() || renameValue.trim() === renameModal.name}>
-          Rename
+          {$t('fs_rename')}
         </button>
       </div>
     </div>

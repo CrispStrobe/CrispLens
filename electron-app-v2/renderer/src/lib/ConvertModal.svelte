@@ -5,6 +5,7 @@
    * Events: close, converted (detail: { results })
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { t } from '../stores.js';
   import { fetchEditFormats, convertImages, convertBatch, downloadImage } from '../api.js';
 
   export let imageIds = [];
@@ -108,7 +109,7 @@
   <div class="modal">
     <div class="modal-header">
       <span class="title">
-        Convert / Export{imageIds.length > 1 ? ` (${imageIds.length} images)` : ''}
+        {$t('ctx_convert_export')}{imageIds.length > 1 ? ` (${imageIds.length})` : ''}
       </span>
       <button on:click={handleClose}>✕</button>
     </div>
@@ -117,7 +118,7 @@
       {#if done}
         <div class="done-panel">
           <div class="done-title">
-            Done — {results.filter(r => r.ok).length} / {results.length} converted
+            {$t('conv_done')} — {results.filter(r => r.ok).length} / {results.length}
           </div>
           <div class="results-list">
             {#each results as r}
@@ -137,12 +138,12 @@
               {/if}
             {/each}
           </div>
-          <button class="primary" on:click={handleClose}>Close</button>
+          <button class="primary" on:click={handleClose}>{$t('close')}</button>
         </div>
       {:else}
         <!-- Format buttons -->
         <div class="row">
-          <span class="lbl">Format</span>
+          <span class="lbl">{$t('conv_format')}</span>
           <div class="fmt-btns">
             {#each formats as f}
               <button
@@ -157,7 +158,7 @@
         <!-- Quality (JPEG / WebP only) -->
         {#if currentFormat?.quality_option}
           <div class="row">
-            <span class="lbl">Quality</span>
+            <span class="lbl">{$t('conv_quality')}</span>
             <input type="range" min="50" max="100" step="1" bind:value={quality} />
             <span class="val">{quality}%</span>
           </div>
@@ -165,17 +166,17 @@
 
         <!-- Resize mode -->
         <div class="row">
-          <span class="lbl">Resize</span>
+          <span class="lbl">{$t('conv_resize')}</span>
           <select bind:value={resizeMode}>
-            <option value="none">No resize</option>
-            <option value="fit">Fit within (keep ratio)</option>
-            <option value="exact">Exact dimensions</option>
+            <option value="none">{$t('conv_no_resize')}</option>
+            <option value="fit">{$t('conv_fit')}</option>
+            <option value="exact">{$t('conv_exact')}</option>
           </select>
         </div>
 
         {#if resizeMode !== 'none'}
           <div class="row">
-            <span class="lbl">Max size</span>
+            <span class="lbl">{$t('conv_max_size')}</span>
             <input type="number" bind:value={maxWidth}  min="1" max="10000" style="width:72px" />
             <span class="val">×</span>
             <input type="number" bind:value={maxHeight} min="1" max="10000" style="width:72px" />
@@ -185,22 +186,22 @@
 
         <!-- Save as -->
         <div class="row">
-          <span class="lbl">Save as</span>
-          <label class="radio"><input type="radio" bind:group={saveAs} value="replace"       /> Replace original</label>
-          <label class="radio"><input type="radio" bind:group={saveAs} value="new_file"      /> New file</label>
-          <label class="radio"><input type="radio" bind:group={saveAs} value="output_folder" /> Output folder</label>
+          <span class="lbl">{$t('conv_save_as')}</span>
+          <label class="radio"><input type="radio" bind:group={saveAs} value="replace"       /> {$t('conv_replace_orig')}</label>
+          <label class="radio"><input type="radio" bind:group={saveAs} value="new_file"      /> {$t('conv_new_file')}</label>
+          <label class="radio"><input type="radio" bind:group={saveAs} value="output_folder" /> {$t('conv_output_folder')}</label>
         </div>
 
         {#if saveAs === 'new_file'}
           <div class="row">
-            <span class="lbl">Suffix</span>
+            <span class="lbl">{$t('conv_suffix')}</span>
             <input type="text" bind:value={suffix} style="width:140px" />
           </div>
         {/if}
 
         {#if saveAs === 'output_folder'}
           <div class="row">
-            <span class="lbl">Folder</span>
+            <span class="lbl">{$t('conv_folder')}</span>
             <input type="text" bind:value={outputFolder} placeholder="/path/to/output" style="flex:1" />
           </div>
         {/if}
@@ -219,9 +220,9 @@
 
         <div class="action-row">
           <button class="primary" on:click={doConvert} disabled={saving}>
-            {saving ? 'Converting…' : isBatch ? `Convert ${imageIds.length} images` : 'Convert'}
+            {saving ? $t('conv_converting') : isBatch ? `${$t('conv_convert')} ${imageIds.length}` : $t('conv_convert')}
           </button>
-          <button on:click={handleClose} disabled={saving}>Cancel</button>
+          <button on:click={handleClose} disabled={saving}>{$t('cancel')}</button>
         </div>
       {/if}
     </div>

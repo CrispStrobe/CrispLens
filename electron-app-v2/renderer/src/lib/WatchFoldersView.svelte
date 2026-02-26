@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { watchFolders } from '../stores.js';
+  import { watchFolders, t } from '../stores.js';
   import {
     fetchWatchFolders,
     addWatchFolder,
@@ -51,12 +51,12 @@
       watchFolders.set(folders);
       addPath = '';
     } catch (e) {
-      addError = e.message.includes('409') ? 'This folder is already being watched.' : e.message;
+      addError = e.message.includes('409') ? $t('wf_already_watched') : e.message;
     }
   }
 
   async function removeFolder(id) {
-    if (!confirm('Remove this watch folder?')) return;
+    if (!confirm($t('confirm') + ': ' + $t('watch_folders') + '?')) return;
     try {
       await deleteWatchFolder(id);
       folders = folders.filter(f => f.id !== id);
@@ -136,17 +136,17 @@
 
 <div class="wf-view">
   <div class="header">
-    <span class="title">Watch Folders</span>
+    <span class="title">{$t('watch_folders')}</span>
     <div class="add-area">
       <input
         type="text"
         class="path-input"
-        placeholder="Folder path…"
+        placeholder={$t('wf_path_placeholder')}
         bind:value={addPath}
         on:keydown={e => e.key === 'Enter' && addFolder()}
       />
-      <button on:click={pickFolder}>Browse…</button>
-      <button class="primary" on:click={addFolder} disabled={!addPath.trim()}>Add</button>
+      <button on:click={pickFolder}>{$t('browse_button')}…</button>
+      <button class="primary" on:click={addFolder} disabled={!addPath.trim()}>{$t('add')}</button>
     </div>
     {#if addError}
       <div class="add-error">{addError}</div>
@@ -155,12 +155,12 @@
 
   <div class="list-area">
     {#if loading}
-      <div class="empty-state">Loading…</div>
+      <div class="empty-state">{$t('loading')}</div>
     {:else if folders.length === 0}
       <div class="empty-state">
         <div class="empty-icon">📡</div>
-        <div>No watch folders yet.</div>
-        <div class="empty-sub">Add a folder above to automatically ingest new images.</div>
+        <div>{$t('no_watch_folders')}</div>
+        <div class="empty-sub">{$t('no_watch_folders_sub')}</div>
       </div>
     {:else}
       {#each folders as folder (folder.id)}
@@ -171,7 +171,7 @@
         <div class="folder-card">
           <div class="folder-top">
             <div class="folder-path" title={folder.path}>{folder.path}</div>
-            <button class="remove-btn" on:click={() => removeFolder(folder.id)} title="Remove">✕</button>
+            <button class="remove-btn" on:click={() => removeFolder(folder.id)} title={$t('deselect')}>✕</button>
           </div>
 
           <!-- Settings row -->
@@ -182,7 +182,7 @@
                 checked={!!folder.recursive}
                 on:change={e => toggleUpdate(folder, 'recursive', e.target.checked)}
               />
-              Recursive
+              {$t('recursive')}
             </label>
             <label class="toggle-label">
               <input
@@ -190,11 +190,11 @@
                 checked={!!folder.auto_scan}
                 on:change={e => toggleUpdate(folder, 'auto_scan', e.target.checked)}
               />
-              Auto-scan
+              {$t('auto_scan_label')}
             </label>
             {#if folder.auto_scan}
               <label class="interval-label">
-                Every
+                {$t('every')}
                 <input
                   type="number"
                   class="interval-input"
@@ -209,10 +209,10 @@
 
           <!-- Stats row -->
           <div class="stats-row">
-            <span class="stat-item" title="Total images added to DB">
-              📥 {folder.files_added} added
+            <span class="stat-item" title={$t('last_scan_time')}>
+              📥 {folder.files_added} {$t('files_added_stat')}
             </span>
-            <span class="stat-item" title="Last scan time">
+            <span class="stat-item" title={$t('last_scan_time')}>
               🕐 {formatDate(folder.last_scanned_at)}
             </span>
           </div>
@@ -221,10 +221,10 @@
           {#if scanning && prog}
             <div class="scan-progress">
               <div class="scan-label">
-                Scanning… {prog.done}/{prog.total} new
-                {#if prog.all_found > 0}({prog.all_found} found){/if}
+                {$t('scanning')} {prog.done}/{prog.total} {$t('new_label')}
+                {#if prog.all_found > 0}({prog.all_found} {$t('found_label')}){/if}
                 {#if prog.current}— {prog.current}{/if}
-                {#if prog.errors > 0}<span class="err">{prog.errors} errors</span>{/if}
+                {#if prog.errors > 0}<span class="err">{prog.errors} {$t('errors_label')}</span>{/if}
               </div>
               <div class="prog-bar-wrap">
                 <div
@@ -232,23 +232,23 @@
                   style="width: {prog.total ? (prog.done / prog.total) * 100 : 0}%"
                 ></div>
               </div>
-              <button class="btn-sm" on:click={() => cancelScan(folder.id)}>Cancel</button>
+              <button class="btn-sm" on:click={() => cancelScan(folder.id)}>{$t('cancel')}</button>
             </div>
           {:else if done && prog}
             <div class="scan-done">
-              ✅ Scan complete — {prog.done} image{prog.done === 1 ? '' : 's'} added.
-              {#if prog.errors > 0}<span class="err">{prog.errors} errors</span>{/if}
+              ✅ {$t('scan_complete_msg')} — {prog.done} {$t('images_added_count')}
+              {#if prog.errors > 0}<span class="err">{prog.errors} {$t('errors_label')}</span>{/if}
               <button class="btn-sm" on:click={() => { scanDone = { ...scanDone, [folder.id]: false }; }}>
-                Dismiss
+                {$t('dismiss')}
               </button>
             </div>
           {:else}
             <div class="scan-action">
               <button class="primary btn-sm" on:click={() => startScan(folder)}>
-                Scan Now
+                {$t('scan_now')}
               </button>
               {#if folder.auto_scan}
-                <span class="auto-hint">Auto-scan every {folder.scan_interval_hours}h</span>
+                <span class="auto-hint">{$t('auto_scan_every')} {folder.scan_interval_hours}h</span>
               {/if}
             </div>
           {/if}

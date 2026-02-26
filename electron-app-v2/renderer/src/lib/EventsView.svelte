@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { filters, sidebarView } from '../stores.js';
+  import { filters, sidebarView, t } from '../stores.js';
   import { fetchEvents, thumbnailUrl } from '../api.js';
 
   // Logarithmic gap steps (hours): 1h to 6d
@@ -65,14 +65,14 @@
   <!-- Controls -->
   <div class="header">
     <div class="header-left">
-      <h2>Events</h2>
+      <h2>{$t('events')}</h2>
       {#if !loading}
-        <span class="sub">{events.length} event{events.length !== 1 ? 's' : ''}</span>
+        <span class="sub">{events.length} {events.length !== 1 ? $t('events') : $t('event_singular')}</span>
       {/if}
     </div>
     <div class="controls">
       <label>
-        Time gap:
+        {$t('time_gap')}
         <input
           type="range"
           min="0" max={GAP_STEPS.length - 1} step="1"
@@ -82,15 +82,15 @@
         />
         <span class="gap-badge">{gapLabel}</span>
       </label>
-      <button on:click={load} title="Refresh">🔄</button>
+      <button on:click={load} title={$t('refresh')}>🔄</button>
     </div>
   </div>
 
   {#if loading}
-    <div class="loading">Grouping by time…</div>
+    <div class="loading">{$t('grouping_by_time')}</div>
   {:else if events.length === 0}
     <div class="empty">
-      <p>No events found. Images may lack date metadata.</p>
+      <p>{$t('no_events_found')}</p>
     </div>
   {:else}
     <div class="events-list">
@@ -111,7 +111,7 @@
               <input
                 class="event-title"
                 type="text"
-                placeholder="Add event name…"
+                placeholder={$t('event_name_placeholder')}
                 value={titles[ev.event_id] ?? ''}
                 on:input={e => saveTitle(ev.event_id, e.target.value)}
               />
@@ -122,7 +122,7 @@
                 <span class="date-sep">–</span>
                 <span class="date">{formatDate(ev.end)}</span>
               {/if}
-              <span class="count-chip">{ev.count} photo{ev.count !== 1 ? 's' : ''}</span>
+              <span class="count-chip">{ev.count} {ev.count !== 1 ? $t('photos') : $t('photo')}</span>
             </div>
 
             <!-- Thumb strip (up to 12 preview images) -->
@@ -141,7 +141,7 @@
             </div>
 
             <button class="open-btn primary" on:click={() => openEvent(ev)}>
-              Open event →
+              {$t('open_event')}
             </button>
           </div>
         </div>

@@ -49,7 +49,7 @@
       </select>
       <label class="toggle-label" title="Show all images with detected faces, not just unidentified">
         <input type="checkbox" bind:checked={showAll} on:change={load} />
-        All faces
+        {$t('all_faces')}
       </label>
       <button on:click={load} disabled={loading}>
         {loading ? '…' : $t('refresh')}
@@ -64,7 +64,7 @@
     {:else if images.length === 0}
       <div class="empty-state">
         <div class="empty-icon">{showAll ? '📷' : '✅'}</div>
-        <div>{showAll ? 'No images with detected faces.' : $t('all_faces_identified')}</div>
+        <div>{showAll ? $t('no_images_with_faces') : $t('all_faces_identified')}</div>
         <div class="empty-sub">{$t('process_more_images')}</div>
       </div>
     {:else}

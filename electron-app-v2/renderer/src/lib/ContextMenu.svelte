@@ -65,9 +65,9 @@
   on:click|stopPropagation
 >
   <button on:click={() => handleAction('view')}>👁 {$t('view')}</button>
-  <button on:click={() => handleAction('open')}>🖼 {$t('view')} (External)</button>
-  <button on:click={() => handleAction('open-folder')}>📂 Open Folder</button>
-  <button on:click={() => handleAction('browse-folder')}>🔍 Browse Folder</button>
+  <button on:click={() => handleAction('open')}>🖼 {$t('ctx_open_external')}</button>
+  <button on:click={() => handleAction('open-folder')}>📂 {$t('ctx_open_folder')}</button>
+  <button on:click={() => handleAction('browse-folder')}>🔍 {$t('ctx_browse_folder')}</button>
 
   <!-- Add to Album submenu -->
   <div class="divider"></div>
@@ -77,11 +77,11 @@
     on:mouseenter={() => showAlbumSubmenu = true}
     on:mouseleave={() => showAlbumSubmenu = false}
   >
-    <button class="submenu-btn">📚 Add to Album ▶</button>
+    <button class="submenu-btn">📚 {$t('ctx_add_to_album')} ▶</button>
     {#if showAlbumSubmenu}
       <div class="submenu">
         {#if $allAlbums.length === 0}
-          <div class="no-items">No albums — create one first</div>
+          <div class="no-items">{$t('ctx_no_albums')}</div>
         {:else}
           {#each $allAlbums as album}
             <button on:click={() => handleAction('add-to-album', { albumId: album.id, albumName: album.name })}>
@@ -90,7 +90,7 @@
           {/each}
         {/if}
         <div class="divider"></div>
-        <button on:click={() => handleAction('new-album-with-image')}>+ New album…</button>
+        <button on:click={() => handleAction('new-album-with-image')}>{$t('ctx_new_album')}</button>
       </div>
     {/if}
   </div>
@@ -98,21 +98,21 @@
   <!-- People in this image -->
   {#if people.length > 0}
     <div class="divider"></div>
-    <div class="section-label">People in this image</div>
+    <div class="section-label">{$t('ctx_people_in_image')}</div>
     {#each people as person}
       <button on:click={() => handleAction('show-person', { person })}>
-        🔍 All photos of <strong>{person}</strong>
+        🔍 {$t('ctx_all_photos_of')} <strong>{person}</strong>
       </button>
     {/each}
   {/if}
 
   <div class="divider"></div>
-  <button on:click={() => handleAction('crop')}>✂ Crop image</button>
-  <button on:click={() => handleAction('adjust')}>🎨 Adjust image</button>
-  <button on:click={() => handleAction('convert')}>🔁 Convert / Export</button>
+  <button on:click={() => handleAction('crop')}>✂ {$t('ctx_crop_image')}</button>
+  <button on:click={() => handleAction('adjust')}>🎨 {$t('ctx_adjust_image')}</button>
+  <button on:click={() => handleAction('convert')}>🔁 {$t('ctx_convert_export')}</button>
   <div class="divider"></div>
-  <button on:click={() => handleAction('download')}>⬇ Download file</button>
-  <button on:click={() => handleAction('copy-path')}>📋 Copy file path</button>
+  <button on:click={() => handleAction('download')}>⬇ {$t('ctx_download_file')}</button>
+  <button on:click={() => handleAction('copy-path')}>📋 {$t('ctx_copy_path')}</button>
   <div class="divider"></div>
   {#if canDelete}
     <button class="danger" on:click={() => handleAction('delete')}>🗑 {$t('delete')}</button>

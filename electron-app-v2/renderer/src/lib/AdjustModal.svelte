@@ -6,6 +6,7 @@
    * Events: close, adjusted (detail: result)
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { t } from '../stores.js';
   import { adjustImage, downloadImage, thumbnailUrl } from '../api.js';
 
   export let imageId   = null;
@@ -399,14 +400,14 @@
     <div class="mbody">
       {#if done && result}
         <div class="done">
-          <div class="done-ok">✓ Saved</div>
+          <div class="done-ok">{$t('adj_saved')}</div>
           <div class="done-path" title={result.filepath}>{result.filepath}</div>
           <div class="done-dim">{result.width} × {result.height} px</div>
           <div class="done-btns">
             {#if result.new_image_id}
-              <button class="dl" on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>⬇ Download</button>
+              <button class="dl" on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>⬇ {$t('download')}</button>
             {/if}
-            <button class="primary" on:click={handleClose}>Close</button>
+            <button class="primary" on:click={handleClose}>{$t('close')}</button>
           </div>
         </div>
       {:else}
@@ -427,7 +428,7 @@
 
             <!-- INPUT LEVELS -->
             <div class="slabel">
-              Input Levels
+              {$t('adj_input_levels')}
               <button class="tinybtn" on:click={() => { black_in=0; white_in=255; gamma_mid=1; }}>↺</button>
             </div>
             <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -448,7 +449,7 @@
 
             <!-- OUTPUT LEVELS -->
             <div class="slabel">
-              Output
+              {$t('adj_output')}
               <button class="tinybtn" on:click={() => { black_out=0; white_out=255; }}>↺</button>
             </div>
             <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -472,57 +473,57 @@
           <!-- ─── RIGHT: sliders ─── -->
           <div class="rcol">
 
-            <div class="slabel">Presets</div>
+            <div class="slabel">{$t('adj_presets')}</div>
             <div class="presets">
               {#each PRESETS as p}
                 <button class="pbtn" class:on={preset===p.id} on:click={() => applyPreset(p.id)}>{p.label}</button>
               {/each}
             </div>
 
-            <div class="slabel">Light</div>
+            <div class="slabel">{$t('adj_light')}</div>
             <div class="srow">
-              <span class="lbl">Brightness</span>
+              <span class="lbl">{$t('adj_brightness')}</span>
               <input type="range" min="0.1" max="2" step="0.05" bind:value={brightness} />
               <span class="val">{brightness.toFixed(2)}</span>
               <button class="rb" on:click={() => brightness=1}>↺</button>
             </div>
             <div class="srow">
-              <span class="lbl">Contrast</span>
+              <span class="lbl">{$t('adj_contrast')}</span>
               <input type="range" min="0.1" max="2" step="0.05" bind:value={contrast} />
               <span class="val">{contrast.toFixed(2)}</span>
               <button class="rb" on:click={() => contrast=1}>↺</button>
             </div>
 
-            <div class="slabel">Colour</div>
+            <div class="slabel">{$t('adj_colour')}</div>
             <div class="srow">
-              <span class="lbl">Saturation</span>
+              <span class="lbl">{$t('adj_saturation')}</span>
               <input type="range" min="0" max="2" step="0.05" bind:value={saturation} />
               <span class="val">{saturation.toFixed(2)}</span>
               <button class="rb" on:click={() => saturation=1}>↺</button>
             </div>
             <div class="srow">
-              <span class="lbl">Warmth</span>
+              <span class="lbl">{$t('adj_warmth')}</span>
               <input type="range" min="-1" max="1" step="0.05" bind:value={warmth} />
               <span class="val">{fmtS(warmth)}</span>
               <button class="rb" on:click={() => warmth=0}>↺</button>
             </div>
 
-            <div class="slabel">Detail</div>
+            <div class="slabel">{$t('adj_detail')}</div>
             <div class="srow">
-              <span class="lbl">Sharpness</span>
+              <span class="lbl">{$t('adj_sharpness')}</span>
               <input type="range" min="0" max="2" step="0.05" bind:value={sharpness} />
               <span class="val">{sharpness.toFixed(2)}</span>
               <button class="rb" on:click={() => sharpness=1}>↺</button>
             </div>
 
-            <div class="slabel">Save as</div>
+            <div class="slabel">{$t('adj_save_as')}</div>
             <div class="save-row">
-              <label class="radio"><input type="radio" bind:group={saveAs} value="replace"  /> Replace original</label>
-              <label class="radio"><input type="radio" bind:group={saveAs} value="new_file" /> New file</label>
+              <label class="radio"><input type="radio" bind:group={saveAs} value="replace"  /> {$t('adj_replace_orig')}</label>
+              <label class="radio"><input type="radio" bind:group={saveAs} value="new_file" /> {$t('adj_new_file')}</label>
             </div>
             {#if saveAs==='new_file'}
               <div class="srow">
-                <span class="lbl">Suffix</span>
+                <span class="lbl">{$t('adj_suffix')}</span>
                 <input type="text" bind:value={suffix} class="tinput" />
               </div>
             {/if}
@@ -531,10 +532,10 @@
 
             <div class="acts">
               <button class="primary" on:click={doAdjust} disabled={saving}>
-                {saving ? 'Applying…' : 'Apply'}
+                {saving ? $t('adj_applying') : $t('apply')}
               </button>
-              <button class="sec" on:click={resetAll} disabled={saving}>Reset All</button>
-              <button class="sec" on:click={handleClose} disabled={saving}>Cancel</button>
+              <button class="sec" on:click={resetAll} disabled={saving}>{$t('adj_reset_all')}</button>
+              <button class="sec" on:click={handleClose} disabled={saving}>{$t('cancel')}</button>
             </div>
 
           </div>

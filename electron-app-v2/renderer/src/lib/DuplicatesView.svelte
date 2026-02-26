@@ -10,7 +10,7 @@
     thumbnailUrl,
     downloadCleanupScript,
   } from '../api.js';
-  import { currentUser } from '../stores.js';
+  import { currentUser, t } from '../stores.js';
 
   // Role guard: only admin and mediamanager may resolve duplicates
   $: canResolve = $currentUser?.role === 'admin' || $currentUser?.role === 'mediamanager';
@@ -127,7 +127,7 @@
   // ── Resolve single group ──────────────────────────────────────────────────
   async function resolveGroup(group, action) {
     const keepId = keepMap[group.key];
-    if (!keepId) { alert('Select which image to keep.'); return; }
+    if (!keepId) { alert($t('dup_keep') + '?'); return; }
     const deleteIds = group.images.map(i => i.id).filter(id => id !== keepId);
     if (deleteIds.length === 0) return;
 
@@ -415,42 +415,42 @@
   <!-- ── Header ── -->
   <div class="header">
     <div class="header-left">
-      <span class="title">Duplicates</span>
+      <span class="title">{$t('duplicates')}</span>
       {#if stats}
         <span class="sub">
-          {stats.hash_groups + stats.name_size_groups} groups ·
-          {fmtBytes(stats.wasted_bytes)} recoverable
+          {stats.hash_groups + stats.name_size_groups} {$t('dup_groups')} ·
+          {fmtBytes(stats.wasted_bytes)} {$t('recoverable')}
         </span>
       {/if}
     </div>
 
     <div class="controls">
-      <label class="ctrl-label">Method</label>
+      <label class="ctrl-label">{$t('dup_method')}</label>
       <select bind:value={method} on:change={loadGroups}>
-        <option value="name_size">Filename + Size</option>
-        <option value="hash">Binary hash (SHA256)</option>
+        <option value="name_size">{$t('dup_method_name_size')}</option>
+        <option value="hash">{$t('dup_method_hash')}</option>
         <option value="visual" disabled={!stats?.phash_available}>
-          Visual (pHash){stats?.phash_available ? '' : ' — not installed'}
+          {$t('dup_method_visual')}{stats?.phash_available ? '' : ' — not installed'}
         </option>
       </select>
 
       {#if method === 'visual'}
-        <label class="ctrl-label">Threshold</label>
+        <label class="ctrl-label">{$t('dup_threshold')}</label>
         <input type="range" min="1" max="20" step="1"
           bind:value={threshold} on:change={loadGroups}
           style="width:80px" />
         <span class="ctrl-val">{threshold}</span>
       {/if}
 
-      <label class="ctrl-label">Keep</label>
+      <label class="ctrl-label">{$t('dup_keep')}</label>
       <select bind:value={keepStrategy} on:change={reapplyKeepStrategy}>
-        <option value="most_faces">Most faces</option>
-        <option value="oldest">Oldest file</option>
-        <option value="largest">Largest file</option>
+        <option value="most_faces">{$t('dup_keep_most_faces')}</option>
+        <option value="oldest">{$t('dup_keep_oldest')}</option>
+        <option value="largest">{$t('dup_keep_largest')}</option>
       </select>
 
       <button on:click={loadGroups} disabled={loading}>
-        {loading ? '…' : 'Refresh'}
+        {loading ? '…' : $t('refresh')}
       </button>
     </div>
   </div>
@@ -460,21 +460,20 @@
     <div class="scan-bar">
       {#if hashScanning}
         <div class="scan-prog">
-          Computing hashes… {hashProg.done}/{hashProg.total}
+          {$t('computing_hashes')} {hashProg.done}/{hashProg.total}
           <div class="prog-wrap">
             <div class="prog-fill"
               style="width: {hashProg.total ? (hashProg.done/hashProg.total)*100 : 0}%"></div>
           </div>
-          <button class="btn-sm" on:click={cancelHashScan}>Cancel</button>
+          <button class="btn-sm" on:click={cancelHashScan}>{$t('cancel')}</button>
         </div>
       {:else if hashScanDone}
-        <span class="scan-ok">✅ Hash scan complete — duplicates updated</span>
+        <span class="scan-ok">✅ {$t('hash_scan_complete')}</span>
       {:else}
         <span class="scan-hint">
-          {stats.hash_missing} image{stats.hash_missing === 1 ? '' : 's'} missing SHA-256 hash
-          (won't appear in hash duplicate groups)
+          {stats.hash_missing} {stats.hash_missing === 1 ? $t('fs_image_label') : $t('photos')} missing SHA-256 hash
         </span>
-        <button class="primary btn-sm" on:click={startHashScan}>Fill Hashes</button>
+        <button class="primary btn-sm" on:click={startHashScan}>{$t('fill_hashes')}</button>
       {/if}
     </div>
   {/if}
@@ -484,27 +483,27 @@
     <div class="scan-bar">
       {#if scanning}
         <div class="scan-prog">
-          Scanning pHash… {scanProg.done}/{scanProg.total}
+          {$t('scanning_phash')} {scanProg.done}/{scanProg.total}
           <div class="prog-wrap">
             <div class="prog-fill"
               style="width: {scanProg.total ? (scanProg.done/scanProg.total)*100 : 0}%"></div>
           </div>
-          <button class="btn-sm" on:click={cancelScan}>Cancel</button>
+          <button class="btn-sm" on:click={cancelScan}>{$t('cancel')}</button>
         </div>
       {:else if stats?.phash_missing > 0}
         <span class="scan-hint">
-          {stats.phash_missing} image{stats.phash_missing === 1 ? '' : 's'} need pHash computed
+          {stats.phash_missing} {stats.phash_missing === 1 ? $t('fs_image_label') : $t('photos')} need pHash computed
         </span>
-        <button class="primary btn-sm" on:click={startScan}>Scan pHash</button>
+        <button class="primary btn-sm" on:click={startScan}>{$t('scan_phash_btn')}</button>
       {:else if scanDone}
-        <span class="scan-ok">✅ pHash scan complete</span>
+        <span class="scan-ok">✅ {$t('phash_scan_complete')}</span>
       {:else}
-        <span class="scan-ok">✅ All images have pHash</span>
+        <span class="scan-ok">✅ {$t('all_images_have_phash')}</span>
       {/if}
     </div>
   {:else if method === 'visual' && !stats?.phash_available}
     <div class="scan-bar warn">
-      imagehash not installed on the server.
+      {$t('imagehash_not_installed')}
       Run <code>pip install imagehash</code> and restart.
     </div>
   {/if}
@@ -512,46 +511,46 @@
   <!-- ── Batch toolbar ── -->
   {#if selectedGroups.size > 0}
     <div class="batch-bar">
-      <span class="batch-label">{selectedGroups.size} group{selectedGroups.size === 1 ? '' : 's'} selected</span>
+      <span class="batch-label">{selectedGroups.size} {selectedGroups.size === 1 ? $t('dup_groups').replace(/n$/, '') : $t('dup_groups')} selected</span>
       {#if canResolve}
-        <label class="ctrl-label">Action</label>
+        <label class="ctrl-label">{$t('dup_action')}</label>
         <select bind:value={batchAction}>
-          <option value="delete_file">Delete from disk</option>
-          <option value="db_only">Remove from DB only</option>
-          <option value="symlink">Replace with symlink</option>
+          <option value="delete_file">{$t('dup_delete_from_disk')}</option>
+          <option value="db_only">{$t('dup_remove_db_only')}</option>
+          <option value="symlink">{$t('dup_replace_symlink')}</option>
         </select>
         <label class="toggle-label">
           <input type="checkbox" bind:checked={mergeFaces} />
-          Merge face assignments
+          {$t('dup_merge_faces')}
         </label>
         <button class="primary" on:click={resolveBatch} disabled={batchResolving}>
-          {batchResolving ? 'Resolving…' : 'Resolve selected'}
+          {batchResolving ? $t('dup_resolving') : $t('dup_resolve_selected')}
         </button>
       {:else}
-        <span class="role-guard-hint">Resolving duplicates requires mediamanager or admin access</span>
+        <span class="role-guard-hint">{$t('dup_role_guard')}</span>
       {/if}
-      <button class="btn-sm" on:click={deselectAll}>Deselect</button>
+      <button class="btn-sm" on:click={deselectAll}>{$t('deselect')}</button>
     </div>
   {/if}
 
   <!-- ── Group list ── -->
   <div class="list">
     {#if loading}
-      <div class="empty">Loading…</div>
+      <div class="empty">{$t('loading')}</div>
     {:else if groups.length === 0}
       <div class="empty">
         <div class="empty-icon">✨</div>
-        <div>No duplicates found with this method.</div>
+        <div>{$t('no_duplicates')}</div>
         {#if method === 'visual' && stats?.phash_missing > 0}
-          <div class="empty-sub">Run "Scan pHash" above first.</div>
+          <div class="empty-sub">{$t('dup_run_scan_first')}</div>
         {/if}
       </div>
     {:else}
       <!-- Select all bar -->
       <div class="sel-bar">
-        <button class="btn-sm" on:click={selectAll}>Select all</button>
-        <button class="btn-sm" on:click={deselectAll}>Deselect all</button>
-        <span class="sel-count">{groups.length} groups</span>
+        <button class="btn-sm" on:click={selectAll}>{$t('select_all')}</button>
+        <button class="btn-sm" on:click={deselectAll}>{$t('deselect_all')}</button>
+        <span class="sel-count">{groups.length} {$t('dup_groups')}</span>
       </div>
 
       {#each groups as group (group.key)}
@@ -572,27 +571,27 @@
             >{isSelected ? '☑' : '☐'}</div>
 
             <span class="sim-badge">{group.similarity}</span>
-            <span class="img-count">{group.images.length} copies</span>
+            <span class="img-count">{group.images.length} {$t('dup_copies')}</span>
 
             <div class="group-actions">
               <!-- Per-group resolve dropdown -->
               <div class="resolve-menu">
                 {#if isResolving}
-                  <span class="resolving-text">Resolving…</span>
+                  <span class="resolving-text">{$t('dup_resolving')}</span>
                 {:else if isResolved === 'ok'}
-                  <span class="resolved-ok">✓ Resolved</span>
+                  <span class="resolved-ok">{$t('dup_resolved')}</span>
                 {:else if canResolve}
                   <button class="btn-sm primary"
                     on:click={() => resolveGroup(group, batchAction)}>
-                    Resolve
+                    {$t('dup_resolve')}
                   </button>
                   <select bind:value={batchAction} class="action-sel">
-                    <option value="delete_file">Delete from disk</option>
-                    <option value="db_only">Remove from DB</option>
-                    <option value="symlink">Symlink</option>
+                    <option value="delete_file">{$t('dup_delete_from_disk')}</option>
+                    <option value="db_only">{$t('dup_remove_db_only')}</option>
+                    <option value="symlink">{$t('dup_replace_symlink')}</option>
                   </select>
                 {:else}
-                  <span class="role-guard-hint">View only</span>
+                  <span class="role-guard-hint">{$t('dup_view_only')}</span>
                 {/if}
               </div>
             </div>
@@ -613,7 +612,7 @@
                   <div class="img-name" title={img.filename}>{img.filename}</div>
                   <div class="img-path" title={img.server_path ?? img.filepath}>{folderOf(img.server_path ?? img.filepath)}</div>
                   {#if img.origin_path && img.origin_path !== (img.server_path ?? img.filepath)}
-                    <div class="img-origin" title={img.origin_path}>origin: {img.origin_path}</div>
+                    <div class="img-origin" title={img.origin_path}>{$t('origin_label')} {img.origin_path}</div>
                   {/if}
                   <div class="img-stats">
                     {fmtBytes(img.file_size)}
@@ -623,19 +622,19 @@
                   </div>
                 </div>
                 <div class="keep-col">
-                  <label class="keep-radio" title="Keep this copy">
+                  <label class="keep-radio" title={$t('dup_keep')}>
                     <input
                       type="radio"
                       name="keep-{group.key}"
                       value={img.id}
                       bind:group={keepMap[group.key]}
                     />
-                    Keep
+                    {$t('dup_keep')}
                   </label>
                   {#if isKept}
-                    <span class="kept-chip">✓ Keep</span>
+                    <span class="kept-chip">{$t('dup_keep_chip')}</span>
                   {:else}
-                    <span class="del-chip">Delete</span>
+                    <span class="del-chip">{$t('dup_del_chip')}</span>
                   {/if}
                 </div>
               </div>
@@ -650,26 +649,23 @@
   {#if pendingCleanupFiles.length > 0}
     <div class="cleanup-panel">
       <div class="cleanup-header">
-        <span class="cleanup-title">Clean up source files</span>
+        <span class="cleanup-title">{$t('cleanup_source_files')}</span>
         <span class="cleanup-count">
-          {pendingCleanupFiles.length} file{pendingCleanupFiles.length === 1 ? '' : 's'} on source machine
+          {pendingCleanupFiles.length} {pendingCleanupFiles.length === 1 ? $t('fs_file_label') : $t('fs_file_label') + 's'}
         </span>
         <button class="btn-sm" on:click={() => { pendingCleanupFiles = []; cleanupResult = null; }}>
-          Dismiss
+          {$t('dismiss')}
         </button>
       </div>
-      <div class="cleanup-hint">
-        These originals live outside the server copy — the server-side file was already handled.
-        Choose what to do with the originals on their source machine:
-      </div>
+      <div class="cleanup-hint">{$t('cleanup_originals_hint')}</div>
 
       <!-- Action selector (applies to script download) -->
       <div class="cleanup-row">
-        <label class="cleanup-label">Action</label>
+        <label class="cleanup-label">{$t('cleanup_action')}</label>
         <select bind:value={cleanupAction} class="fmt-sel">
-          <option value="trash">Move to Trash (reversible)</option>
-          <option value="delete">Delete permanently</option>
-          <option value="symlink">Replace with symlink to kept file</option>
+          <option value="trash">{$t('cleanup_trash_opt')}</option>
+          <option value="delete">{$t('cleanup_delete_opt')}</option>
+          <option value="symlink">{$t('cleanup_symlink_opt')}</option>
         </select>
       </div>
 
@@ -681,18 +677,18 @@
           <option value="json">JSON — custom / Electron import</option>
         </select>
         <button class="btn-sm primary" disabled={cleanupBusy} on:click={() => doScriptDownload(cleanupFormat, cleanupAction)}>
-          Download script
+          {$t('download_script')}
         </button>
-        <span class="cleanup-hint-sm">Review before running</span>
+        <span class="cleanup-hint-sm">{$t('review_before_run')}</span>
       </div>
 
       <!-- Path 2 — File System Access API (browser, local server only) -->
       {#if typeof window !== 'undefined' && 'showDirectoryPicker' in window && !isRemote}
         <div class="cleanup-row">
           <button class="btn-sm" disabled={cleanupBusy} on:click={doBrowserDelete}>
-            Delete via browser
+            {$t('delete_via_browser')}
           </button>
-          <span class="cleanup-hint-sm">Grants per-folder permission — local files only</span>
+          <span class="cleanup-hint-sm">{$t('browser_local_only')}</span>
         </div>
       {/if}
 
@@ -700,9 +696,9 @@
       {#if isElectron && !isRemote}
         <div class="cleanup-row">
           <button class="btn-sm primary" disabled={cleanupBusy} on:click={doElectronTrash}>
-            Move to Trash
+            {$t('move_to_trash')}
           </button>
-          <span class="cleanup-hint-sm">Sends files to your OS Trash (reversible)</span>
+          <span class="cleanup-hint-sm">{$t('sends_to_os_trash')}</span>
         </div>
       {/if}
 
@@ -710,18 +706,18 @@
       {#if isElectron && isRemote}
         <div class="cleanup-row">
           <button class="btn-sm" disabled={cleanupBusy} on:click={() => doScriptDownload('json')}>
-            Download JSON list
+            {$t('download_json_list')}
           </button>
-          <span class="cleanup-hint-sm">Import into your local Electron client to trash files there</span>
+          <span class="cleanup-hint-sm">{$t('import_to_local')}</span>
         </div>
       {/if}
 
       <!-- Result -->
       {#if cleanupResult}
         <div class="cleanup-result" class:has-errors={cleanupResult.errors?.length > 0}>
-          Moved {cleanupResult.trashed} file{cleanupResult.trashed === 1 ? '' : 's'} to Trash.
+          {$t('move_to_trash')}: {cleanupResult.trashed}.
           {#if cleanupResult.errors?.length > 0}
-            <span class="cleanup-err-count">{cleanupResult.errors.length} error{cleanupResult.errors.length === 1 ? '' : 's'}:</span>
+            <span class="cleanup-err-count">{cleanupResult.errors.length} {$t('errors_label')}:</span>
             {#each cleanupResult.errors as err}
               <div class="cleanup-err-item">{err.path}: {err.error}</div>
             {/each}
@@ -735,11 +731,9 @@
   {#if isElectron}
     <div class="import-json-bar">
       <button class="btn-sm" disabled={importBusy} on:click={doImportJson}>
-        {importBusy ? '…' : '📥 Import cleanup JSON'}
+        {importBusy ? '…' : '📥 ' + $t('import_cleanup_json')}
       </button>
-      <span class="cleanup-hint-sm">
-        Execute a previously downloaded cleanup JSON on this machine
-      </span>
+      <span class="cleanup-hint-sm">{$t('execute_downloaded_json')}</span>
       {#if importResult}
         <span class:import-ok={importResult.errors.length === 0} class:import-err={importResult.errors.length > 0}>
           {importResult.trashed}/{importResult.total} trashed
@@ -756,14 +750,14 @@
   <!-- ── Stats footer ── -->
   {#if stats}
     <div class="footer">
-      <span>By name+size: <b>{stats.name_size_groups}</b> groups</span>
-      <span>By hash: <b>{stats.hash_groups}</b> groups</span>
+      <span>{$t('by_name_size')} <b>{stats.name_size_groups}</b> {$t('dup_groups')}</span>
+      <span>{$t('by_hash')} <b>{stats.hash_groups}</b> {$t('dup_groups')}</span>
       {#if stats.phash_available}
-        <span>Visual: <b>{stats.visual_groups}</b> groups</span>
+        <span>{$t('stat_visual')} <b>{stats.visual_groups}</b> {$t('dup_groups')}</span>
       {:else}
-        <span class="hint">Visual dedup: <code>pip install imagehash</code></span>
+        <span class="hint">{$t('dup_method_visual')}: <code>pip install imagehash</code></span>
       {/if}
-      <span>Wasted: <b>{fmtBytes(stats.wasted_bytes)}</b></span>
+      <span>{$t('wasted')} <b>{fmtBytes(stats.wasted_bytes)}</b></span>
     </div>
   {/if}
 </div>
