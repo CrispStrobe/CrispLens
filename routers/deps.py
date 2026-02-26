@@ -87,8 +87,8 @@ def can_access_image(image_id: int, user, db_path: str) -> bool:
 
 
 # Provider category constants — used in api_keys router
-EU_PROVIDERS = frozenset({'scaleway', 'ollama', 'mistral', 'nebius'})
-NON_EU_PROVIDERS = frozenset({'openrouter', 'poe', 'anthropic', 'openai', 'groq', 'bfl'})
+EU_PROVIDERS = frozenset({'scaleway', 'ollama', 'mistral', 'nebius', 'bfl'})
+NON_EU_PROVIDERS = frozenset({'openrouter', 'poe', 'anthropic', 'openai', 'groq'})
 
 
 def get_allowed_providers(role: str) -> frozenset:

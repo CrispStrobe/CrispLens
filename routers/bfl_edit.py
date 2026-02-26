@@ -4,12 +4,14 @@ routers/bfl_edit.py — AI image editing via BFL (Black Forest Labs) API.
 Endpoints:
   POST /api/bfl/outpaint  — extend image borders with FLUX.1 Fill [pro]
   POST /api/bfl/inpaint   — fill a masked region with FLUX.1 Fill [pro]
-  POST /api/bfl/edit      — text-driven image editing with FLUX.2
+  POST /api/bfl/edit      — instruction-based editing (FLUX.1 Kontext or FLUX.2)
+  POST /api/bfl/generate  — text-to-image generation with FLUX.1 Kontext
 """
 import base64
 import io
 import logging
 import os
+import random
 import sqlite3
 import time
 from pathlib import Path
@@ -25,9 +27,15 @@ from routers.editing import _register_converted_file
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-BFL_API_BASE  = "https://api.bfl.ai/v1"
-FILL_ENDPOINT = "/flux-pro-1.0-fill"          # outpaint + inpaint
-EDIT_MODELS   = ["flux-2-pro", "flux-2-max", "flux-2-flex", "flux-2-klein-4b", "flux-2-klein-9b"]
+BFL_API_BASE     = "https://api.bfl.ai/v1"
+FILL_ENDPOINT    = "/flux-pro-1.0-fill"        # outpaint + inpaint
+KONTEXT_ENDPOINT = "/flux-kontext-pro"          # Kontext edit + generate
+EDIT_MODELS      = [
+    "flux-kontext-pro",                          # Kontext: best for instruction editing
+    "flux-2-pro", "flux-2-max", "flux-2-flex",
+    "flux-2-klein-4b", "flux-2-klein-9b",
+]
+GEN_ASPECT_RATIOS = ["1:1", "16:9", "4:3", "3:4", "9:16", "2:3", "3:2", "21:9"]
 
 
 def _state():
@@ -158,8 +166,13 @@ def _save_and_register(s, data: bytes, out_path: str, image_id: int,
 
 
 def _round16(v: int) -> int:
-    """Round down to nearest multiple of 16 (BFL requirement)."""
+    """Round down to nearest multiple of 16 (FLUX.1 Fill requirement)."""
     return max(16, (v // 16) * 16)
+
+
+def _round32(v: int) -> int:
+    """Round down to nearest multiple of 32 (Kontext requirement)."""
+    return max(32, (v // 32) * 32)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -187,12 +200,22 @@ class InpaintRequest(BaseModel):
 
 
 class AIEditRequest(BaseModel):
-    image_id: int
-    prompt:   str
-    model:    str           = "flux-2-pro"
-    save_as:  str           = "new_file"
-    suffix:   str           = "_edited"
-    seed:     Optional[int] = None
+    image_id:     int
+    prompt:       str
+    model:        str           = "flux-kontext-pro"
+    aspect_ratio: Optional[str] = None   # None = match input image dims
+    save_as:      str           = "new_file"
+    suffix:       str           = "_edited"
+    seed:         Optional[int] = None
+
+
+class GenerateRequest(BaseModel):
+    prompt:          str
+    model:           str           = "flux-kontext-pro"
+    aspect_ratio:    str           = "1:1"
+    seed:            Optional[int] = None
+    output_folder:   str           = ""    # empty → data_dir/generated/
+    filename_prefix: str           = "generated"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -225,12 +248,12 @@ def outpaint_image(body: OutpaintRequest, user=Depends(get_current_user)):
         image_b64 = _img_to_b64(canvas, "PNG")
 
         # Mask: white = fill, black = preserve original
-        mask = Image.new("L", (new_w, new_h), 255)   # all white = fill everything
+        mask = Image.new("L", (new_w, new_h), 255)
         draw = ImageDraw.Draw(mask)
         draw.rectangle(
             [body.add_left, body.add_top,
              body.add_left + orig_w - 1, body.add_top + orig_h - 1],
-            fill=0,                                    # black = keep original
+            fill=0,
         )
         mask_b64 = _img_to_b64(mask, "PNG")
     except Exception as e:
@@ -286,7 +309,6 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
     try:
         orig    = Image.open(info["filepath"]).convert("RGB")
         img_w, img_h = orig.size
-        # Round to multiples of 16
         new_w   = _round16(img_w)
         new_h   = _round16(img_h)
         if new_w != img_w or new_h != img_h:
@@ -295,13 +317,13 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
         image_b64 = _img_to_b64(orig, "PNG")
 
         # Mask: black = preserve, white = fill
-        mask = Image.new("L", (new_w, new_h), 0)     # all black = preserve all
+        mask = Image.new("L", (new_w, new_h), 0)
         if body.mask_w > 0 and body.mask_h > 0:
             draw = ImageDraw.Draw(mask)
             draw.rectangle(
                 [body.mask_x, body.mask_y,
                  body.mask_x + body.mask_w - 1, body.mask_y + body.mask_h - 1],
-                fill=255,                              # white = fill this region
+                fill=255,
             )
         mask_b64 = _img_to_b64(mask, "PNG")
     except Exception as e:
@@ -336,7 +358,7 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
 
 @router.post("/edit")
 def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
-    """Text-driven image editing using FLUX.2."""
+    """Instruction-based image editing using FLUX.1 Kontext (default) or FLUX.2."""
     from PIL import Image
     s = _state()
 
@@ -362,11 +384,19 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
         logger.error("AI edit prep failed for image %d: %s", body.image_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Image preparation failed")
 
-    payload: dict = {"prompt": body.prompt, "input_image": image_b64}
+    payload: dict = {"prompt": body.prompt, "input_image": image_b64, "output_format": "jpeg"}
     if body.seed is not None:
         payload["seed"] = body.seed
 
-    _, polling_url = _bfl_submit(api_key, f"/{body.model}", payload)
+    # Kontext: use dedicated endpoint; aspect_ratio supported
+    if body.model.startswith("flux-kontext"):
+        endpoint = KONTEXT_ENDPOINT
+        if body.aspect_ratio:
+            payload["aspect_ratio"] = body.aspect_ratio
+    else:
+        endpoint = f"/{body.model}"
+
+    _, polling_url = _bfl_submit(api_key, endpoint, payload)
     sample_url     = _bfl_poll(api_key, polling_url)
     result_bytes   = _download_result(sample_url)
 
@@ -379,3 +409,48 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
 
     return {"ok": True, "image_id": body.image_id, "new_image_id": new_id,
             "filepath": out_path, "width": w, "height": h}
+
+
+@router.post("/generate")
+def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
+    """Text-to-image generation using FLUX.1 Kontext (no source image needed)."""
+    s = _state()
+    api_key = _get_bfl_key(user, s)
+
+    # Determine output directory
+    out_dir = body.output_folder.strip() if body.output_folder.strip() else str(
+        Path(s.db_path).parent / "generated"
+    )
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Cannot create output folder: {e}")
+
+    # Unique filename: prefix_timestamp_hex.jpg
+    prefix   = body.filename_prefix.strip() or "generated"
+    hex4     = format(random.randint(0, 0xFFFF), "04x")
+    filename = f"{prefix}_{int(time.time())}_{hex4}.jpg"
+    out_path = os.path.join(out_dir, filename)
+
+    payload: dict = {
+        "prompt":        body.prompt,
+        "aspect_ratio":  body.aspect_ratio,
+        "output_format": "jpeg",
+    }
+    if body.seed is not None:
+        payload["seed"] = body.seed
+
+    _, polling_url = _bfl_submit(api_key, KONTEXT_ENDPOINT, payload)
+    sample_url     = _bfl_poll(api_key, polling_url)
+    result_bytes   = _download_result(sample_url)
+
+    with open(out_path, "wb") as f:
+        f.write(result_bytes)
+
+    from PIL import Image
+    with Image.open(out_path) as img:
+        w, h = img.size
+
+    new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+
+    return {"ok": True, "new_image_id": new_id, "filepath": out_path, "width": w, "height": h}

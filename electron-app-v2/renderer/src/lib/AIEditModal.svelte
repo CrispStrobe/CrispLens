@@ -1,19 +1,19 @@
 <script>
   /**
-   * AIEditModal — BFL AI image editing (Outpaint / Inpaint / AI Edit).
+   * AIEditModal — BFL AI image editing + generation.
    * Props: imageId (number), imageFilename (string)
    * Events: close, edited (detail: { new_image_id, filepath })
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../stores.js';
-  import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage } from '../api.js';
+  import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage, generateImage } from '../api.js';
 
   export let imageId     = null;
   export let imageFilename = '';
 
   const dispatch = createEventDispatcher();
 
-  let tab = 'outpaint'; // 'outpaint' | 'inpaint' | 'ai-edit'
+  let tab = 'outpaint'; // 'outpaint' | 'inpaint' | 'ai-edit' | 'generate'
 
   // Outpaint state
   let addTop    = 256;
@@ -29,25 +29,43 @@
   let maskH = 0;
   let inpaintPrompt = '';
 
-  // AI Edit state
-  let editPrompt = '';
-  let editModel  = 'flux-2-pro';
-  let editSeed   = '';
-  const EDIT_MODELS = ['flux-2-pro', 'flux-2-max', 'flux-2-flex', 'flux-2-klein-4b', 'flux-2-klein-9b'];
+  // AI Edit state (Kontext default)
+  let editPrompt  = '';
+  let editModel   = 'flux-kontext-pro';
+  let editAspect  = '';   // empty = auto (match input image)
+  let editSeed    = '';
+  const EDIT_MODELS = [
+    'flux-kontext-pro',
+    'flux-2-pro', 'flux-2-max', 'flux-2-flex', 'flux-2-klein-4b',
+  ];
+  const ASPECT_RATIOS = ['', '1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
+
+  // Generate state
+  let genPrompt  = '';
+  let genAspect  = '1:1';
+  let genSeed    = '';
+  let genFolder  = '';
+  let genPrefix  = 'generated';
 
   // Shared state
   let saveAs = 'new_file';
-  let suffix = '_outpainted';
-  $: suffix = tab === 'outpaint' ? '_outpainted' : tab === 'inpaint' ? '_inpainted' : '_edited';
+  $: suffix = tab === 'outpaint' ? '_outpainted'
+            : tab === 'inpaint'  ? '_inpainted'
+            : '_edited';
+  let suffixOverride = '';
+  $: effectiveSuffix = suffixOverride || suffix;
 
   let applying = false;
   let error    = '';
   let done     = false;
-  let result   = null;  // { new_image_id, filepath, width, height }
+  let result   = null;  // { new_image_id?, filepath, width, height }
 
   function onKey(e) { if (e.key === 'Escape') handleClose(); }
   onMount(() => window.addEventListener('keydown', onKey));
   onDestroy(() => window.removeEventListener('keydown', onKey));
+
+  // Reset suffix override when tab changes
+  $: tab, (suffixOverride = '');
 
   function handleClose() {
     if (done) dispatch('edited', result);
@@ -71,7 +89,7 @@
           add_right:  addRight,
           prompt:     outpaintPrompt,
           save_as:    saveAs,
-          suffix,
+          suffix:     effectiveSuffix,
         });
       } else if (tab === 'inpaint') {
         r = await inpaintImage({
@@ -82,16 +100,26 @@
           mask_w:   maskW,
           mask_h:   maskH,
           save_as:  saveAs,
-          suffix,
+          suffix:   effectiveSuffix,
+        });
+      } else if (tab === 'ai-edit') {
+        r = await aiEditImage({
+          image_id:     imageId,
+          prompt:       editPrompt,
+          model:        editModel,
+          aspect_ratio: editAspect || undefined,
+          seed:         editSeed ? parseInt(editSeed, 10) : null,
+          save_as:      saveAs,
+          suffix:       effectiveSuffix,
         });
       } else {
-        r = await aiEditImage({
-          image_id: imageId,
-          prompt:   editPrompt,
-          model:    editModel,
-          seed:     editSeed ? parseInt(editSeed, 10) : null,
-          save_as:  saveAs,
-          suffix,
+        // generate
+        r = await generateImage({
+          prompt:          genPrompt,
+          aspect_ratio:    genAspect,
+          seed:            genSeed ? parseInt(genSeed, 10) : null,
+          output_folder:   genFolder,
+          filename_prefix: genPrefix,
         });
       }
       result = r;
@@ -103,18 +131,18 @@
     }
   }
 
-  $: canApply = !applying && (
-    tab === 'outpaint' ? (addTop + addBottom + addLeft + addRight) > 0
-    : tab === 'inpaint' ? (inpaintPrompt.trim().length > 0 && maskW > 0 && maskH > 0)
-    : editPrompt.trim().length > 0
-  );
+  $: canApply = !applying && (() => {
+    if (tab === 'outpaint') return (addTop + addBottom + addLeft + addRight) > 0;
+    if (tab === 'inpaint')  return inpaintPrompt.trim().length > 0 && maskW > 0 && maskH > 0;
+    if (tab === 'ai-edit')  return editPrompt.trim().length > 0;
+    return genPrompt.trim().length > 0;   // generate
+  })();
 
   // Mask overlay geometry (relative to thumbnail display)
-  let thumbEl;
-  let thumbNatW = 0;
-  let thumbNatH = 0;
-  let thumbDispW = 0;
-  let thumbDispH = 0;
+  let thumbDispW = 200;
+  let thumbDispH = 200;
+  let thumbNatW  = 1;
+  let thumbNatH  = 1;
 
   function onThumbLoad(e) {
     thumbNatW  = e.target.naturalWidth  || 1;
@@ -123,8 +151,8 @@
     thumbDispH = e.target.offsetHeight  || 200;
   }
 
-  $: scaleX  = thumbNatW  ? thumbDispW / thumbNatW  : 1;
-  $: scaleY  = thumbNatH  ? thumbDispH / thumbNatH  : 1;
+  $: scaleX        = thumbDispW / thumbNatW;
+  $: scaleY        = thumbDispH / thumbNatH;
   $: overlayLeft   = maskX * scaleX;
   $: overlayTop    = maskY * scaleY;
   $: overlayWidth  = maskW * scaleX;
@@ -140,7 +168,7 @@
     </div>
 
     {#if done && result}
-      <!-- Done panel -->
+      <!-- ── Done panel ─────────────────────────────────────────────────── -->
       <div class="modal-body">
         <div class="done-panel">
           <div class="done-title">{$t('bfl_done')}</div>
@@ -150,7 +178,8 @@
           {/if}
           <div class="action-row">
             {#if result.new_image_id}
-              <button class="primary" on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>
+              <button class="primary"
+                on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>
                 ⬇ {$t('download')}
               </button>
             {/if}
@@ -159,18 +188,19 @@
         </div>
       </div>
     {:else}
-      <!-- Tab bar -->
+      <!-- ── Tab bar ────────────────────────────────────────────────────── -->
       <div class="tab-bar">
         <button class="tab-btn" class:active={tab === 'outpaint'} on:click={() => tab = 'outpaint'}>{$t('bfl_outpaint')}</button>
         <button class="tab-btn" class:active={tab === 'inpaint'}  on:click={() => tab = 'inpaint' }>{$t('bfl_inpaint')}</button>
         <button class="tab-btn" class:active={tab === 'ai-edit'}  on:click={() => tab = 'ai-edit' }>{$t('bfl_ai_edit')}</button>
+        <button class="tab-btn" class:active={tab === 'generate'} on:click={() => tab = 'generate'}>{$t('bfl_generate')}</button>
       </div>
 
       <div class="modal-body two-col">
-        <!-- Left: thumbnail -->
+        <!-- ── Left: thumbnail ──────────────────────────────────────────── -->
         <div class="thumb-wrap">
           {#if tab === 'inpaint'}
-            <div class="thumb-container" bind:this={thumbEl}>
+            <div class="thumb-container">
               <img
                 src={thumbnailUrl(imageId, 200)}
                 alt={imageFilename}
@@ -178,31 +208,35 @@
                 on:load={onThumbLoad}
               />
               {#if maskW > 0 && maskH > 0}
-                <div
-                  class="mask-overlay"
+                <div class="mask-overlay"
                   style="left:{overlayLeft}px; top:{overlayTop}px; width:{overlayWidth}px; height:{overlayHeight}px;"
                 ></div>
               {/if}
             </div>
           {:else}
             <img src={thumbnailUrl(imageId, 200)} alt={imageFilename} class="thumb" />
+            {#if tab === 'generate'}
+              <div class="ref-hint">{$t('bfl_gen_hint')}</div>
+            {/if}
           {/if}
         </div>
 
-        <!-- Right: controls -->
+        <!-- ── Right: tab controls ──────────────────────────────────────── -->
         <div class="controls">
+
           {#if tab === 'outpaint'}
+            <!-- ── Outpaint ── -->
             <div class="row">
               <span class="lbl">{$t('bfl_add_top')}</span>
-              <input type="number" bind:value={addTop} min="0" max="2048" step="16" class="num-in" />
+              <input type="number" bind:value={addTop}    min="0" max="2048" step="16" class="num-in" />
               <span class="lbl ml">{$t('bfl_add_bottom')}</span>
               <input type="number" bind:value={addBottom} min="0" max="2048" step="16" class="num-in" />
             </div>
             <div class="row">
               <span class="lbl">{$t('bfl_add_left')}</span>
-              <input type="number" bind:value={addLeft} min="0" max="2048" step="16" class="num-in" />
+              <input type="number" bind:value={addLeft}   min="0" max="2048" step="16" class="num-in" />
               <span class="lbl ml">{$t('bfl_add_right')}</span>
-              <input type="number" bind:value={addRight} min="0" max="2048" step="16" class="num-in" />
+              <input type="number" bind:value={addRight}  min="0" max="2048" step="16" class="num-in" />
             </div>
             <div class="row col">
               <span class="lbl">{$t('bfl_prompt_optional')}</span>
@@ -210,24 +244,26 @@
             </div>
 
           {:else if tab === 'inpaint'}
+            <!-- ── Inpaint ── -->
             <div class="row">
               <span class="lbl">{$t('bfl_mask_x')}</span>
-              <input type="number" bind:value={maskX} min="0" max="9999" class="num-in" />
+              <input type="number" bind:value={maskX} min="0" max="99999" class="num-in" />
               <span class="lbl ml">{$t('bfl_mask_y')}</span>
-              <input type="number" bind:value={maskY} min="0" max="9999" class="num-in" />
+              <input type="number" bind:value={maskY} min="0" max="99999" class="num-in" />
             </div>
             <div class="row">
               <span class="lbl">{$t('bfl_mask_w')}</span>
-              <input type="number" bind:value={maskW} min="0" max="9999" class="num-in" />
+              <input type="number" bind:value={maskW} min="0" max="99999" class="num-in" />
               <span class="lbl ml">{$t('bfl_mask_h')}</span>
-              <input type="number" bind:value={maskH} min="0" max="9999" class="num-in" />
+              <input type="number" bind:value={maskH} min="0" max="99999" class="num-in" />
             </div>
             <div class="row col">
               <span class="lbl">{$t('bfl_inpaint_prompt')} *</span>
               <textarea bind:value={inpaintPrompt} rows="2" placeholder={$t('bfl_inpaint_prompt')}></textarea>
             </div>
 
-          {:else}
+          {:else if tab === 'ai-edit'}
+            <!-- ── AI Edit (Kontext / FLUX.2) ── -->
             <div class="row col">
               <span class="lbl">{$t('bfl_edit_prompt')} *</span>
               <textarea bind:value={editPrompt} rows="3" placeholder={$t('bfl_edit_prompt')}></textarea>
@@ -241,23 +277,55 @@
               </select>
             </div>
             <div class="row">
-              <span class="lbl">Seed</span>
+              <span class="lbl">{$t('bfl_aspect_ratio')}</span>
+              <select bind:value={editAspect}>
+                {#each ASPECT_RATIOS as ar}
+                  <option value={ar}>{ar === '' ? 'auto (match input)' : ar}</option>
+                {/each}
+              </select>
+              <span class="lbl ml">Seed</span>
               <input type="number" bind:value={editSeed} min="0" placeholder="random" class="num-in wide" />
+            </div>
+
+          {:else}
+            <!-- ── Generate ── -->
+            <div class="row col">
+              <span class="lbl">{$t('bfl_gen_prompt')} *</span>
+              <textarea bind:value={genPrompt} rows="3" placeholder={$t('bfl_gen_prompt')}></textarea>
+            </div>
+            <div class="row">
+              <span class="lbl">{$t('bfl_aspect_ratio')}</span>
+              <select bind:value={genAspect}>
+                {#each ASPECT_RATIOS.filter(a => a) as ar}
+                  <option value={ar}>{ar}</option>
+                {/each}
+              </select>
+              <span class="lbl ml">Seed</span>
+              <input type="number" bind:value={genSeed} min="0" placeholder="random" class="num-in wide" />
+            </div>
+            <div class="row col">
+              <span class="lbl">{$t('bfl_output_folder')}</span>
+              <input type="text" bind:value={genFolder} placeholder="default: data_dir/generated/" style="width:100%" />
+            </div>
+            <div class="row">
+              <span class="lbl">{$t('bfl_filename_prefix')}</span>
+              <input type="text" bind:value={genPrefix} style="width:120px" />
             </div>
           {/if}
 
-          <!-- Shared: Save as -->
-          <div class="row">
-            <span class="lbl">{$t('adj_save_as')}</span>
-            <label class="radio"><input type="radio" bind:group={saveAs} value="replace" /> {$t('adj_replace_orig')}</label>
-            <label class="radio"><input type="radio" bind:group={saveAs} value="new_file" /> {$t('adj_new_file')}</label>
-          </div>
-
-          {#if saveAs === 'new_file'}
+          <!-- ── Shared: Save as (not shown on generate tab) ── -->
+          {#if tab !== 'generate'}
             <div class="row">
-              <span class="lbl">{$t('adj_suffix')}</span>
-              <input type="text" bind:value={suffix} style="width:140px" />
+              <span class="lbl">{$t('adj_save_as')}</span>
+              <label class="radio"><input type="radio" bind:group={saveAs} value="replace" /> {$t('adj_replace_orig')}</label>
+              <label class="radio"><input type="radio" bind:group={saveAs} value="new_file" /> {$t('adj_new_file')}</label>
             </div>
+            {#if saveAs === 'new_file'}
+              <div class="row">
+                <span class="lbl">{$t('adj_suffix')}</span>
+                <input type="text" bind:value={suffixOverride} placeholder={suffix} style="width:140px" />
+              </div>
+            {/if}
           {/if}
 
           {#if error}
@@ -271,7 +339,7 @@
 
           <div class="action-row">
             <button class="primary" on:click={doApply} disabled={!canApply || applying}>
-              {applying ? $t('bfl_applying') : $t('apply')}
+              {applying ? $t('bfl_applying') : tab === 'generate' ? $t('bfl_generate') : $t('apply')}
             </button>
             <button on:click={handleClose} disabled={applying}>{$t('cancel')}</button>
           </div>
@@ -294,7 +362,7 @@
   .modal {
     background: #1a1a28;
     border-radius: 10px;
-    width: min(92vw, 620px);
+    width: min(94vw, 640px);
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.7);
@@ -315,10 +383,11 @@
     gap: 2px;
     padding: 8px 14px 0;
     border-bottom: 1px solid #2a2a3a;
+    flex-shrink: 0;
   }
   .tab-btn {
-    padding: 5px 14px;
-    font-size: 12px;
+    padding: 5px 12px;
+    font-size: 11px;
     border-radius: 4px 4px 0 0;
     background: #2a2a42;
     color: #8090b8;
@@ -330,6 +399,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow-y: auto;
+    max-height: 70vh;
   }
   .modal-body.two-col {
     flex-direction: row;
@@ -337,9 +408,10 @@
     align-items: flex-start;
   }
 
-  .thumb-wrap { flex-shrink: 0; width: 160px; }
+  .thumb-wrap { flex-shrink: 0; width: 160px; display: flex; flex-direction: column; gap: 6px; }
   .thumb-container { position: relative; display: inline-block; }
   .thumb { width: 160px; height: auto; border-radius: 4px; display: block; }
+  .ref-hint { font-size: 9px; color: #505070; line-height: 1.4; text-align: center; }
   .mask-overlay {
     position: absolute;
     background: rgba(255, 120, 40, 0.45);
@@ -347,7 +419,7 @@
     pointer-events: none;
   }
 
-  .controls { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .controls { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
   .row {
     display: flex;
@@ -360,7 +432,7 @@
   .lbl.ml { margin-left: 4px; }
 
   .num-in { width: 60px; }
-  .num-in.wide { width: 100px; }
+  .num-in.wide { width: 80px; }
 
   textarea {
     width: 100%;
@@ -371,9 +443,18 @@
     border-radius: 4px;
     font-size: 12px;
     resize: vertical;
-    min-height: 44px;
+    min-height: 48px;
+    box-sizing: border-box;
   }
   select {
+    background: #1e1e2e;
+    border: 1px solid #3a3a5a;
+    color: #e0e0e0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  input[type="text"], input[type="number"] {
     background: #1e1e2e;
     border: 1px solid #3a3a5a;
     color: #e0e0e0;

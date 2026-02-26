@@ -277,6 +277,12 @@ const EN = {
   bfl_no_key: 'BFL API key not configured — add it in Settings → API Keys',
   ctx_ai_edit: 'AI Edit (BFL)',
   conv_resize_outpaint: 'Outpaint (AI)',
+  bfl_generate: 'Generate',
+  bfl_gen_prompt: 'Describe what to generate…',
+  bfl_aspect_ratio: 'Aspect ratio',
+  bfl_output_folder: 'Output folder',
+  bfl_filename_prefix: 'Filename prefix',
+  bfl_gen_hint: 'Thumbnail shown for reference — not sent to the model',
 };
 
 export const TRANSLATIONS = {
@@ -509,6 +515,12 @@ export const TRANSLATIONS = {
     bfl_no_key: 'BFL-API-Schlüssel fehlt — in Einstellungen → API-Schlüssel hinzufügen',
     ctx_ai_edit: 'KI-Bearbeitung (BFL)',
     conv_resize_outpaint: 'Ausmalen (KI)',
+    bfl_generate: 'Generieren',
+    bfl_gen_prompt: 'Was generiert werden soll…',
+    bfl_aspect_ratio: 'Seitenverhältnis',
+    bfl_output_folder: 'Ausgabeordner',
+    bfl_filename_prefix: 'Dateinamen-Präfix',
+    bfl_gen_hint: 'Vorschau nur zur Referenz — wird nicht an das Modell gesendet',
   },
 };
 
