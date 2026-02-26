@@ -5,13 +5,15 @@
    * Events: close, edited (detail: { new_image_id, filepath })
    */
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
-  import { t } from '../stores.js';
+  import { t, sidebarView } from '../stores.js';
   import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage, generateImage } from '../api.js';
 
   export let imageId       = null;
   export let imageFilename = '';
   export let imageW        = 0;   // original image width (optional, improves inpaint accuracy)
   export let imageH        = 0;   // original image height (optional)
+  export let initialTab    = null; // pre-select a tab on open (e.g. 'outpaint' from CropModal)
+  export let initialBorders = null; // { top, bottom, left, right } pre-fill outpaint borders
 
   const dispatch = createEventDispatcher();
 
@@ -40,14 +42,18 @@
   // Scale: how many display pixels per natural pixel
   $: opScale = opDispW / opNatW;
 
-  // Scale for visualizing borders in the preview (capped so total area fits in ~opDispW)
+  // Use original image dimensions if provided; fall back to thumbnail's natural dims
+  $: opRefW = (imageW > 0) ? imageW : opNatW;
+  $: opRefH = (imageH > 0) ? imageH : opNatH;
+
+  // Scale for visualizing borders in the preview (capped so total area fits in preview container)
   $: opVisScale = Math.min(
-    opDispW / Math.max(opNatW + addLeft + addRight, 1),
-    opDispH / Math.max(opNatH + addTop + addBottom, 1)
+    opDispW / Math.max(opRefW + addLeft + addRight, 1),
+    opDispH / Math.max(opRefH + addTop  + addBottom, 1)
   ) * opZoom;
 
-  $: opImgVisW  = Math.round(opNatW  * opVisScale);
-  $: opImgVisH  = Math.round(opNatH  * opVisScale);
+  $: opImgVisW  = Math.round(opRefW * opVisScale);
+  $: opImgVisH  = Math.round(opRefH * opVisScale);
   $: opAddTopPx    = Math.round(addTop    * opVisScale);
   $: opAddBottomPx = Math.round(addBottom * opVisScale);
   $: opAddLeftPx   = Math.round(addLeft   * opVisScale);
@@ -297,6 +303,14 @@
   function onKey(e) { if (e.key === 'Escape') handleClose(); }
 
   onMount(() => {
+    // Apply initial tab + border values when opened from CropModal outpaint
+    if (initialTab) tab = initialTab;
+    if (initialBorders) {
+      addTop    = initialBorders.top    ?? addTop;
+      addBottom = initialBorders.bottom ?? addBottom;
+      addLeft   = initialBorders.left   ?? addLeft;
+      addRight  = initialBorders.right  ?? addRight;
+    }
     window.addEventListener('keydown',   onKey);
     window.addEventListener('mousemove', onIpWindowMouseMove);
     window.addEventListener('mouseup',   onIpWindowMouseUp);
@@ -402,6 +416,10 @@
           <div class="action-row">
             {#if result.new_image_id}
               <button class="primary"
+                on:click={() => { sidebarView.set('all'); dispatch('edited', result); }}>
+                🖼 {$t('gen_view_in_gallery')}
+              </button>
+              <button class="primary"
                 on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>
                 ⬇ {$t('download')}
               </button>
@@ -426,40 +444,45 @@
           {#if tab === 'outpaint' && imageId}
             <!-- Outpaint visual preview with draggable handles -->
             <div class="op-preview">
-              <div class="op-scene"
-                style="width:{opImgVisW + opAddLeftPx + opAddRightPx}px; height:{opImgVisH + opAddTopPx + opAddBottomPx}px"
-              >
+              <div class="op-scene">
                 <!-- Top border -->
                 {#if opAddTopPx > 0}
                   <div class="op-border op-top"
-                    style="height:{opAddTopPx}px; top:0; left:0; right:0;"
+                    style="height:{opAddTopPx}px; width:{opImgVisW + opAddLeftPx + opAddRightPx}px;"
                     on:mousedown={e => onOpHandleDown(e, 'top')}
                   >
                     <span class="op-label">{addTop}px</span>
                   </div>
                 {/if}
-                <!-- Middle row -->
-                <div class="op-middle-row" style="top:{opAddTopPx}px; height:{opImgVisH}px;">
+                <!-- Middle row: left border + image + right border -->
+                <div class="op-middle-row">
                   {#if opAddLeftPx > 0}
                     <div class="op-border op-left"
-                      style="width:{opAddLeftPx}px;"
+                      style="width:{opAddLeftPx}px; height:{opImgVisH}px;"
                       on:mousedown={e => onOpHandleDown(e, 'left')}
                     >
                       <span class="op-label op-label-v">{addLeft}px</span>
                     </div>
                   {/if}
-                  <img
-                    src={thumbnailUrl(imageId, 300)}
-                    alt=""
-                    bind:this={opImgEl}
-                    on:load={onOpImgLoad}
-                    style="width:{opImgVisW}px; height:{opImgVisH}px; object-fit:contain;"
-                    draggable="false"
-                    class="op-img"
-                  />
+                  <div style="position:relative; width:{opImgVisW}px; height:{opImgVisH}px; flex-shrink:0;">
+                    <img
+                      src={thumbnailUrl(imageId, 300)}
+                      alt=""
+                      bind:this={opImgEl}
+                      on:load={onOpImgLoad}
+                      style="width:{opImgVisW}px; height:{opImgVisH}px; object-fit:contain; display:block;"
+                      draggable="false"
+                      class="op-img"
+                    />
+                    <!-- Edge drag handles overlaid on image corners -->
+                    <div class="op-edge-handle op-eh-top"    on:mousedown={e => onOpHandleDown(e, 'top')}></div>
+                    <div class="op-edge-handle op-eh-bottom" on:mousedown={e => onOpHandleDown(e, 'bottom')}></div>
+                    <div class="op-edge-handle op-eh-left"   on:mousedown={e => onOpHandleDown(e, 'left')}></div>
+                    <div class="op-edge-handle op-eh-right"  on:mousedown={e => onOpHandleDown(e, 'right')}></div>
+                  </div>
                   {#if opAddRightPx > 0}
                     <div class="op-border op-right"
-                      style="width:{opAddRightPx}px;"
+                      style="width:{opAddRightPx}px; height:{opImgVisH}px;"
                       on:mousedown={e => onOpHandleDown(e, 'right')}
                     >
                       <span class="op-label op-label-v">{addRight}px</span>
@@ -469,17 +492,12 @@
                 <!-- Bottom border -->
                 {#if opAddBottomPx > 0}
                   <div class="op-border op-bottom"
-                    style="height:{opAddBottomPx}px; bottom:0; left:0; right:0;"
+                    style="height:{opAddBottomPx}px; width:{opImgVisW + opAddLeftPx + opAddRightPx}px;"
                     on:mousedown={e => onOpHandleDown(e, 'bottom')}
                   >
                     <span class="op-label">{addBottom}px</span>
                   </div>
                 {/if}
-                <!-- Always-visible thin drag handles at image edges (for when border=0) -->
-                <div class="op-edge-handle op-eh-top"  on:mousedown={e => onOpHandleDown(e, 'top')}></div>
-                <div class="op-edge-handle op-eh-bottom" on:mousedown={e => onOpHandleDown(e, 'bottom')}></div>
-                <div class="op-edge-handle op-eh-left"  on:mousedown={e => onOpHandleDown(e, 'left')}></div>
-                <div class="op-edge-handle op-eh-right" on:mousedown={e => onOpHandleDown(e, 'right')}></div>
               </div>
             </div>
             <!-- Zoom slider -->
@@ -737,19 +755,20 @@
     border-radius: 4px;
     display: flex;
     align-items: flex-start;
-    justify-content: flex-start;
-    padding: 4px;
+    justify-content: center;
+    padding: 8px;
   }
   .op-scene {
     position: relative;
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
   }
   .op-img {
     display: block;
     flex-shrink: 0;
   }
   .op-border {
-    position: absolute;
     background: rgba(74,158,255,0.3);
     border: 1px dashed rgba(74,158,255,0.6);
     display: flex;
@@ -757,14 +776,14 @@
     justify-content: center;
     min-width: 4px;
     min-height: 4px;
+    flex-shrink: 0;
   }
-  .op-top, .op-bottom { cursor: ns-resize; width: 100%; }
-  .op-left, .op-right { cursor: ew-resize; height: 100%; }
+  .op-top, .op-bottom { cursor: ns-resize; align-self: stretch; }
+  .op-left, .op-right { cursor: ew-resize; }
   .op-middle-row {
-    position: absolute;
-    left: 0;
     display: flex;
     align-items: stretch;
+    flex-shrink: 0;
   }
   .op-label {
     font-size: 9px;
@@ -774,17 +793,18 @@
   }
   .op-label-v { writing-mode: vertical-rl; }
 
-  /* Always-visible thin drag handles at the image boundaries */
+  /* Thin drag handles at the image edges (invisible until hovered) */
   .op-edge-handle {
     position: absolute;
     opacity: 0;
     z-index: 10;
+    transition: opacity 0.1s;
   }
-  .op-eh-top    { top: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
-  .op-eh-bottom { bottom: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
-  .op-eh-left   { top: 0; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-  .op-eh-right  { top: 0; right: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-  .op-edge-handle:hover { opacity: 0.6; background: rgba(74,158,255,0.4); }
+  .op-eh-top    { top: 0;    left: 0; right: 0;  height: 8px; cursor: n-resize; }
+  .op-eh-bottom { bottom: 0; left: 0; right: 0;  height: 8px; cursor: s-resize; }
+  .op-eh-left   { top: 0;    left: 0; bottom: 0; width:  8px; cursor: w-resize; }
+  .op-eh-right  { top: 0;   right: 0; bottom: 0; width:  8px; cursor: e-resize; }
+  .op-edge-handle:hover { opacity: 0.7; background: rgba(74,158,255,0.45); }
 
   .zoom-row {
     display: flex;

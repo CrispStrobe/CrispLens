@@ -35,6 +35,18 @@ EDIT_MODELS      = [
     "flux-2-pro", "flux-2-max", "flux-2-flex",
     "flux-2-klein-4b", "flux-2-klein-9b",
 ]
+GENERATE_MODELS  = [
+    "flux-kontext-pro",
+    "flux-pro-1.1",
+    "flux-pro",
+    "flux-dev",
+]
+GENERATE_ENDPOINTS = {
+    "flux-kontext-pro": "/flux-kontext-pro",
+    "flux-pro-1.1":     "/flux-pro-1.1",
+    "flux-pro":         "/flux-pro",
+    "flux-dev":         "/flux-dev",
+}
 GEN_ASPECT_RATIOS = ["1:1", "16:9", "4:3", "3:4", "9:16", "2:3", "3:2", "21:9"]
 
 
@@ -440,7 +452,8 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
     if body.seed is not None:
         payload["seed"] = body.seed
 
-    _, polling_url = _bfl_submit(api_key, KONTEXT_ENDPOINT, payload)
+    gen_endpoint = GENERATE_ENDPOINTS.get(body.model, KONTEXT_ENDPOINT)
+    _, polling_url = _bfl_submit(api_key, gen_endpoint, payload)
     sample_url     = _bfl_poll(api_key, polling_url)
     result_bytes   = _download_result(sample_url)
 

@@ -3,8 +3,15 @@
   import { generateImage, thumbnailUrl } from '../api.js';
 
   const ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
+  const GENERATE_MODELS = [
+    { value: 'flux-kontext-pro', label: 'Flux Kontext Pro' },
+    { value: 'flux-pro-1.1',     label: 'Flux Pro 1.1' },
+    { value: 'flux-pro',         label: 'Flux Pro' },
+    { value: 'flux-dev',         label: 'Flux Dev (experimental)' },
+  ];
 
   let prompt  = '';
+  let model   = 'flux-kontext-pro';
   let aspect  = '1:1';
   let seed    = '';
   let folder  = '';
@@ -22,6 +29,7 @@
     try {
       result = await generateImage({
         prompt,
+        model,
         aspect_ratio:    aspect,
         seed:            seed ? parseInt(seed, 10) : null,
         output_folder:   folder,
@@ -52,6 +60,17 @@
         class="prompt-input"
         disabled={loading}
       ></textarea>
+
+      <div class="row">
+        <div class="field">
+          <label class="field-label">{$t('gen_model_label')}</label>
+          <select bind:value={model} disabled={loading}>
+            {#each GENERATE_MODELS as m}
+              <option value={m.value}>{m.label}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
 
       <div class="row">
         <div class="field">

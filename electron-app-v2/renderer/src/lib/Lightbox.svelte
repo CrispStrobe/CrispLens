@@ -14,6 +14,8 @@
   let showCrop = false;
   let showAdjust = false;
   let showAIEdit = false;
+  let aiEditInitialTab = null;
+  let aiEditInitialBorders = null;
 
   // Zoom + pan state
   let zoomLevel = 1;
@@ -253,6 +255,12 @@
     imageUrl={previewUrl(image.id)}
     on:close={() => showCrop = false}
     on:cropped={() => { showCrop = false; imgVersion++; }}
+    on:openoutpaint={(e) => {
+      showCrop = false;
+      aiEditInitialTab = 'outpaint';
+      aiEditInitialBorders = { top: e.detail.addTop, bottom: e.detail.addBottom, left: e.detail.addLeft, right: e.detail.addRight };
+      showAIEdit = true;
+    }}
   />
 {/if}
 
@@ -277,8 +285,10 @@
     imageFilename={image.filename}
     imageW={image.width || 0}
     imageH={image.height || 0}
-    on:close={() => showAIEdit = false}
-    on:edited={() => { showAIEdit = false; imgVersion++; loadImage(image.id); }}
+    initialTab={aiEditInitialTab}
+    initialBorders={aiEditInitialBorders}
+    on:close={() => { showAIEdit = false; aiEditInitialTab = null; aiEditInitialBorders = null; }}
+    on:edited={() => { showAIEdit = false; aiEditInitialTab = null; aiEditInitialBorders = null; imgVersion++; loadImage(image.id); }}
   />
 {/if}
 

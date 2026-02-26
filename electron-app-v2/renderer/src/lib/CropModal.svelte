@@ -161,60 +161,86 @@
   }
 
   function drawBorderPreview() {
-    if (!canvasEl || !displayW) return;
+    if (!canvasEl || !naturalW) {
+      const ctx = canvasEl?.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      return;
+    }
     const ctx = canvasEl.getContext('2d');
-    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-
     const cw = canvasEl.width, ch = canvasEl.height;
-    // Convert natural pixel border values to display pixels
-    const dt = addTop    / scale;
-    const db = addBottom / scale;
-    const dl = addLeft   / scale;
-    const dr = addRight  / scale;
+    ctx.clearRect(0, 0, cw, ch);
 
+    if (!addTop && !addBottom && !addLeft && !addRight) return;
+
+    const totalNatW = naturalW + addLeft + addRight;
+    const totalNatH = naturalH + addTop  + addBottom;
+
+    // Fit entire output area into canvas with 8px margin
+    const margin = 8;
+    const fitScale = Math.min((cw - margin * 2) / totalNatW, (ch - margin * 2) / totalNatH);
+    const totalW = totalNatW * fitScale;
+    const totalH = totalNatH * fitScale;
+    const ox = (cw - totalW) / 2;
+    const oy = (ch - totalH) / 2;
+
+    // Original image rectangle within total area
+    const imgX = ox + addLeft  * fitScale;
+    const imgY = oy + addTop   * fitScale;
+    const imgW = naturalW * fitScale;
+    const imgH = naturalH * fitScale;
+
+    // Fill color
     let fillRgba;
     if (fillMode === 'solid') {
-      // parse hex color, add opacity
-      const hex = fillColor.replace('#', '');
-      const r = parseInt(hex.substring(0,2), 16) || 0;
-      const g = parseInt(hex.substring(2,4), 16) || 0;
-      const b = parseInt(hex.substring(4,6), 16) || 0;
-      fillRgba = `rgba(${r},${g},${b},0.75)`;
+      const h = fillColor.replace('#', '');
+      const r = parseInt(h.substring(0,2), 16) || 0;
+      const g = parseInt(h.substring(2,4), 16) || 0;
+      const b = parseInt(h.substring(4,6), 16) || 0;
+      fillRgba = `rgba(${r},${g},${b},0.88)`;
     } else if (fillMode === 'mirror') {
-      fillRgba = 'rgba(160,80,220,0.5)';
+      fillRgba = 'rgba(160,80,220,0.65)';
     } else {
-      fillRgba = 'rgba(60,200,120,0.5)';
+      fillRgba = 'rgba(60,200,120,0.65)';
     }
 
-    ctx.fillStyle = fillRgba;
-    // Top border strip
-    if (dt > 0) ctx.fillRect(0, 0, cw, Math.min(dt, ch));
-    // Bottom border strip
-    if (db > 0) ctx.fillRect(0, Math.max(0, ch - db), cw, db);
-    // Left border strip (between top and bottom)
-    if (dl > 0) ctx.fillRect(0, dt, Math.min(dl, cw), Math.max(0, ch - dt - db));
-    // Right border strip (between top and bottom)
-    if (dr > 0) ctx.fillRect(Math.max(0, cw - dr), dt, dr, Math.max(0, ch - dt - db));
+    // Darken entire canvas to dim the full-size image underneath
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, cw, ch);
 
-    // Draw original image boundary
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    // Draw fill strips in border areas
+    ctx.fillStyle = fillRgba;
+    if (addTop    > 0) ctx.fillRect(ox,        oy,        totalW,           addTop    * fitScale);
+    if (addBottom > 0) ctx.fillRect(ox,        imgY+imgH, totalW,           addBottom * fitScale);
+    if (addLeft   > 0) ctx.fillRect(ox,        imgY,      addLeft  * fitScale, imgH);
+    if (addRight  > 0) ctx.fillRect(imgX+imgW, imgY,      addRight * fitScale, imgH);
+
+    // Clear original image area — shows the actual image through
+    ctx.clearRect(imgX, imgY, imgW, imgH);
+
+    // Faint highlight over original image area
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(imgX, imgY, imgW, imgH);
+
+    // Dashed white outline around original image
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
-    ctx.strokeRect(dl, dt, Math.max(0, cw - dl - dr), Math.max(0, ch - dt - db));
+    ctx.strokeRect(imgX, imgY, imgW, imgH);
     ctx.setLineDash([]);
 
-    // Dimension label
-    if (naturalW && (addTop || addBottom || addLeft || addRight)) {
-      const newW = naturalW + addLeft + addRight;
-      const newH = naturalH + addTop + addBottom;
-      const lbl = `${newW} × ${newH}`;
-      ctx.font = '11px monospace';
-      const tw = ctx.measureText(lbl).width + 8;
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.fillRect(4, 4, tw, 18);
-      ctx.fillStyle = '#a0ffb0';
-      ctx.fillText(lbl, 8, 17);
-    }
+    // Yellow outline for total area
+    ctx.strokeStyle = 'rgba(255,240,80,0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox, oy, totalW, totalH);
+
+    // Dimensions label
+    const lbl = `${totalNatW} × ${totalNatH}`;
+    ctx.font = '11px monospace';
+    const tw = ctx.measureText(lbl).width + 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(4, 4, tw, 18);
+    ctx.fillStyle = '#a0ffb0';
+    ctx.fillText(lbl, 8, 17);
   }
 
   $: { selX; selY; selW; selH; drawOverlay(); }

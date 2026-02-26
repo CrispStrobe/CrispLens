@@ -1,5 +1,5 @@
 <script>
-  import { sidebarView, sidebarCollapsed, allPeople, allTags, allAlbums, stats, t } from '../stores.js';
+  import { sidebarView, sidebarCollapsed, allPeople, allTags, allAlbums, stats, t, filters } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags } from '../api.js';
 
   $: navItems = [
@@ -31,6 +31,14 @@
     try { allPeople.set(await fetchPeople()); } catch {}
     try { allTags.set(await fetchTags()); } catch {}
   }
+
+  // Clear filters when explicitly clicking Browse so stale tag/folder filters don't persist
+  function handleNavClick(id) {
+    if (id === 'all') {
+      filters.set({ person: '', tag: '', scene: '', folder: '', path: '', dateFrom: '', dateTo: '' });
+    }
+    sidebarView.set(id);
+  }
 </script>
 
 <aside class="sidebar" class:collapsed={$sidebarCollapsed}>
@@ -39,7 +47,7 @@
     <button
       class="nav-item"
       class:active={$sidebarView === item.id}
-      on:click={() => sidebarView.set(item.id)}
+      on:click={() => handleNavClick(item.id)}
       title={$sidebarCollapsed ? item.label : ''}
     >
       <span class="icon">{item.icon}</span>

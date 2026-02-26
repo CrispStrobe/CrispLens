@@ -88,6 +88,8 @@
   let menuImg = null;
 
   let cropItem = null;
+  let aiEditInitialTab = null;
+  let aiEditInitialBorders = null;
   let convertIds = [];
   let adjustItem = null;
   let aiEditItem = null;
@@ -266,6 +268,13 @@
     imageUrl={previewUrl(cropItem.id)}
     on:close={() => cropItem = null}
     on:cropped={() => { cropItem = null; galleryImages.update(list => [...list]); }}
+    on:openoutpaint={(e) => {
+      const item = cropItem;
+      cropItem = null;
+      aiEditInitialTab = 'outpaint';
+      aiEditInitialBorders = { top: e.detail.addTop, bottom: e.detail.addBottom, left: e.detail.addLeft, right: e.detail.addRight };
+      aiEditItem = item;
+    }}
   />
 {/if}
 
@@ -292,8 +301,10 @@
     imageFilename={aiEditItem.filename}
     imageW={aiEditItem.width || 0}
     imageH={aiEditItem.height || 0}
-    on:close={() => aiEditItem = null}
-    on:edited={() => aiEditItem = null}
+    initialTab={aiEditInitialTab}
+    initialBorders={aiEditInitialBorders}
+    on:close={() => { aiEditItem = null; aiEditInitialTab = null; aiEditInitialBorders = null; }}
+    on:edited={() => { aiEditItem = null; aiEditInitialTab = null; aiEditInitialBorders = null; }}
   />
 {/if}
 

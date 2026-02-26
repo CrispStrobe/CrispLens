@@ -309,6 +309,7 @@ const EN = {
   canvas_apply: 'Apply Canvas Size',
   // Generate view
   gen_image_title: 'Generate Image',
+  gen_model_label: 'Model',
   gen_prompt_label: 'Prompt',
   gen_prompt_placeholder: 'Describe what to generate…',
   gen_filename_prefix: 'Filename prefix',
@@ -584,6 +585,7 @@ export const TRANSLATIONS = {
     canvas_apply: 'Leinwandgröße anwenden',
     // Generate view
     gen_image_title: 'Bild generieren',
+    gen_model_label: 'Modell',
     gen_prompt_label: 'Prompt',
     gen_prompt_placeholder: 'Was generiert werden soll…',
     gen_filename_prefix: 'Dateinamen-Präfix',

@@ -1035,7 +1035,7 @@
                     {#if entry.is_dir}
                       📁
                     {:else if !localMode && !cloudMode && entry.in_db && entry.image_id}
-                      <img class="lt-thumb" src={thumbnailUrl(entry.image_id, 32)} alt="" loading="lazy" />
+                      <img class="lt-thumb" src={thumbnailUrl(entry.image_id, 50)} alt="" loading="lazy" on:error={(e) => e.target.style.display='none'} />
                     {:else if (localMode && entry.is_image) || (cloudMode && isCloudImageFile(entry))}
                       🖼
                     {:else}
