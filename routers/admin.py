@@ -113,7 +113,17 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
             yield f"data: ERROR: {exc}\n\n"
 
-    return StreamingResponse(_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            # Tell nginx NOT to buffer this response — without this the browser's
+            # ReadableStream never receives chunks and hangs indefinitely.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/logs")
