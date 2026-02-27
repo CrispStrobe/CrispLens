@@ -5,8 +5,10 @@
    * Events: close, edited (detail: { new_image_id, filepath })
    */
   import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
-  import { t, sidebarView, selectedId } from '../stores.js';
-  import { thumbnailUrl, downloadImage, outpaintImage, inpaintImage, aiEditImage, generateImage } from '../api.js';
+  import { t } from '../stores.js';
+  import { thumbnailUrl, downloadImage,
+           outpaintImage, inpaintImage, aiEditImage, generateImage,
+           bflPreviewUrl, registerBflFile, downloadBflFile } from '../api.js';
 
   export let imageId       = null;
   export let imageFilename = '';
@@ -295,10 +297,88 @@
   let suffixOverride = '';
   $: effectiveSuffix = suffixOverride || suffix;
 
-  let applying = false;
-  let error    = '';
-  let done     = false;
-  let result   = null;
+  let applying    = false;
+  let error       = '';
+  let done        = false;
+  let result      = null;
+  let registering = false;    // true while calling /api/bfl/register
+  let previewBlob = null;     // object URL for preview when not yet in DB
+
+  // When done panel appears and image is not yet registered, load a preview blob
+  $: if (done && result?.filepath && !result?.new_image_id && !previewBlob) {
+    loadPreviewBlob(result.filepath);
+  }
+
+  async function loadPreviewBlob(filepath) {
+    console.log('[AIEditModal] loadPreviewBlob | filepath=%s', filepath);
+    try {
+      const resp = await fetch(bflPreviewUrl(filepath), { credentials: 'include' });
+      if (!resp.ok) throw new Error(`preview ${resp.status}`);
+      const blob = await resp.blob();
+      previewBlob = URL.createObjectURL(blob);
+      console.log('[AIEditModal] previewBlob ready | url=%s', previewBlob);
+    } catch(e) {
+      console.error('[AIEditModal] loadPreviewBlob error:', e);
+    }
+  }
+
+  async function doViewRaw() {
+    console.log('[AIEditModal] doViewRaw | filepath=%s | new_image_id=%s', result?.filepath, result?.new_image_id);
+    if (result?.new_image_id) {
+      // Already in DB — open full-size via existing endpoint
+      const url = `${bflPreviewUrl(result.filepath)}`;
+      const resp = await fetch(url, { credentials: 'include' });
+      const blob = await resp.blob();
+      window.open(URL.createObjectURL(blob), '_blank');
+    } else if (previewBlob) {
+      window.open(previewBlob, '_blank');
+    }
+  }
+
+  async function doDownload() {
+    console.log('[AIEditModal] doDownload | filepath=%s | new_image_id=%s', result?.filepath, result?.new_image_id);
+    if (result?.new_image_id) {
+      downloadImage(result.new_image_id, result.filepath?.split('/').pop());
+    } else {
+      try {
+        await downloadBflFile(result.filepath, result.filepath?.split('/').pop());
+      } catch(e) {
+        error = 'Download failed: ' + e.message;
+      }
+    }
+  }
+
+  async function doAddToDB(action) {
+    if (!result?.filepath) return;
+    console.log('[AIEditModal] doAddToDB | action=%s | filepath=%s | already_registered=%s',
+                action, result.filepath, result.new_image_id);
+    if (result.new_image_id) {
+      // Already registered — just dispatch the action
+      console.log('[AIEditModal] already registered new_image_id=%s, dispatch action=%s', result.new_image_id, action);
+      dispatch('edited', { ...result, action });
+      return;
+    }
+    registering = true;
+    try {
+      const reg = await registerBflFile(result.filepath);
+      result = { ...result, new_image_id: reg.new_image_id };
+      console.log('[AIEditModal] registered | new_image_id=%s | action=%s', reg.new_image_id, action);
+      dispatch('edited', { ...result, action });
+    } catch(e) {
+      console.error('[AIEditModal] register error:', e);
+      error = 'Registration failed: ' + e.message;
+    } finally {
+      registering = false;
+    }
+  }
+
+  function doGenerateAnother() {
+    console.log('[AIEditModal] doGenerateAnother | resetting done state');
+    if (previewBlob) { URL.revokeObjectURL(previewBlob); previewBlob = null; }
+    done   = false;
+    result = null;
+    error  = '';
+  }
 
   function onKey(e) { if (e.key === 'Escape') handleClose(); }
 
@@ -326,7 +406,8 @@
   $: tab, (suffixOverride = '');
 
   function handleClose() {
-    if (done) dispatch('edited', result);
+    if (previewBlob) { URL.revokeObjectURL(previewBlob); previewBlob = null; }
+    if (done) dispatch('edited', { ...(result || {}), action: 'silent' });
     else      dispatch('close');
   }
 
@@ -408,33 +489,65 @@
       <!-- ── Done panel ─────────────────────────────────────────────── -->
       <div class="modal-body">
         <div class="done-panel">
-          <div class="done-title">{$t('bfl_done')}</div>
+          <div class="done-title">✓ {$t('bfl_done')}</div>
+
+          <!-- Preview image -->
           {#if result.new_image_id}
-            <img
-              src={thumbnailUrl(result.new_image_id, 400)}
-              alt="Result"
-              class="result-thumb"
-            />
+            <img src={thumbnailUrl(result.new_image_id, 400)} alt="Result" class="result-thumb" />
+          {:else if previewBlob}
+            <img src={previewBlob} alt="Result" class="result-thumb" />
+          {:else}
+            <div class="preview-loading">Loading preview…</div>
           {/if}
-          <div class="result-path">{result.filepath}</div>
+
+          <div class="result-path" title={result.filepath}>{result.filepath}</div>
           {#if result.width}
             <div class="result-dim">{result.width} × {result.height} px</div>
           {/if}
+
+          <!-- Without-DB actions -->
+          <div class="action-group">
+            <div class="action-group-label">Ohne DB</div>
+            <div class="action-row">
+              <button on:click={doViewRaw}
+                disabled={!result.filepath || (!previewBlob && !result.new_image_id)}>
+                👁 Ansehen (kein DB)
+              </button>
+              <button on:click={doDownload}
+                disabled={!result.filepath}>
+                ⬇ Download (kein DB)
+              </button>
+            </div>
+          </div>
+
+          <!-- Add to DB actions -->
+          <div class="action-group">
+            <div class="action-group-label">In DB speichern</div>
+            <div class="action-row">
+              <button class="primary"
+                on:click={() => doAddToDB('gallery')}
+                disabled={registering}
+                title="In DB eintragen und in Galerie anzeigen">
+                {registering ? '…' : '🖼'} {$t('gen_view_in_gallery')}
+              </button>
+              <button class="primary"
+                on:click={() => doAddToDB('lightbox')}
+                disabled={registering}
+                title="In DB eintragen und Bild öffnen">
+                {registering ? '…' : '🔍'} {$t('view')}
+              </button>
+              <button
+                on:click={() => doAddToDB('silent')}
+                disabled={registering}
+                title="In DB eintragen und Modal schließen">
+                {registering ? '…' : '➕'} Nur speichern
+              </button>
+            </div>
+          </div>
+
+          <!-- Generate another / close -->
           <div class="action-row">
-            {#if result.new_image_id}
-              <button class="primary"
-                on:click={() => { selectedId.set(result.new_image_id); dispatch('edited', result); }}>
-                🔍 {$t('view')}
-              </button>
-              <button class="primary"
-                on:click={() => { sidebarView.set('all'); dispatch('edited', result); }}>
-                🖼 {$t('gen_view_in_gallery')}
-              </button>
-              <button class="primary"
-                on:click={() => downloadImage(result.new_image_id, result.filepath?.split('/').pop())}>
-                ⬇ {$t('download')}
-              </button>
-            {/if}
+            <button on:click={doGenerateAnother}>🔄 Nochmals generieren</button>
             <button on:click={handleClose}>{$t('close')}</button>
           </div>
         </div>
@@ -927,7 +1040,7 @@
   .action-row { display: flex; gap: 8px; margin-top: 4px; }
   .action-row button { font-size: 12px; padding: 5px 14px; border-radius: 4px; }
 
-  .done-panel { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .done-panel { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; width: 100%; }
   .done-title  { font-size: 13px; color: #80e080; font-weight: 600; }
   .result-thumb {
     max-width: 100%;
@@ -937,13 +1050,33 @@
     object-fit: contain;
     align-self: center;
   }
+  .preview-loading {
+    padding: 24px;
+    color: #6070a0;
+    font-size: 12px;
+    align-self: center;
+    animation: pulse 1s ease-in-out infinite alternate;
+  }
+  @keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
   .result-path {
     font-family: monospace;
     font-size: 10px;
     color: #9090b0;
     word-break: break-all;
+    width: 100%;
   }
   .result-dim { font-size: 11px; color: #6080a0; }
+  .action-group {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: #12121e;
+    border: 1px solid #2a2a3a;
+    border-radius: 6px;
+  }
+  .action-group-label { font-size: 10px; color: #5060a0; text-transform: uppercase; letter-spacing: 0.05em; }
 
   button.primary {
     background: #364070;

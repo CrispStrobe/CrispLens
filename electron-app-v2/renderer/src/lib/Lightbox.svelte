@@ -1,5 +1,5 @@
 <script>
-  import { selectedId, galleryImages, t, lightboxKey } from '../stores.js';
+  import { selectedId, galleryImages, t, lightboxKey, galleryRefreshTick } from '../stores.js';
   import { fetchImage, fullUrl, previewUrl, thumbnailUrl, rotateImage } from '../api.js';
   import { onMount, onDestroy } from 'svelte';
   import MetaPanel from './MetaPanel.svelte';
@@ -288,7 +288,27 @@
     initialTab={aiEditInitialTab}
     initialBorders={aiEditInitialBorders}
     on:close={() => { showAIEdit = false; aiEditInitialTab = null; aiEditInitialBorders = null; }}
-    on:edited={() => { showAIEdit = false; aiEditInitialTab = null; aiEditInitialBorders = null; imgVersion++; loadImage(image.id); }}
+    on:edited={(e) => {
+      const r = e.detail ?? {};
+      console.log('[Lightbox] on:edited | action=%s | new_image_id=%s | filepath=%s',
+                  r.action, r.new_image_id, r.filepath);
+      showAIEdit = false; aiEditInitialTab = null; aiEditInitialBorders = null;
+      if (r.action === 'gallery') {
+        // Navigate to gallery showing new image
+        galleryRefreshTick.update(n => n + 1);
+        selectedId.set(null); // close lightbox so gallery is visible
+      } else if (r.action === 'lightbox' && r.new_image_id) {
+        // Show new image in lightbox
+        imgVersion++;
+        loadImage(r.new_image_id);
+      } else if (r.action === 'silent') {
+        // Keep lightbox on current image, refresh gallery silently
+        galleryRefreshTick.update(n => n + 1);
+      } else {
+        // Default (close/escape): reload original image
+        imgVersion++; loadImage(image.id);
+      }
+    }}
   />
 {/if}
 

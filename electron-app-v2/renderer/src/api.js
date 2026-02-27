@@ -483,11 +483,39 @@ export function adjustImage(params) {
 
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 
-export function outpaintImage(params)  { return post('/bfl/outpaint',  params); }
-export function inpaintImage(params)   { return post('/bfl/inpaint',   params); }
-export function aiEditImage(params)    { return post('/bfl/edit',      params); }
-export function generateImage(params)  { return post('/bfl/generate',  params); }
+// register=false by default → file saved to disk, NOT added to DB.
+// Call registerBflFile() later to add to DB when the user explicitly requests it.
+export function outpaintImage(params)  { return post('/bfl/outpaint',  { register: false, ...params }); }
+export function inpaintImage(params)   { return post('/bfl/inpaint',   { register: false, ...params }); }
+export function aiEditImage(params)    { return post('/bfl/edit',      { register: false, ...params }); }
+export function generateImage(params)  { return post('/bfl/generate',  { register: false, ...params }); }
 export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
+
+/** URL to preview a generated file by server path (requires credentials). */
+export function bflPreviewUrl(filepath) {
+  return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`;
+}
+
+/** Register a previously-generated file in the images DB. Returns { new_image_id }. */
+export function registerBflFile(filepath) {
+  return post('/bfl/register', { filepath });
+}
+
+/** Download a generated file (fetches with auth, triggers browser download). */
+export async function downloadBflFile(filepath, filename) {
+  const url = bflPreviewUrl(filepath);
+  const resp = await fetch(url, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+  const blob = await resp.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename || filepath.split('/').pop() || 'result.jpg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
 
 export function convertBatch(params, onEvent) {
   const ctrl = new AbortController();

@@ -1,7 +1,7 @@
 <script>
-  import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags } from '../stores.js';
+  import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags, galleryRefreshTick } from '../stores.js';
   import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import ContextMenu from './ContextMenu.svelte';
   import CropModal from './CropModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
@@ -304,7 +304,20 @@
     initialTab={aiEditInitialTab}
     initialBorders={aiEditInitialBorders}
     on:close={() => { aiEditItem = null; aiEditInitialTab = null; aiEditInitialBorders = null; }}
-    on:edited={() => { aiEditItem = null; aiEditInitialTab = null; aiEditInitialBorders = null; }}
+    on:edited={(e) => {
+      const r = e.detail ?? {};
+      console.log('[Gallery] on:edited | action=%s | new_image_id=%s | filepath=%s',
+                  r.action, r.new_image_id, r.filepath);
+      aiEditItem = null; aiEditInitialTab = null; aiEditInitialBorders = null;
+      // Always refresh gallery so the new image appears
+      galleryRefreshTick.update(n => n + 1);
+      if (r.action === 'lightbox' && r.new_image_id) {
+        // Open lightbox for the new image after gallery re-renders
+        tick().then(() => { selectedId.set(r.new_image_id); });
+      }
+      // 'gallery' → just refresh (new image will appear at top with sort=newest)
+      // 'silent'  → refresh silently, no navigation
+    }}
   />
 {/if}
 

@@ -153,28 +153,39 @@ def _build_bfl_out_path(filepath: str, suffix: str) -> str:
 
 
 def _save_and_register(s, data: bytes, out_path: str, image_id: int,
-                       save_as: str, user_id: int) -> int:
-    """Write result bytes, update/register in DB. Returns new_image_id."""
+                       save_as: str, user_id: int,
+                       register: bool = True) -> Optional[int]:
+    """Write result bytes to disk, optionally register in DB. Returns new_image_id or None."""
     with open(out_path, "wb") as f:
         f.write(data)
+    logger.info("_save_and_register: wrote %d bytes → %s | save_as=%s register=%s user_id=%s",
+                len(data), out_path, save_as, register, user_id)
 
     from PIL import Image
     with Image.open(out_path) as img:
         w, h = img.size
 
     if save_as == "replace":
+        # Always update the existing DB row even when register=False (it was already there)
         conn = None
         try:
             conn = sqlite3.connect(s.db_path, timeout=10.0)
             conn.execute("UPDATE images SET width=?, height=? WHERE id=?", (w, h, image_id))
             conn.commit()
+            logger.info("_save_and_register: updated existing image_id=%s dims %dx%d", image_id, w, h)
         finally:
             if conn:
                 conn.close()
         return image_id
-    else:
+    elif register:
         new_id = _register_converted_file(s.db_path, out_path, w, h, user_id)
+        logger.info("_save_and_register: registered new_image_id=%s | %dx%d | %s",
+                    new_id, w, h, out_path)
         return new_id
+    else:
+        logger.info("_save_and_register: skipped DB registration (register=False) | %dx%d | %s",
+                    w, h, out_path)
+        return None
 
 
 def _round16(v: int) -> int:
@@ -191,34 +202,37 @@ def _round32(v: int) -> int:
 
 class OutpaintRequest(BaseModel):
     image_id:   int
-    add_top:    int = 0
-    add_bottom: int = 0
-    add_left:   int = 0
-    add_right:  int = 0
-    prompt:     str = ""
-    save_as:    str = "new_file"
-    suffix:     str = "_outpainted"
+    add_top:    int  = 0
+    add_bottom: int  = 0
+    add_left:   int  = 0
+    add_right:  int  = 0
+    prompt:     str  = ""
+    save_as:    str  = "new_file"
+    suffix:     str  = "_outpainted"
+    register:   bool = True   # False → save to disk only, don't add to DB
 
 
 class InpaintRequest(BaseModel):
     image_id: int
     prompt:   str
-    mask_x:   int = 0
-    mask_y:   int = 0
-    mask_w:   int = 0
-    mask_h:   int = 0
-    save_as:  str = "new_file"
-    suffix:   str = "_inpainted"
+    mask_x:   int  = 0
+    mask_y:   int  = 0
+    mask_w:   int  = 0
+    mask_h:   int  = 0
+    save_as:  str  = "new_file"
+    suffix:   str  = "_inpainted"
+    register: bool = True
 
 
 class AIEditRequest(BaseModel):
     image_id:     int
     prompt:       str
     model:        str           = "flux-kontext-pro"
-    aspect_ratio: Optional[str] = None   # None = match input image dims
+    aspect_ratio: Optional[str] = None
     save_as:      str           = "new_file"
     suffix:       str           = "_edited"
     seed:         Optional[int] = None
+    register:     bool          = True
 
 
 class GenerateRequest(BaseModel):
@@ -226,8 +240,13 @@ class GenerateRequest(BaseModel):
     model:           str           = "flux-kontext-pro"
     aspect_ratio:    str           = "1:1"
     seed:            Optional[int] = None
-    output_folder:   str           = ""    # empty → data_dir/generated/
+    output_folder:   str           = ""
     filename_prefix: str           = "generated"
+    register:        bool          = True
+
+
+class RegisterFileRequest(BaseModel):
+    filepath: str
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -287,16 +306,25 @@ def outpaint_image(body: OutpaintRequest, user=Depends(get_current_user)):
         "height":        new_h,
     }
 
-    _, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
-    sample_url     = _bfl_poll(api_key, polling_url)
-    result_bytes   = _download_result(sample_url)
+    logger.info("outpaint: user=%s image_id=%s | +top=%d +bottom=%d +left=%d +right=%d | new=%dx%d | register=%s",
+                user.username, body.image_id, body.add_top, body.add_bottom,
+                body.add_left, body.add_right, new_w, new_h, body.register)
+    request_id, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
+    logger.info("outpaint: submitted job_id=%s | polling...", request_id)
+    sample_url   = _bfl_poll(api_key, polling_url)
+    logger.info("outpaint: Ready | sample_url=%s…", sample_url[:80])
+    result_bytes = _download_result(sample_url)
+    logger.info("outpaint: downloaded %d bytes", len(result_bytes))
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
-    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id)
+    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
+                                   register=body.register)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img:
         w, h = img.size
+    logger.info("outpaint: done | out_path=%s | new_image_id=%s | %dx%d | user=%s",
+                out_path, new_id, w, h, user.username)
 
     return {"ok": True, "image_id": body.image_id, "new_image_id": new_id,
             "filepath": out_path, "width": w, "height": h}
@@ -353,16 +381,25 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
         "height":        new_h,
     }
 
-    _, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
-    sample_url     = _bfl_poll(api_key, polling_url)
-    result_bytes   = _download_result(sample_url)
+    logger.info("inpaint: user=%s image_id=%s | mask x=%d y=%d w=%d h=%d | register=%s",
+                user.username, body.image_id, body.mask_x, body.mask_y,
+                body.mask_w, body.mask_h, body.register)
+    request_id, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
+    logger.info("inpaint: submitted job_id=%s | polling...", request_id)
+    sample_url   = _bfl_poll(api_key, polling_url)
+    logger.info("inpaint: Ready | sample_url=%s…", sample_url[:80])
+    result_bytes = _download_result(sample_url)
+    logger.info("inpaint: downloaded %d bytes", len(result_bytes))
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
-    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id)
+    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
+                                   register=body.register)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img:
         w, h = img.size
+    logger.info("inpaint: done | out_path=%s | new_image_id=%s | %dx%d | user=%s",
+                out_path, new_id, w, h, user.username)
 
     return {"ok": True, "image_id": body.image_id, "new_image_id": new_id,
             "filepath": out_path, "width": w, "height": h}
@@ -408,16 +445,24 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
     else:
         endpoint = f"/{body.model}"
 
-    _, polling_url = _bfl_submit(api_key, endpoint, payload)
-    sample_url     = _bfl_poll(api_key, polling_url)
-    result_bytes   = _download_result(sample_url)
+    logger.info("ai-edit: user=%s image_id=%s | model=%s | prompt=%r | register=%s",
+                user.username, body.image_id, body.model, body.prompt[:80], body.register)
+    request_id, polling_url = _bfl_submit(api_key, endpoint, payload)
+    logger.info("ai-edit: submitted job_id=%s | polling...", request_id)
+    sample_url   = _bfl_poll(api_key, polling_url)
+    logger.info("ai-edit: Ready | sample_url=%s…", sample_url[:80])
+    result_bytes = _download_result(sample_url)
+    logger.info("ai-edit: downloaded %d bytes", len(result_bytes))
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
-    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id)
+    new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
+                                   register=body.register)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img_out:
         w, h = img_out.size
+    logger.info("ai-edit: done | out_path=%s | new_image_id=%s | %dx%d | user=%s",
+                out_path, new_id, w, h, user.username)
 
     return {"ok": True, "image_id": body.image_id, "new_image_id": new_id,
             "filepath": out_path, "width": w, "height": h}
@@ -453,9 +498,15 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
         payload["seed"] = body.seed
 
     gen_endpoint = GENERATE_ENDPOINTS.get(body.model, KONTEXT_ENDPOINT)
-    _, polling_url = _bfl_submit(api_key, gen_endpoint, payload)
-    sample_url     = _bfl_poll(api_key, polling_url)
-    result_bytes   = _download_result(sample_url)
+    logger.info("generate: user=%s | model=%s endpoint=%s | aspect=%s | register=%s | prompt=%r",
+                user.username, body.model, gen_endpoint, body.aspect_ratio, body.register,
+                body.prompt[:80])
+    request_id, polling_url = _bfl_submit(api_key, gen_endpoint, payload)
+    logger.info("generate: submitted job_id=%s | polling...", request_id)
+    sample_url   = _bfl_poll(api_key, polling_url)
+    logger.info("generate: Ready | sample_url=%s…", sample_url[:80])
+    result_bytes = _download_result(sample_url)
+    logger.info("generate: downloaded %d bytes", len(result_bytes))
 
     with open(out_path, "wb") as f:
         f.write(result_bytes)
@@ -464,6 +515,60 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
     with Image.open(out_path) as img:
         w, h = img.size
 
-    new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+    new_id = None
+    if body.register:
+        new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
+        logger.info("generate: registered new_image_id=%s | %dx%d | out_path=%s | user=%s",
+                    new_id, w, h, out_path, user.username)
+    else:
+        logger.info("generate: skipped DB registration | %dx%d | out_path=%s | user=%s",
+                    w, h, out_path, user.username)
 
     return {"ok": True, "new_image_id": new_id, "filepath": out_path, "width": w, "height": h}
+
+
+# ── Preview + register helpers ─────────────────────────────────────────────────
+
+@router.get("/preview")
+def preview_bfl_file(path: str, user=Depends(get_current_user)):
+    """Serve a generated file directly by server path (no DB registration needed)."""
+    from fastapi.responses import FileResponse
+    s = _state()
+    p = Path(path).resolve()
+    # Restrict to parent of db_path (the data directory)
+    data_dir = Path(s.db_path).parent.resolve()
+    if not str(p).startswith(str(data_dir)):
+        logger.warning("preview_bfl_file: denied path=%s | data_dir=%s | user=%s",
+                       p, data_dir, user.username)
+        raise HTTPException(status_code=403, detail="Path not allowed")
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    logger.info("preview_bfl_file: serving %s | user=%s", p, user.username)
+    # Guess content type
+    suffix = p.suffix.lower()
+    mime = {"jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".webp": "image/webp"}.get(suffix, "image/jpeg")
+    return FileResponse(str(p), media_type=mime, filename=p.name)
+
+
+@router.post("/register")
+def register_bfl_file(body: RegisterFileRequest, user=Depends(get_current_user)):
+    """Register a previously-generated file into the images DB."""
+    from PIL import Image as _PILImg
+    s = _state()
+    p = Path(body.filepath).resolve()
+    data_dir = Path(s.db_path).parent.resolve()
+    if not str(p).startswith(str(data_dir)):
+        logger.warning("register_bfl_file: denied path=%s | user=%s", p, user.username)
+        raise HTTPException(status_code=403, detail="Path not allowed")
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    try:
+        with _PILImg.open(str(p)) as img:
+            w, h = img.size
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Cannot open image: {e}")
+    new_id = _register_converted_file(s.db_path, str(p), w, h, user.id)
+    logger.info("register_bfl_file: registered path=%s | new_image_id=%s | %dx%d | user=%s",
+                p, new_id, w, h, user.username)
+    return {"ok": True, "new_image_id": new_id, "width": w, "height": h}
