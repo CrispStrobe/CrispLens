@@ -46,9 +46,21 @@
 
     try {
       const resp = await streamServerUpdate(pw);
+
+      // HTTP error before streaming started — parse FastAPI detail JSON
       if (!resp.ok) {
-        const msg = await resp.text().catch(() => resp.statusText);
-        throw new Error(msg || `HTTP ${resp.status}`);
+        let msg;
+        try {
+          const json = await resp.json();
+          msg = json.detail || JSON.stringify(json);
+        } catch {
+          msg = await resp.text().catch(() => resp.statusText) || `HTTP ${resp.status}`;
+        }
+        // Go back to password phase so user can try again
+        running = false;
+        done    = false;
+        error   = `[HTTP ${resp.status}] ${msg}`;
+        return;
       }
 
       const reader = resp.body.getReader();
@@ -69,7 +81,8 @@
       }
     } catch (e) {
       // Connection drop after restart is expected — treat gracefully
-      if (e.name === 'TypeError' && (e.message.includes('network') || e.message.includes('fetch'))) {
+      if (e.name === 'TypeError' &&
+          (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
         lines = [...lines, '— Connection closed (server restarted) —'];
       } else {
         error = e.message || String(e);
@@ -99,6 +112,9 @@
 
       {#if !running && !done}
         <!-- Password entry phase -->
+        {#if error}
+          <div class="error-msg pre-error">{error}</div>
+        {/if}
         <p class="hint">{$t('update_modal_hint')}</p>
 
         <label class="field-label" for="upd-pw">{$t('root_password')}</label>
@@ -141,14 +157,13 @@
         </div>
 
         {#if done}
+          {#if error}
+            <div class="error-msg">{error}</div>
+          {/if}
           <div class="action-row">
             <button on:click={close}>{$t('close')}</button>
           </div>
         {/if}
-      {/if}
-
-      {#if error}
-        <div class="error-msg">{error}</div>
       {/if}
     </div>
   </div>
@@ -251,5 +266,7 @@
     font-size: 12px; color: #e07070;
     background: #2a1010; border: 1px solid #5a2020;
     padding: 8px 10px; border-radius: 4px;
+    word-break: break-word;
   }
+  .pre-error { margin-bottom: 0; }
 </style>

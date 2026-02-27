@@ -253,9 +253,28 @@ export function streamServerUpdate(root_password, fix_db_path = '') {
   });
 }
 
-/** Return last N lines of the server application log. */
-export function fetchServerLogs(lines = 300) {
-  return get(`/admin/logs?lines=${lines}`);
+/** Return last N lines of the server application log (15 s timeout). */
+export async function fetchServerLogs(lines = 300) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      let detail = text;
+      try { detail = JSON.parse(text).detail || text; } catch { /* keep raw */ }
+      throw new Error(`[HTTP ${res.status}] ${detail}`);
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(tid);
+    if (e.name === 'AbortError') throw new Error('Request timed out after 15 s');
+    throw e;
+  }
 }
 
 export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }

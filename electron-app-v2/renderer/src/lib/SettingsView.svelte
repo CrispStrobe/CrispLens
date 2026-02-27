@@ -624,37 +624,37 @@
 </script>
 
 <div class="settings-view">
-  <h2>⚙ Settings</h2>
+  <h2>⚙ {$t('settings_title')}</h2>
 
   <!-- FastAPI Server -->
   {#if isElectron}
   <section class="card">
-    <h3>FastAPI Server</h3>
+    <h3>{$t('settings_server_section')}</h3>
     <div class="mode-radios" style="margin-bottom: 8px;">
       <label class="radio-row">
         <input type="radio" bind:group={connectionMode} value="local" />
         <div>
-          <span class="radio-label">Run locally on this machine</span>
-          <span class="radio-hint">App manages its own Python/FastAPI process</span>
+          <span class="radio-label">{$t('settings_mode_run_local')}</span>
+          <span class="radio-hint">{$t('settings_mode_run_local_hint')}</span>
         </div>
       </label>
       <label class="radio-row">
         <input type="radio" bind:group={connectionMode} value="remote" />
         <div>
-          <span class="radio-label">Connect to remote server (VPS)</span>
-          <span class="radio-hint">Point to an existing FastAPI instance</span>
+          <span class="radio-label">{$t('settings_mode_remote')}</span>
+          <span class="radio-hint">{$t('settings_mode_remote_hint')}</span>
         </div>
       </label>
     </div>
     <div class="form-grid">
       {#if connectionMode === 'local'}
-        <label>Local port</label>
+        <label>{$t('settings_local_port')}</label>
         <div class="field-row">
           <input type="number" bind:value={localPort} min="1024" max="65535" style="width:90px;" />
           <span class="hint" style="margin:0;">default 7865 — app finds next free port if taken</span>
         </div>
       {:else}
-        <label>Server URL</label>
+        <label>{$t('settings_server_url')}</label>
         <div style="display:flex; flex-direction:column; gap:4px; flex:1;">
           <input type="text" bind:value={remoteUrl} placeholder="https://faces.example.com" />
           {#if remoteUrl && remoteUrl.startsWith('http://') && !remoteUrl.startsWith('http://127') && !remoteUrl.startsWith('http://localhost')}
@@ -666,19 +666,19 @@
         </div>
       {/if}
     </div>
-    <p class="hint" style="margin-top: 8px;">Changes to server mode require a restart.</p>
+    <p class="hint" style="margin-top: 8px;">{$t('settings_server_restart_hint')}</p>
   </section>
 
   <!-- Database (Electron only) -->
   <section class="card">
-    <h3>Database</h3>
+    <h3>{$t('settings_db_section')}</h3>
     {#if connectionMode === 'local'}
-      <p class="hint">Switch between local SQLite database files (photo collections). Requires restart.</p>
+      <p class="hint">{$t('settings_db_switch_hint')}</p>
       <div class="form-grid" style="margin-top: 8px;">
-        <label>Current DB</label>
+        <label>{$t('settings_db_current')}</label>
         <span class="db-path-display">{currentDbPath || '(default in app data)'}</span>
 
-        <label>Switch to</label>
+        <label>{$t('settings_db_switch_to')}</label>
         <div class="field-row">
           <input type="text" bind:value={newDbPath} placeholder="/path/to/face_recognition.db" style="flex:1;" />
           <button on:click={browseDb} style="flex-shrink:0;">Browse…</button>
@@ -691,17 +691,17 @@
         on:click={doSwitchDb}
         disabled={switchingDb || !newDbPath?.trim() || newDbPath.trim() === currentDbPath}
       >
-        {switchingDb ? 'Switching…' : '🔄 Switch Database & Restart'}
+        {switchingDb ? '…' : '🔄 ' + $t('settings_db_switch_btn')}
       </button>
     {:else}
-      <p class="hint">Database is managed by the remote server at <code>{remoteUrl || '(server URL not set)'}</code>.</p>
+      <p class="hint">{$t('settings_db_remote_info')} <code>{remoteUrl || '(server URL not set)'}</code>.</p>
       <p class="hint" style="margin-top:4px;">Configure the database path on the server (via server's <code>config.yaml</code> or <code>FACE_REC_DB_PATH</code> env var).</p>
     {/if}
   </section>
   {:else}
   <!-- Browser/PWA: static server info -->
   <section class="card">
-    <h3>Server</h3>
+    <h3>{$t('settings_server_section')}</h3>
     <div class="form-grid">
       <label>Connected to</label>
       <span class="db-path-display">{typeof window !== 'undefined' ? (localStorage.getItem('face_rec_server_url') || window.location.origin) : ''}</span>
@@ -713,11 +713,11 @@
   <!-- Image Processing / Ingest mode -->
   {#if isElectron}
   <section class="card">
-    <h3>Image Processing</h3>
+    <h3>{$t('settings_img_proc_section')}</h3>
     {#if connectionMode === 'local'}
       <p class="hint">Images are processed by the local FastAPI server using InsightFace.</p>
       <div class="form-grid" style="margin-top: 8px;">
-        <label>Python path</label>
+        <label>{$t('settings_python_path')}</label>
         <div class="field-row">
           <input type="text" bind:value={pythonPath} placeholder="(auto-detect python3)" style="flex:1;" />
           <button on:click={doTestPython} disabled={testingPython} style="flex-shrink:0;">
@@ -734,22 +734,22 @@
         <label class="radio-row">
           <input type="radio" bind:group={processingModeLocal} value="upload_full" />
           <div>
-            <span class="radio-label">Upload images to server</span>
-            <span class="radio-hint">Send local images to VPS — server runs InsightFace + VLM</span>
+            <span class="radio-label">{$t('settings_upload_mode')}</span>
+            <span class="radio-hint">{$t('settings_upload_mode_hint')}</span>
           </div>
         </label>
         <label class="radio-row">
           <input type="radio" bind:group={processingModeLocal} value="local_process" />
           <div>
-            <span class="radio-label">Process locally, upload results</span>
-            <span class="radio-hint">Run InsightFace here → upload embeddings + thumbnail only (no VLM)</span>
+            <span class="radio-label">{$t('settings_local_proc_mode')}</span>
+            <span class="radio-hint">{$t('settings_local_proc_mode_hint')}</span>
           </div>
         </label>
       </div>
 
       {#if processingModeLocal === 'local_process'}
         <div class="form-grid" style="margin-top: 12px;">
-          <label>Python path</label>
+          <label>{$t('settings_python_path')}</label>
           <div class="field-row">
             <input type="text" bind:value={pythonPath} placeholder="(auto-detect python3)" style="flex:1;" />
             <button on:click={doTestPython} disabled={testingPython} style="flex-shrink:0;">
@@ -761,7 +761,7 @@
             <div class="test-result" class:ok={testResult.startsWith('✓')}>{testResult}</div>
           {/if}
 
-          <label>Local model</label>
+          <label>{$t('settings_local_model')}</label>
           <select bind:value={localModelLocal}>
             {#each IF_MODELS as m}
               <option value={m}>{m}</option>
@@ -855,7 +855,7 @@
   <!-- Users Management (admin only) -->
   {#if $currentUser?.role === 'admin' && $backendReady}
   <section class="card">
-    <h3>Users</h3>
+    <h3>{$t('user_management')}</h3>
     {#if usersLoading}
       <p class="hint">Loading…</p>
     {:else}
@@ -918,8 +918,8 @@
 
       <!-- Add new user -->
       <div class="add-user-form">
-        <input type="text"     bind:value={newUserName} placeholder="Username" />
-        <input type="password" bind:value={newUserPass} placeholder="Password" />
+        <input type="text"     bind:value={newUserName} placeholder="{$t('username')}" />
+        <input type="password" bind:value={newUserPass} placeholder="{$t('password')}" />
         <select bind:value={newUserRole}>
           <option value="user">user</option>
           <option value="mediamanager">mediamanager</option>
@@ -927,7 +927,7 @@
         </select>
         <button class="primary small" on:click={doCreateUser}
           disabled={!newUserName.trim() || !newUserPass.trim()}>
-          + Add User
+          + {$t('add_user')}
         </button>
       </div>
       {#if usersMsg}<div class="save-msg" class:error-msg={usersMsg.startsWith('✗')}>{usersMsg}</div>{/if}
@@ -936,7 +936,7 @@
 
   <!-- DB Health (admin only) -->
   <section class="card">
-    <h3>Database Health</h3>
+    <h3>{$t('settings_db_health')}</h3>
     {#if dbStatus}
       <div class="db-status-grid">
         <span class="hint">Path</span>       <span class="db-path-display">{dbStatus.db_path}</span>
@@ -962,11 +962,11 @@
   <!-- Engine status — visible to all users so they can see why uploads fail -->
   {#if engineStatus}
   <section class="card">
-    <h3>Face Recognition Engine</h3>
+    <h3>{$t('settings_engine_section')}</h3>
     <div class="db-status-grid">
       <span class="hint">Status</span>
       <span class:ok={engineStatus.ready} class:error-badge={!engineStatus.ready}>
-        {engineStatus.ready ? '✓ Ready' : '✗ Not ready'}
+        {engineStatus.ready ? $t('settings_engine_ready') : $t('settings_engine_not_ready')}
       </span>
       <span class="hint">Backend</span>  <span class="hint">{engineStatus.backend}</span>
       <span class="hint">Model</span>    <span class="hint">{engineStatus.model}</span>
@@ -1009,7 +1009,7 @@
     {#if isAdmin}
     <div class="field-row" style="margin-top:8px;">
       <button class="small" on:click={doReloadEngine} disabled={engineReloading}>
-        {engineReloading ? '…' : 'Reload Engine'}
+        {engineReloading ? '…' : $t('settings_reload_engine')}
       </button>
       <button class="small" on:click={() => fetchEngineStatus().then(s => { engineStatus = s; engineReloadMsg = ''; })}>
         {$t('logs_refresh')}
@@ -1100,7 +1100,7 @@
         <span>{recThreshold.toFixed(2)}</span>
       </div>
 
-      <label for="setting-det-size">Detection Size</label>
+      <label for="setting-det-size">{$t('settings_det_size')}</label>
       <div class="slider-row">
         <select id="setting-det-size" bind:value={detSize}>
           <option value={320}>320 (Fast)</option>
@@ -1109,7 +1109,7 @@
           <option value={1280}>1280 (High-res)</option>
           <option value={1920}>1920 (Ultra)</option>
         </select>
-        <span class="size-hint">Larger finds smaller faces but is slower.</span>
+        <span class="size-hint">{$t('settings_det_size_hint')}</span>
       </div>
       {/if}
 
@@ -1118,7 +1118,7 @@
       <div>
         {#if !isAdmin && globalDetModelHint}
           <p class="hint" style="margin-bottom:4px;">
-            {$t('det_model_global_hint')}: {$t('det_model_' + (globalDetModelHint || 'auto').replace('-',''))}
+            {$t('det_model_global_hint')}: {$t('det_model_' + (globalDetModelHint || 'auto').replace('-', ''))}
           </p>
         {/if}
         <select id="setting-det-model" bind:value={detModel}>
@@ -1169,14 +1169,14 @@
 
   <!-- Storage -->
   <section class="card">
-    <h3>Storage</h3>
-    <p class="hint">Limit the size of images saved on the server after upload. Useful to save disk space when the originals are kept on your local machine.</p>
+    <h3>{$t('settings_storage_section')}</h3>
+    <p class="hint">{$t('settings_storage_hint')}</p>
     <div class="form-grid" style="margin-top:8px;">
-      <label for="upload-max-dim">Max upload dimension (px)</label>
+      <label for="upload-max-dim">{$t('settings_upload_max_dim')}</label>
       <div style="display:flex;gap:8px;align-items:center;">
         <input id="upload-max-dim" type="number" min="0" step="256"
           bind:value={uploadMaxDim} style="width:100px;" />
-        <span class="hint">{uploadMaxDim > 0 ? `Images resized to ${uploadMaxDim}×${uploadMaxDim} before saving` : 'Full resolution kept (no resize)'}</span>
+        <span class="hint">{uploadMaxDim > 0 ? `${$t('settings_resize_hint')}: ${uploadMaxDim}×${uploadMaxDim}px` : $t('settings_no_resize')}</span>
       </div>
     </div>
   </section>
