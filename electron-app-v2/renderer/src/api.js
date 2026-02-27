@@ -253,26 +253,29 @@ export function streamServerUpdate(root_password, fix_db_path = '') {
   });
 }
 
-/** Return last N lines of the server application log (15 s timeout). */
+/** Return last N lines of the server application log (30 s timeout covers body). */
 export async function fetchServerLogs(lines = 300) {
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 15000);
+  // Keep the timeout active through res.json() — not just the headers phase.
+  const tid = setTimeout(() => controller.abort(), 30000);
   try {
     const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
       credentials: 'include',
       signal: controller.signal,
     });
-    clearTimeout(tid);
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
       let detail = text;
       try { detail = JSON.parse(text).detail || text; } catch { /* keep raw */ }
+      clearTimeout(tid);
       throw new Error(`[HTTP ${res.status}] ${detail}`);
     }
-    return res.json();
+    const data = await res.json();   // timeout still armed while reading body
+    clearTimeout(tid);
+    return data;
   } catch (e) {
     clearTimeout(tid);
-    if (e.name === 'AbortError') throw new Error('Request timed out after 15 s');
+    if (e.name === 'AbortError') throw new Error('Request timed out (30 s) — check Apache mod_deflate');
     throw e;
   }
 }
