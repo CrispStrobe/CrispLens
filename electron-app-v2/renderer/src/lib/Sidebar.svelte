@@ -4,20 +4,20 @@
 
   $: navItems = [
     { id: 'all',      icon: '📷', label: $t('tab_browse') },
-    { id: 'albums',   icon: '📚', label: 'Albums' },
-    { id: 'events',   icon: '🗓', label: 'Events' },
+    { id: 'albums',   icon: '📚', label: $t('tab_albums') },
+    { id: 'events',   icon: '🗓', label: $t('tab_events') },
     { id: 'people',   icon: '👤', label: $t('tab_people') },
     { id: 'tags',     icon: '🏷', label: $t('tab_tags') },
     { id: 'dates',    icon: '📅', label: $t('tab_timeline') },
     { id: 'folders',  icon: '📁', label: $t('tab_folders') },
   ];
   $: workItems = [
-    { id: 'identify',      icon: '🔍', label: 'Identify' },
+    { id: 'identify',      icon: '🔍', label: $t('tab_identify') },
     { id: 'generate',      icon: '✨', label: $t('tab_generate') },
-    { id: 'faceclusters',  icon: '🫂', label: 'Face Clusters' },
-    { id: 'filesystem',    icon: '💾', label: 'Filesystem' },
-    { id: 'watchfolders',  icon: '📡', label: 'Watch Folders' },
-    { id: 'duplicates',    icon: '🔁', label: 'Duplicates' },
+    { id: 'faceclusters',  icon: '🫂', label: $t('tab_faceclusters') },
+    { id: 'filesystem',    icon: '💾', label: $t('tab_filesystem') },
+    { id: 'watchfolders',  icon: '📡', label: $t('tab_watchfolders') },
+    { id: 'duplicates',    icon: '🔁', label: $t('tab_duplicates') },
     { id: 'clouddrives',   icon: '☁️', label: $t('cloud_drives') },
   ];
   $: toolItems = [
@@ -67,7 +67,7 @@
   {/each}
 
   <div class="divider"></div>
-  {#if !$sidebarCollapsed}<div class="section-label">Ingest</div>{/if}
+  {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_ingest')}</div>{/if}
 
   {#each workItems as item}
     <button
@@ -113,7 +113,7 @@
   <button
     class="collapse-btn"
     on:click={() => sidebarCollapsed.update(v => !v)}
-    title={$sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+    title={$sidebarCollapsed ? $t('sidebar_expand') : $t('sidebar_collapse')}
   >
     {$sidebarCollapsed ? '›' : '‹'}
   </button>
