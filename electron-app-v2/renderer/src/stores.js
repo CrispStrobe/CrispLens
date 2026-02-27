@@ -358,6 +358,23 @@ const EN = {
   // Detection model selector (shared)
   rescan_mode_both: 'Both', rescan_mode_faces: 'Faces', rescan_mode_vlm: 'VLM',
   also_run_vlm: 'Also refresh VLM',
+  // Admin — server management
+  admin_server_mgmt:   'Server Management',
+  admin_update_server: 'Update Server',
+  admin_view_logs:     'View Logs',
+  admin_run_update:    'Run Update',
+  update_modal_hint:   'This will run fix_db.sh as root (git pull + DB migrations + service restart). The connection will drop when the server restarts.',
+  root_password:       'Root password',
+  running:             'Running…',
+  admin_logs_title:    'Server Logs',
+  logs_refresh:        'Refresh',
+  logs_follow:         'Follow',
+  logs_path:           'Log file',
+  // Admin — copy-exempt paths
+  exempt_paths_label:  'Copy-exempt server paths',
+  exempt_paths_hint:   'Files uploaded from these server paths are recorded in-place (no copy to uploads/).',
+  fix_db_path_label:   'fix_db.sh path',
+  fix_db_path_hint:    'Full path to fix_db.sh on the server.',
 };
 
 export const TRANSLATIONS = {
@@ -671,6 +688,23 @@ export const TRANSLATIONS = {
     // Detection model selector (shared)
     rescan_mode_both: 'Beides', rescan_mode_faces: 'Gesichter', rescan_mode_vlm: 'VLM',
     also_run_vlm: 'Auch VLM aktualisieren',
+    // Admin — server management
+    admin_server_mgmt:   'Server-Verwaltung',
+    admin_update_server: 'Server aktualisieren',
+    admin_view_logs:     'Logs anzeigen',
+    admin_run_update:    'Update starten',
+    update_modal_hint:   'Führt fix_db.sh als root aus (git pull + DB-Migrationen + Neustart). Die Verbindung wird beim Neustart unterbrochen.',
+    root_password:       'Root-Passwort',
+    running:             'Läuft…',
+    admin_logs_title:    'Server-Logs',
+    logs_refresh:        'Aktualisieren',
+    logs_follow:         'Folgen',
+    logs_path:           'Log-Datei',
+    // Admin — copy-exempt paths
+    exempt_paths_label:  'Kopier-Ausnahmepfade',
+    exempt_paths_hint:   'Dateien von diesen Server-Pfaden werden direkt in der DB registriert (keine Kopie nach uploads/).',
+    fix_db_path_label:   'fix_db.sh Pfad',
+    fix_db_path_hint:    'Vollständiger Pfad zu fix_db.sh auf dem Server.',
   },
 };
 

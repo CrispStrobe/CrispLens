@@ -506,8 +506,9 @@ def _start_background_scanner():
 
 # ─── Include routers ──────────────────────────────────────────────────────────
 
-from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives, bfl_edit
+from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives, bfl_edit, admin as admin_router
 
+app.include_router(admin_router.router)   # prefix already set to /api/admin in the router
 app.include_router(images.router,       prefix="/api/images",        tags=["images"])
 app.include_router(users.router,        prefix="/api/users",         tags=["users"])
 app.include_router(people.router,       prefix="/api/people",        tags=["people"])

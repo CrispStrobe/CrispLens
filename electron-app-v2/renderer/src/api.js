@@ -236,6 +236,28 @@ export function fetchDbStatus()                     { return get('/settings/db-s
 export function fetchEngineStatus()                 { return get('/settings/engine-status'); }
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
 export function fetchUserVlmPrefs()                 { return get('/settings/user-vlm'); }
+
+// ── Admin operations ──────────────────────────────────────────────────────────
+
+/**
+ * Stream the server update (fix_db.sh) output.
+ * Returns a native Response whose body is an SSE stream.
+ * The caller reads from response.body (ReadableStream).
+ */
+export function streamServerUpdate(root_password, fix_db_path = '') {
+  return fetch(`${BASE}/admin/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ root_password, fix_db_path }),
+  });
+}
+
+/** Return last N lines of the server application log. */
+export function fetchServerLogs(lines = 300) {
+  return get(`/admin/logs?lines=${lines}`);
+}
+
 export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }
 export function fetchUserDetPrefs()                 { return get('/settings/user-detection'); }
 export function saveUserDetPrefs(prefs)             { return put('/settings/user-detection', prefs); }

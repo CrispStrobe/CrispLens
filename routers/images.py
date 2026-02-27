@@ -21,6 +21,11 @@ from image_ops import (
     update_image_metadata,
 )
 from routers.deps import can_access_image, get_current_user, require_admin_or_mediamanager
+
+# Thumbnails are keyed by (image_id, size) — content is effectively immutable
+# per URL. Cache for 1 day; stale-while-revalidate lets the browser serve cached
+# copy while ETag is verified in the background.
+_THUMB_CACHE = {'Cache-Control': 'public, max-age=86400, stale-while-revalidate=3600'}
 from routers.settings import get_effective_vlm_provider
 
 logger = logging.getLogger(__name__)
@@ -203,14 +208,14 @@ def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
     # Try disk-cached thumbnail first
     thumb_path = Path(s.thumb_dir) / f"{image_id}_{size}.jpg"
     if thumb_path.exists():
-        return FileResponse(str(thumb_path), media_type="image/jpeg")
+        return FileResponse(str(thumb_path), media_type="image/jpeg", headers=_THUMB_CACHE)
 
     # If source file exists on disk, generate thumbnail
     if filepath and Path(filepath).exists():
         thumb = get_or_create_thumbnail(image_id, filepath, s.thumb_dir, size)
         if thumb and Path(thumb).exists():
-            return FileResponse(thumb, media_type="image/jpeg")
-        return FileResponse(filepath)
+            return FileResponse(thumb, media_type="image/jpeg", headers=_THUMB_CACHE)
+        return FileResponse(filepath, headers=_THUMB_CACHE)
 
     # Fallback: serve thumbnail_blob stored in DB
     import sqlite3 as _sqlite3

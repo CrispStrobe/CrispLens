@@ -192,8 +192,26 @@ async def upload_local(
         return {'image_id': _shared['id'], 'face_count': _shared['face_count'],
                 'skipped': True, 'shared_duplicate': True}
 
-    with open(perm_path, 'wb') as fh:
-        fh.write(data)
+    # ── Exempt-path skip-copy ─────────────────────────────────────────────────
+    # If the uploading client is on the same machine as the server and the file
+    # is already on a server-accessible path (e.g. /mnt/…), skip writing a copy
+    # to uploads/ and point the DB record at the original path instead.
+    _exempt = (s.config or {}).get('storage', {}).get('copy_exempt_paths', ['/mnt'])
+    _is_exempt = bool(
+        local_path
+        and os.path.isfile(local_path)
+        and any(
+            os.path.normpath(local_path).startswith(os.path.normpath(p) + os.sep)
+            or os.path.normpath(local_path) == os.path.normpath(p)
+            for p in _exempt
+        )
+    )
+    if _is_exempt:
+        perm_path = local_path   # use source path directly — no copy
+        logger.info('upload_local: exempt path — skipping copy, using %r as filepath', perm_path)
+    else:
+        with open(perm_path, 'wb') as fh:
+            fh.write(data)
 
     try:
         # Normal VPS processing (filepath stored in DB = perm_path — stays on disk)
@@ -251,10 +269,11 @@ async def upload_local(
     except HTTPException:
         raise
     except Exception:
-        try:
-            os.unlink(perm_path)
-        except OSError:
-            pass
+        if not _is_exempt:
+            try:
+                os.unlink(perm_path)
+            except OSError:
+                pass
         raise
 
 

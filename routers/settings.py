@@ -24,19 +24,24 @@ def _state():
 
 
 class SettingsPatch(BaseModel):
-    language:              Optional[str]   = None
-    backend:               Optional[str]   = None
-    model:                 Optional[str]   = None
-    det_threshold:         Optional[float] = None
-    rec_threshold:         Optional[float] = None
-    det_size:              Optional[int]   = None
-    det_model:             Optional[str]   = None   # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
-    vlm_provider:          Optional[str]   = None
-    vlm_model:             Optional[str]   = None
-    vlm_enabled:           Optional[bool]  = None
+    language:              Optional[str]        = None
+    backend:               Optional[str]        = None
+    model:                 Optional[str]        = None
+    det_threshold:         Optional[float]      = None
+    rec_threshold:         Optional[float]      = None
+    det_size:              Optional[int]        = None
+    det_model:             Optional[str]        = None   # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
+    vlm_provider:          Optional[str]        = None
+    vlm_model:             Optional[str]        = None
+    vlm_enabled:           Optional[bool]       = None
     # Storage: if set, uploaded images are resized to this max dimension before saving.
     # 0 = keep full resolution (default).
-    upload_max_dimension:  Optional[int]   = None
+    upload_max_dimension:  Optional[int]        = None
+    # Admin: paths that are already on the server — uploaded files from these locations
+    # are recorded in-place (no copy to uploads/).  Default: ['/mnt']
+    copy_exempt_paths:     Optional[list]       = None
+    # Admin: path to fix_db.sh for the one-click server update feature.
+    fix_db_path:           Optional[str]        = None
 
 
 _DE: dict = {
@@ -239,6 +244,15 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
 
     if body.upload_max_dimension is not None:
         config.setdefault('storage', {})['upload_max_dimension'] = body.upload_max_dimension
+
+    # Admin-only storage + admin config keys
+    if body.copy_exempt_paths is not None or body.fix_db_path is not None:
+        if user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+        if body.copy_exempt_paths is not None:
+            config.setdefault('storage', {})['copy_exempt_paths'] = body.copy_exempt_paths
+        if body.fix_db_path is not None:
+            config.setdefault('admin', {})['fix_db_path'] = body.fix_db_path
 
     # Strip legacy plaintext keys
     config.get('vlm', {}).get('api', {}).pop('key', None)

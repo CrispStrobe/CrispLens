@@ -331,7 +331,7 @@ def get_face_crop(
 
 
 @router.post("/assign-cluster")
-def assign_cluster(body: AssignClusterRequest, _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+def assign_cluster(body: AssignClusterRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
     """
     Assign person_name to a list of face_ids.
     Creates or finds the person, then calls reassign_face for each face.

@@ -175,6 +175,8 @@ else
         apply_migration "users.vlm_enabled"   "ALTER TABLE users ADD COLUMN vlm_enabled INTEGER;"
         apply_migration "users.vlm_provider"  "ALTER TABLE users ADD COLUMN vlm_provider TEXT;"
         apply_migration "users.vlm_model"     "ALTER TABLE users ADD COLUMN vlm_model TEXT;"
+        # users table — per-user detection model override (added 2026-02-24)
+        apply_migration "users.det_model"     "ALTER TABLE users ADD COLUMN det_model TEXT;"
 
         # faces table
         apply_migration "faces.face_quality"  "ALTER TABLE faces ADD COLUMN face_quality REAL DEFAULT 1.0;"
@@ -276,7 +278,7 @@ for _col in local_path owner_id visibility phash; do
 done
 
 USERS_COLS=$(run_sql "PRAGMA table_info(users);" 2>/dev/null | awk -F'|' '{print $2}' | tr '\n' ' ' || true)
-for _col in vlm_enabled vlm_provider vlm_model; do
+for _col in vlm_enabled vlm_provider vlm_model det_model; do
     if echo "$USERS_COLS" | grep -q "$_col"; then
         info "Verified: users.${_col} column exists"
     else

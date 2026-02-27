@@ -12,6 +12,8 @@
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags, fetchAlbums } from '../api.js';
+  import ServerUpdateModal from './ServerUpdateModal.svelte';
+  import ServerLogsModal   from './ServerLogsModal.svelte';
 
   // ── Config state ──────────────────────────────────────────────────────────
   let cfg = null;
@@ -32,6 +34,11 @@
   let vlmProvider  = 'anthropic';
   let vlmModel     = '';
   let uploadMaxDim = 0; // 0 = keep full resolution
+  // Admin — server management
+  let showUpdateModal = false;
+  let showLogsModal   = false;
+  let exemptPaths     = ['/mnt'];
+  let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
   let globalDetModelHint = null; // for non-admin hint
 
@@ -58,6 +65,8 @@
       const ds     = c?.face_recognition?.insightface?.det_size ?? [640, 640];
       detSize      = Array.isArray(ds) ? ds[0] : ds;
       uploadMaxDim = c?.storage?.upload_max_dimension ?? 0;
+      exemptPaths  = c?.storage?.copy_exempt_paths ?? ['/mnt'];
+      fixDbPath    = c?.admin?.fix_db_path ?? '';
       if ($currentUser?.role === 'admin') {
         // Admin edits global VLM defaults directly
         vlmEnabled  = c?.vlm?.enabled ?? false;
@@ -289,6 +298,8 @@
             vlm_provider: vlmProvider,
             vlm_model: vlmModel || null,
             upload_max_dimension: uploadMaxDim,
+            copy_exempt_paths:    exemptPaths.filter(p => p.trim()),
+            fix_db_path:          fixDbPath.trim(),
           });
         } else {
           // Non-admin saves language + upload settings to global config
@@ -521,11 +532,13 @@
   // ── Language change — reload translations ─────────────────────────────────
   async function applyLanguage(newLang) {
     language = newLang;
-    // Apply from local dict immediately for instant feedback
+    // Apply from local dict immediately for instant feedback.
+    // Always merge on top of EN so keys missing from DE fall back to English.
     const local = TRANSLATIONS[newLang];
+    const base  = TRANSLATIONS.en;
     if (local) {
       lang.set(newLang);
-      translations.set(local);
+      translations.set({ ...base, ...local });
       sessionStorage.removeItem('i18n_cache');
     }
     // Then sync with server (also persists config.yaml on save)
@@ -534,7 +547,7 @@
         const data = await fetchTranslations();
         lang.set(data.lang);
         if (data.translations && Object.keys(data.translations).length > 0) {
-          translations.set(data.translations);
+          translations.set({ ...base, ...data.translations });
         }
         sessionStorage.setItem('i18n_cache', JSON.stringify(data));
       } catch { /* ignore */ }
@@ -999,13 +1012,50 @@
         {engineReloading ? '…' : 'Reload Engine'}
       </button>
       <button class="small" on:click={() => fetchEngineStatus().then(s => { engineStatus = s; engineReloadMsg = ''; })}>
-        Refresh
+        {$t('logs_refresh')}
       </button>
     </div>
     {#if engineReloadMsg}
       <div class="save-msg" class:error-msg={engineReloadMsg.startsWith('✗')}>{engineReloadMsg}</div>
     {/if}
     {/if}
+  </section>
+  {/if}
+
+  <!-- Server management (admin only) -->
+  {#if isAdmin}
+  <section class="card">
+    <h3>{$t('admin_server_mgmt')}</h3>
+    <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+      <button class="primary small" on:click={() => showUpdateModal = true}>
+        🔄 {$t('admin_update_server')}
+      </button>
+      <button class="small" on:click={() => showLogsModal = true}>
+        📋 {$t('admin_view_logs')}
+      </button>
+    </div>
+
+    <div class="form-grid" style="margin-top:14px;">
+      <label>{$t('fix_db_path_label')}</label>
+      <div>
+        <input type="text" bind:value={fixDbPath} placeholder="/root/CrispLense/fix_db.sh" style="width:100%;box-sizing:border-box;" />
+        <div class="hint">{$t('fix_db_path_hint')}</div>
+      </div>
+
+      <label>{$t('exempt_paths_label')}</label>
+      <div>
+        <div class="hint" style="margin-bottom:6px;">{$t('exempt_paths_hint')}</div>
+        {#each exemptPaths as _, i}
+          <div class="path-row">
+            <input type="text" bind:value={exemptPaths[i]} placeholder="/mnt" />
+            <button class="small" on:click={() => exemptPaths = exemptPaths.filter((__, j) => j !== i)}>✕</button>
+          </div>
+        {/each}
+        <button class="small" style="margin-top:4px;" on:click={() => exemptPaths = [...exemptPaths, '']}>
+          + {$t('add')}
+        </button>
+      </div>
+    </div>
   </section>
   {/if}
 
@@ -1139,6 +1189,7 @@
   <!-- API Keys -->
   <section class="card">
     <h3>{$t('vlm_api_key')}</h3>
+
     {#if $currentUser?.role === 'user'}
       <p class="hint" style="margin-bottom: 8px;">As a regular user you have access to EU-hosted providers only.</p>
     {/if}
@@ -1196,6 +1247,9 @@
     {/each}
   </section>
 </div>
+
+<ServerUpdateModal bind:show={showUpdateModal} />
+<ServerLogsModal   bind:show={showLogsModal} />
 
 <style>
   .settings-view {
@@ -1339,4 +1393,10 @@
 
   /* API key test result */
   .key-msg-err { color: #e08080 !important; }
+
+  /* Exempt paths list editor */
+  .path-row {
+    display: flex; gap: 6px; align-items: center; margin-bottom: 4px;
+  }
+  .path-row input { flex: 1; }
 </style>
