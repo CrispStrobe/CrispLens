@@ -153,7 +153,17 @@ const EN = {
   zoom_in: 'Zoom in', zoom_out: 'Zoom out', fit_to_screen: 'Fit to screen',
   press_esc_to_close: 'Press Esc to close', close: 'Close',
   run_detection: 'Run detection', remove_detection: 'Remove detection',
+  run_vlm_only: 'Run VLM only',
   min_face_size: 'Min Face Size',
+  // Detection model labels
+  det_model_auto: 'Auto (default)',
+  det_model_retinaface: 'RetinaFace',
+  det_model_scrfd: 'SCRFD',
+  det_model_yunet: 'YuNet',
+  det_model_mediapipe: 'MediaPipe',
+  det_model_none: 'None (VLM only)',
+  // Generate / BFL
+  gen_seed_random: 'random',
   // Misc
   apply: 'Apply', apply_to_all: 'Apply to all', apply_to_selected: 'Apply to selected',
   skip: 'Skip', rescan: 'Rescan', scanning: 'Scanning…', save_all: 'Save all',
@@ -445,7 +455,17 @@ export const TRANSLATIONS = {
     zoom_in: 'Vergrößern', zoom_out: 'Verkleinern', fit_to_screen: 'Bildschirm füllen',
     press_esc_to_close: 'Esc zum Schließen', close: 'Schließen',
     run_detection: 'Erkennung starten', remove_detection: 'Erkennung entfernen',
+    run_vlm_only: 'Nur VLM ausführen',
     min_face_size: 'Min. Gesichtsgröße',
+    // Detection model labels
+    det_model_auto: 'Auto (Standard)',
+    det_model_retinaface: 'RetinaFace',
+    det_model_scrfd: 'SCRFD',
+    det_model_yunet: 'YuNet',
+    det_model_mediapipe: 'MediaPipe',
+    det_model_none: 'Keines (nur VLM)',
+    // Generate / BFL
+    gen_seed_random: 'zufällig',
     // Misc
     apply: 'Anwenden', apply_to_all: 'Auf alle anwenden', apply_to_selected: 'Auf Auswahl anwenden',
     skip: 'Überspringen', rescan: 'Neu scannen', scanning: 'Scannt…', save_all: 'Alle speichern',

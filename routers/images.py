@@ -572,8 +572,25 @@ def do_delete_face(image_id: int, face_id: int, user=Depends(get_current_user)):
 @router.post("/{image_id}/re-detect")
 def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_user)):
     from image_ops import re_detect_faces
+    import sqlite3 as _sqlite3
     s = _state()
     _check_modify(image_id, user, s.db_path)
+
+    # "none" = VLM-only: run VLM enrichment without touching face data
+    if body.det_model == 'none':
+        vlm_prov = get_effective_vlm_provider(user, s)
+        if not vlm_prov:
+            raise HTTPException(status_code=400, detail="VLM provider not configured — add in Settings")
+        conn = _sqlite3.connect(s.db_path, timeout=5.0)
+        conn.row_factory = _sqlite3.Row
+        row = conn.execute("SELECT filepath FROM images WHERE id=?", (image_id,)).fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Image not found")
+        result = s.engine.process_image(row['filepath'], vlm_provider=vlm_prov,
+                                        skip_faces=True, force=True)
+        return {"ok": True, "message": "VLM enrichment complete", "result": result}
+
     vlm_prov = None if body.skip_vlm else get_effective_vlm_provider(user, s)
     ok, msg, result = re_detect_faces(
         s.db_path, image_id,

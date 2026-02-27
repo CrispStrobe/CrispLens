@@ -205,7 +205,7 @@
       <div class="row">
         <div class="field">
           <label class="field-label">{$t('bfl_seed')}</label>
-          <input type="number" bind:value={seed} min="0" placeholder="random" disabled={loading} style="width:100px" />
+          <input type="number" bind:value={seed} min="0" placeholder={$t('gen_seed_random')} disabled={loading} style="width:100px" />
         </div>
       </div>
 
@@ -213,7 +213,7 @@
       <input
         type="text"
         bind:value={folder}
-        placeholder="default: data_dir/generated/"
+        placeholder={$t('gen_output_folder_hint')}
         disabled={loading}
         class="wide-input"
       />

@@ -95,7 +95,11 @@
     { value: 'scrfd',      label: 'det_model_scrfd' },
     { value: 'yunet',      label: 'det_model_yunet' },
     { value: 'mediapipe',  label: 'det_model_mediapipe' },
+    { value: 'none',       label: 'det_model_none' },
   ];
+
+  // When "none (VLM only)" is selected, VLM must run — force the toggle on
+  $: if (detModel === 'none') alsoRunVlm = true;
 
   async function onSvgMouseUp() {
     if (!isDrawing) return;
@@ -466,12 +470,12 @@
             <input id="id-max-size-e" type="number" bind:value={maxSize}
               min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
           </div>
-          <label class="vlm-toggle">
-            <input type="checkbox" bind:checked={alsoRunVlm} />
+          <label class="vlm-toggle" class:forced={detModel === 'none'}>
+            <input type="checkbox" bind:checked={alsoRunVlm} disabled={detModel === 'none'} />
             {$t('also_run_vlm')}
           </label>
           <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
-            {reDetecting ? $t('scanning') : $t('run_detection')}
+            {reDetecting ? $t('scanning') : detModel === 'none' ? $t('run_vlm_only') : $t('run_detection')}
           </button>
         </div>
 
@@ -575,12 +579,12 @@
               <input id="id-max-size" type="number" bind:value={maxSize}
                 min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
             </div>
-            <label class="vlm-toggle">
-              <input type="checkbox" bind:checked={alsoRunVlm} />
+            <label class="vlm-toggle" class:forced={detModel === 'none'}>
+              <input type="checkbox" bind:checked={alsoRunVlm} disabled={detModel === 'none'} />
               {$t('also_run_vlm')}
             </label>
             <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
-              {reDetecting ? $t('scanning') : $t('run_detection')}
+              {reDetecting ? $t('scanning') : detModel === 'none' ? $t('run_vlm_only') : $t('run_detection')}
             </button>
           </div>
         {/if}
