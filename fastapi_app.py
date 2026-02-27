@@ -100,6 +100,8 @@ _PUBLIC_API_PATHS: set = {
 
 from starlette.responses import JSONResponse as _JSONResponse
 
+_mw_logger = logging.getLogger('fastapi_app.auth_middleware')
+
 @app.middleware("http")
 async def require_auth_middleware(request, call_next):
     path = request.url.path
@@ -114,14 +116,23 @@ async def require_auth_middleware(request, call_next):
         return await call_next(request)
     # All other /api/* paths require a valid, non-expired session
     session_token = request.cookies.get('session')
+    _mw_logger.info(
+        "auth_middleware: %s %s  cookie_present=%s  token_prefix=%r",
+        request.method, path,
+        bool(session_token),
+        session_token[:8] + '…' if session_token and len(session_token) > 8 else session_token,
+    )
     if session_token:
         # Lazy import to avoid circular import at module load time
         try:
             from routers.auth import _get_session_user
-            if _get_session_user(session_token) is not None:
+            username = _get_session_user(session_token)
+            _mw_logger.info("auth_middleware: _get_session_user → %r", username)
+            if username is not None:
                 return await call_next(request)
-        except Exception:
-            pass
+        except Exception as exc:
+            _mw_logger.error("auth_middleware: exception in _get_session_user: %s", exc, exc_info=True)
+    _mw_logger.warning("auth_middleware: REJECTED %s %s  cookie_present=%s", request.method, path, bool(session_token))
     return _JSONResponse({'detail': 'Authentication required'}, status_code=401)
 
 # ─── Shared application state ─────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import os
 import subprocess
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from routers.deps import require_admin
@@ -180,14 +180,21 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.info("admin.get_server_logs: FOUND log file at %s", log_file)
             break
 
+    # Tell nginx never to buffer this response — without this the browser's fetch()
+    # keeps waiting for the body even though uvicorn has already sent it.
+    _NO_BUF = {"X-Accel-Buffering": "no", "Cache-Control": "no-store"}
+
     if not log_file:
         tried = ', '.join(unique[:5])
         logger.warning("admin.get_server_logs: log file not found; tried: %s", tried)
-        return {
-            "lines": [],
-            "path": unique[0] if unique else '(none)',
-            "error": f"Log file not found. Tried paths: {tried}",
-        }
+        return JSONResponse(
+            content={
+                "lines": [],
+                "path": unique[0] if unique else '(none)',
+                "error": f"Log file not found. Tried paths: {tried}",
+            },
+            headers=_NO_BUF,
+        )
 
     try:
         logger.info("admin.get_server_logs: reading last %d lines from %s", lines, log_file)
@@ -195,7 +202,7 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             tail = list(collections.deque(fh, maxlen=lines))
         result = [l.rstrip() for l in tail]
         logger.info("admin.get_server_logs: returning %d lines", len(result))
-        return {"lines": result, "path": log_file}
+        return JSONResponse(content={"lines": result, "path": log_file}, headers=_NO_BUF)
     except Exception as exc:
         logger.error("admin.get_server_logs: error reading %s: %s", log_file, exc, exc_info=True)
-        return {"lines": [], "path": log_file, "error": str(exc)}
+        return JSONResponse(content={"lines": [], "path": log_file, "error": str(exc)}, headers=_NO_BUF)
