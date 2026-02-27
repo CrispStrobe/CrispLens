@@ -283,11 +283,31 @@
   const ASPECT_RATIOS = ['', '1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
 
   // ── Generate state ────────────────────────────────────────────────────────
-  let genPrompt  = '';
-  let genAspect  = '1:1';
-  let genSeed    = '';
-  let genFolder  = '';
-  let genPrefix  = 'generated';
+  let genPrompt        = '';
+  let genModel         = 'flux-kontext-pro';
+  let genAspect        = '1:1';
+  let genW             = 1024;
+  let genH             = 1024;
+  let genSteps         = 50;
+  let genGuidance      = 4.5;
+  let genSeed          = '';
+  let genFolder        = '';
+  let genPrefix        = 'generated';
+  let genIncludeImage  = false;   // send imageId as input_image reference
+
+  const GEN_MODELS = [
+    { group: 'FLUX.1', value: 'flux-kontext-pro', label: 'Flux Kontext Pro' },
+    { group: 'FLUX.1', value: 'flux-pro-1.1',     label: 'Flux Pro 1.1' },
+    { group: 'FLUX.1', value: 'flux-pro',         label: 'Flux Pro' },
+    { group: 'FLUX.1', value: 'flux-dev',         label: 'Flux Dev (experimental)' },
+    { group: 'FLUX.2', value: 'flux-2-klein-4b',  label: 'Flux 2 Klein 4B (sub-second)' },
+    { group: 'FLUX.2', value: 'flux-2-klein-9b',  label: 'Flux 2 Klein 9B (fast)' },
+    { group: 'FLUX.2', value: 'flux-2-pro',       label: 'Flux 2 Pro' },
+    { group: 'FLUX.2', value: 'flux-2-max',       label: 'Flux 2 Max (best quality)' },
+    { group: 'FLUX.2', value: 'flux-2-flex',      label: 'Flux 2 Flex (adjustable)' },
+  ];
+  $: genIsFlux2 = genModel.startsWith('flux-2-');
+  $: genIsFlex  = genModel === 'flux-2-flex';
 
   // ── Shared state ──────────────────────────────────────────────────────────
   let saveAs = 'new_file';
@@ -454,10 +474,18 @@
       } else {
         r = await generateImage({
           prompt:          genPrompt,
-          aspect_ratio:    genAspect,
+          model:           genModel,
+          // FLUX.1: aspect_ratio; FLUX.2: width/height
+          ...(genIsFlux2
+            ? { width: genW, height: genH }
+            : { aspect_ratio: genAspect || '1:1' }),
+          // FLUX.2 flex: steps + guidance
+          ...(genIsFlex ? { steps: genSteps, guidance: genGuidance } : {}),
           seed:            genSeed ? parseInt(genSeed, 10) : null,
           output_folder:   genFolder,
           filename_prefix: genPrefix,
+          // Optional reference image from current lightbox/gallery image
+          image_id:        genIncludeImage ? imageId : undefined,
         });
       }
       result = r;
@@ -507,47 +535,47 @@
 
           <!-- Without-DB actions -->
           <div class="action-group">
-            <div class="action-group-label">Ohne DB</div>
+            <div class="action-group-label">{$t('done_without_db')}</div>
             <div class="action-row">
               <button on:click={doViewRaw}
                 disabled={!result.filepath || (!previewBlob && !result.new_image_id)}>
-                👁 Ansehen (kein DB)
+                👁 {$t('done_view_raw')}
               </button>
               <button on:click={doDownload}
                 disabled={!result.filepath}>
-                ⬇ Download (kein DB)
+                ⬇ {$t('done_download_raw')}
               </button>
             </div>
           </div>
 
           <!-- Add to DB actions -->
           <div class="action-group">
-            <div class="action-group-label">In DB speichern</div>
+            <div class="action-group-label">{$t('done_save_to_db')}</div>
             <div class="action-row">
               <button class="primary"
                 on:click={() => doAddToDB('gallery')}
                 disabled={registering}
-                title="In DB eintragen und in Galerie anzeigen">
+                title={$t('done_save_gallery_title')}>
                 {registering ? '…' : '🖼'} {$t('gen_view_in_gallery')}
               </button>
               <button class="primary"
                 on:click={() => doAddToDB('lightbox')}
                 disabled={registering}
-                title="In DB eintragen und Bild öffnen">
+                title={$t('done_save_lightbox_title')}>
                 {registering ? '…' : '🔍'} {$t('view')}
               </button>
               <button
                 on:click={() => doAddToDB('silent')}
                 disabled={registering}
-                title="In DB eintragen und Modal schließen">
-                {registering ? '…' : '➕'} Nur speichern
+                title={$t('done_save_silent_title')}>
+                {registering ? '…' : '➕'} {$t('done_save_only')}
               </button>
             </div>
           </div>
 
           <!-- Generate another / close -->
           <div class="action-row">
-            <button on:click={doGenerateAnother}>🔄 Nochmals generieren</button>
+            <button on:click={doGenerateAnother}>🔄 {$t('done_generate_another')}</button>
             <button on:click={handleClose}>{$t('close')}</button>
           </div>
         </div>
@@ -655,7 +683,9 @@
           {:else if imageId}
             <img src={thumbnailUrl(imageId, 200)} alt={imageFilename} class="thumb" />
             {#if tab === 'generate'}
-              <div class="ref-hint">{$t('bfl_gen_hint')}</div>
+              <div class="ref-hint">
+                {genIncludeImage ? $t('bfl_gen_hint_include') : $t('bfl_gen_hint')}
+              </div>
             {/if}
           {/if}
         </div>
@@ -733,14 +763,58 @@
               <textarea bind:value={genPrompt} rows="3" placeholder={$t('bfl_gen_prompt')}></textarea>
             </div>
             <div class="row">
-              <span class="lbl">{$t('bfl_aspect_ratio')}</span>
-              <select bind:value={genAspect}>
-                {#each ASPECT_RATIOS.filter(a => a) as ar}
-                  <option value={ar}>{ar}</option>
-                {/each}
+              <span class="lbl">{$t('bfl_model')}</span>
+              <select bind:value={genModel}>
+                <optgroup label="FLUX.1">
+                  {#each GEN_MODELS.filter(m => m.group === 'FLUX.1') as m}
+                    <option value={m.value}>{m.label}</option>
+                  {/each}
+                </optgroup>
+                <optgroup label="FLUX.2">
+                  {#each GEN_MODELS.filter(m => m.group === 'FLUX.2') as m}
+                    <option value={m.value}>{m.label}</option>
+                  {/each}
+                </optgroup>
               </select>
-              <span class="lbl ml">{$t('bfl_seed')}</span>
+            </div>
+            {#if genIsFlux2}
+              <!-- FLUX.2: width + height in pixels -->
+              <div class="row">
+                <span class="lbl">{$t('bfl_width')}</span>
+                <input type="number" bind:value={genW} min="64" max="2048" step="16" class="num-in wide" />
+                <span class="lbl ml">{$t('bfl_height')}</span>
+                <input type="number" bind:value={genH} min="64" max="2048" step="16" class="num-in wide" />
+              </div>
+              {#if genIsFlex}
+                <!-- FLUX.2 Flex: steps + guidance -->
+                <div class="row">
+                  <span class="lbl">{$t('bfl_steps')}</span>
+                  <input type="number" bind:value={genSteps} min="1" max="50" class="num-in wide" />
+                  <span class="lbl ml">{$t('bfl_guidance')}</span>
+                  <input type="number" bind:value={genGuidance} min="1.5" max="10" step="0.5" class="num-in wide" />
+                </div>
+              {/if}
+            {:else}
+              <!-- FLUX.1 Kontext / flux-pro*: aspect ratio -->
+              <div class="row">
+                <span class="lbl">{$t('bfl_aspect_ratio')}</span>
+                <select bind:value={genAspect}>
+                  {#each ASPECT_RATIOS.filter(a => a) as ar}
+                    <option value={ar}>{ar}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+            <div class="row">
+              <span class="lbl">{$t('bfl_seed')}</span>
               <input type="number" bind:value={genSeed} min="0" placeholder="random" class="num-in wide" />
+            </div>
+            <!-- Include source image as reference -->
+            <div class="row">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={genIncludeImage} />
+                {$t('bfl_include_ref_image')}
+              </label>
             </div>
             <div class="row col">
               <span class="lbl">{$t('bfl_output_folder')}</span>
@@ -1015,6 +1089,7 @@
     font-size: 12px;
   }
   .radio { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #c0c8e0; }
+  .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #c0c8e0; cursor: pointer; }
 
   .error {
     color: #ff8080;

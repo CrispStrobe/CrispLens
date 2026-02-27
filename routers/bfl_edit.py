@@ -40,13 +40,25 @@ GENERATE_MODELS  = [
     "flux-pro-1.1",
     "flux-pro",
     "flux-dev",
+    "flux-2-klein-4b",
+    "flux-2-klein-9b",
+    "flux-2-pro",
+    "flux-2-max",
+    "flux-2-flex",
 ]
 GENERATE_ENDPOINTS = {
     "flux-kontext-pro": "/flux-kontext-pro",
     "flux-pro-1.1":     "/flux-pro-1.1",
     "flux-pro":         "/flux-pro",
     "flux-dev":         "/flux-dev",
+    "flux-2-klein-4b":  "/flux-2-klein-4b",
+    "flux-2-klein-9b":  "/flux-2-klein-9b",
+    "flux-2-pro":       "/flux-2-pro",
+    "flux-2-max":       "/flux-2-max",
+    "flux-2-flex":      "/flux-2-flex",
 }
+# FLUX.2 models support width/height instead of aspect_ratio, and polling_url in response
+FLUX2_MODELS = frozenset(m for m in GENERATE_MODELS if m.startswith("flux-2-"))
 GEN_ASPECT_RATIOS = ["1:1", "16:9", "4:3", "3:4", "9:16", "2:3", "3:2", "21:9"]
 
 
@@ -237,12 +249,21 @@ class AIEditRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt:          str
-    model:           str           = "flux-kontext-pro"
-    aspect_ratio:    str           = "1:1"
-    seed:            Optional[int] = None
-    output_folder:   str           = ""
-    filename_prefix: str           = "generated"
-    register:        bool          = True
+    model:           str            = "flux-kontext-pro"
+    # FLUX.1 Kontext / flux-pro*: use aspect_ratio
+    aspect_ratio:    str            = "1:1"
+    # FLUX.2 models: use width/height (multiples of 16, defaults to 1024×1024)
+    width:           Optional[int]  = None
+    height:          Optional[int]  = None
+    # FLUX.2 flex only: steps + guidance
+    steps:           Optional[int]  = None
+    guidance:        Optional[float] = None
+    seed:            Optional[int]  = None
+    output_folder:   str            = ""
+    filename_prefix: str            = "generated"
+    # Optional reference image (by DB id); sent as input_image when provided
+    image_id:        Optional[int]  = None
+    register:        bool           = True
 
 
 class RegisterFileRequest(BaseModel):
@@ -470,9 +491,13 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
 
 @router.post("/generate")
 def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
-    """Text-to-image generation using FLUX.1 Kontext (no source image needed)."""
+    """Text-to-image (or reference-guided) generation with FLUX.1 Kontext or FLUX.2."""
+    from PIL import Image
     s = _state()
     api_key = _get_bfl_key(user, s)
+
+    is_flux2 = body.model in FLUX2_MODELS
+    is_flex  = body.model == "flux-2-flex"
 
     # Determine output directory
     out_dir = body.output_folder.strip() if body.output_folder.strip() else str(
@@ -489,18 +514,44 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
     filename = f"{prefix}_{int(time.time())}_{hex4}.jpg"
     out_path = os.path.join(out_dir, filename)
 
-    payload: dict = {
-        "prompt":        body.prompt,
-        "aspect_ratio":  body.aspect_ratio,
-        "output_format": "jpeg",
-    }
+    payload: dict = {"prompt": body.prompt, "output_format": "jpeg"}
     if body.seed is not None:
         payload["seed"] = body.seed
 
+    if is_flux2:
+        # FLUX.2: width/height in pixels (multiples of 16), defaults to 1024×1024
+        payload["width"]  = _round16(body.width  or 1024)
+        payload["height"] = _round16(body.height or 1024)
+        if is_flex:
+            if body.steps    is not None: payload["steps"]    = body.steps
+            if body.guidance is not None: payload["guidance"] = body.guidance
+    else:
+        # FLUX.1 Kontext / flux-pro* : aspect_ratio
+        payload["aspect_ratio"] = body.aspect_ratio or "1:1"
+
+    # Optional reference image: encode and attach as input_image
+    if body.image_id is not None:
+        if not can_access_image(body.image_id, user, s.db_path):
+            raise HTTPException(status_code=403, detail="Access denied for reference image")
+        ref_info = _get_image_info(s.db_path, body.image_id)
+        if ref_info and os.path.exists(ref_info["filepath"]):
+            try:
+                ref_img = Image.open(ref_info["filepath"]).convert("RGB")
+                payload["input_image"] = _img_to_b64(ref_img, "JPEG")
+                logger.info("generate: attaching reference image_id=%s (%dx%d)",
+                            body.image_id, ref_img.width, ref_img.height)
+            except Exception as exc:
+                logger.warning("generate: could not encode reference image_id=%s: %s",
+                               body.image_id, exc)
+
     gen_endpoint = GENERATE_ENDPOINTS.get(body.model, KONTEXT_ENDPOINT)
-    logger.info("generate: user=%s | model=%s endpoint=%s | aspect=%s | register=%s | prompt=%r",
-                user.username, body.model, gen_endpoint, body.aspect_ratio, body.register,
-                body.prompt[:80])
+    logger.info("generate: user=%s | model=%s endpoint=%s | is_flux2=%s | "
+                "dims=%sx%s | aspect=%s | ref_image_id=%s | register=%s | prompt=%r",
+                user.username, body.model, gen_endpoint, is_flux2,
+                payload.get("width"), payload.get("height"),
+                payload.get("aspect_ratio"), body.image_id,
+                body.register, body.prompt[:80])
+
     request_id, polling_url = _bfl_submit(api_key, gen_endpoint, payload)
     logger.info("generate: submitted job_id=%s | polling...", request_id)
     sample_url   = _bfl_poll(api_key, polling_url)
@@ -511,7 +562,6 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
     with open(out_path, "wb") as f:
         f.write(result_bytes)
 
-    from PIL import Image
     with Image.open(out_path) as img:
         w, h = img.size
 

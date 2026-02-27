@@ -3,19 +3,31 @@
   import { generateImage, thumbnailUrl, bflPreviewUrl, registerBflFile, downloadBflFile } from '../api.js';
 
   const ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
-  const GENERATE_MODELS = [
-    { value: 'flux-kontext-pro', label: 'Flux Kontext Pro' },
-    { value: 'flux-pro-1.1',     label: 'Flux Pro 1.1' },
-    { value: 'flux-pro',         label: 'Flux Pro' },
-    { value: 'flux-dev',         label: 'Flux Dev (experimental)' },
+  const GEN_MODELS = [
+    { group: 'FLUX.1', value: 'flux-kontext-pro', label: 'Flux Kontext Pro' },
+    { group: 'FLUX.1', value: 'flux-pro-1.1',     label: 'Flux Pro 1.1' },
+    { group: 'FLUX.1', value: 'flux-pro',         label: 'Flux Pro' },
+    { group: 'FLUX.1', value: 'flux-dev',         label: 'Flux Dev (experimental)' },
+    { group: 'FLUX.2', value: 'flux-2-klein-4b',  label: 'Flux 2 Klein 4B (sub-second)' },
+    { group: 'FLUX.2', value: 'flux-2-klein-9b',  label: 'Flux 2 Klein 9B (fast)' },
+    { group: 'FLUX.2', value: 'flux-2-pro',       label: 'Flux 2 Pro' },
+    { group: 'FLUX.2', value: 'flux-2-max',       label: 'Flux 2 Max (best quality)' },
+    { group: 'FLUX.2', value: 'flux-2-flex',      label: 'Flux 2 Flex (adjustable)' },
   ];
 
-  let prompt  = '';
-  let model   = 'flux-kontext-pro';
-  let aspect  = '1:1';
-  let seed    = '';
-  let folder  = '';
-  let prefix  = 'generated';
+  let prompt   = '';
+  let model    = 'flux-kontext-pro';
+  let aspect   = '1:1';
+  let genW     = 1024;
+  let genH     = 1024;
+  let genSteps = 50;
+  let genGuidance = 4.5;
+  let seed     = '';
+  let folder   = '';
+  let prefix   = 'generated';
+
+  $: isFlux2    = model.startsWith('flux-2-');
+  $: isFlux2Flex = model === 'flux-2-flex';
 
   let loading     = false;
   let result      = null;  // { ok, new_image_id, filepath, width, height }
@@ -50,13 +62,18 @@
       result = await generateImage({
         prompt,
         model,
-        aspect_ratio:    aspect,
+        // FLUX.1: aspect_ratio; FLUX.2: width/height
+        ...(isFlux2
+          ? { width: genW, height: genH }
+          : { aspect_ratio: aspect }),
+        // FLUX.2 flex: steps + guidance
+        ...(isFlux2Flex ? { steps: genSteps, guidance: genGuidance } : {}),
         seed:            seed ? parseInt(seed, 10) : null,
         output_folder:   folder,
         filename_prefix: prefix,
       });
-      console.log('[GenerateView] generation done | new_image_id=%s | filepath=%s',
-                  result?.new_image_id, result?.filepath);
+      console.log('[GenerateView] generation done | model=%s | new_image_id=%s | filepath=%s',
+                  model, result?.new_image_id, result?.filepath);
     } catch (e) {
       errorMsg = e.message || String(e);
     } finally {
@@ -131,26 +148,61 @@
         disabled={loading}
       ></textarea>
 
-      <div class="row">
-        <div class="field">
-          <label class="field-label">{$t('gen_model_label')}</label>
-          <select bind:value={model} disabled={loading}>
-            {#each GENERATE_MODELS as m}
-              <option value={m.value}>{m.label}</option>
-            {/each}
-          </select>
+      <!-- Model selector with FLUX.1 / FLUX.2 groups -->
+      <label class="field-label">{$t('gen_model_label')}</label>
+      <select bind:value={model} disabled={loading}>
+        <optgroup label="FLUX.1">
+          {#each GEN_MODELS.filter(m => m.group === 'FLUX.1') as m}
+            <option value={m.value}>{m.label}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="FLUX.2">
+          {#each GEN_MODELS.filter(m => m.group === 'FLUX.2') as m}
+            <option value={m.value}>{m.label}</option>
+          {/each}
+        </optgroup>
+      </select>
+
+      {#if isFlux2}
+        <!-- FLUX.2: width + height in pixels -->
+        <div class="row">
+          <div class="field">
+            <label class="field-label">{$t('bfl_width')}</label>
+            <input type="number" bind:value={genW} min="64" max="2048" step="16" disabled={loading} style="width:100px" />
+          </div>
+          <div class="field">
+            <label class="field-label">{$t('bfl_height')}</label>
+            <input type="number" bind:value={genH} min="64" max="2048" step="16" disabled={loading} style="width:100px" />
+          </div>
         </div>
-      </div>
+        {#if isFlux2Flex}
+          <!-- FLUX.2 Flex: steps + guidance -->
+          <div class="row">
+            <div class="field">
+              <label class="field-label">{$t('bfl_steps')}</label>
+              <input type="number" bind:value={genSteps} min="1" max="50" disabled={loading} style="width:80px" />
+            </div>
+            <div class="field">
+              <label class="field-label">{$t('bfl_guidance')}</label>
+              <input type="number" bind:value={genGuidance} min="1.5" max="10" step="0.5" disabled={loading} style="width:80px" />
+            </div>
+          </div>
+        {/if}
+      {:else}
+        <!-- FLUX.1 Kontext / flux-pro*: aspect ratio -->
+        <div class="row">
+          <div class="field">
+            <label class="field-label">{$t('bfl_aspect_ratio')}</label>
+            <select bind:value={aspect} disabled={loading}>
+              {#each ASPECT_RATIOS as ar}
+                <option value={ar}>{ar}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+      {/if}
 
       <div class="row">
-        <div class="field">
-          <label class="field-label">{$t('bfl_aspect_ratio')}</label>
-          <select bind:value={aspect} disabled={loading}>
-            {#each ASPECT_RATIOS as ar}
-              <option value={ar}>{ar}</option>
-            {/each}
-          </select>
-        </div>
         <div class="field">
           <label class="field-label">{$t('bfl_seed')}</label>
           <input type="number" bind:value={seed} min="0" placeholder="random" disabled={loading} style="width:100px" />
@@ -208,31 +260,34 @@
 
         <!-- Without DB group -->
         <div class="action-group">
-          <div class="action-group-label">Ohne DB</div>
+          <div class="action-group-label">{$t('done_without_db')}</div>
           <div class="action-row">
-            <button on:click={doViewRaw}>🔍 Anzeigen</button>
-            <button on:click={doDownload}>⬇ Download</button>
+            <button on:click={doViewRaw}>👁 {$t('done_view_raw')}</button>
+            <button on:click={doDownload}>⬇ {$t('done_download_raw')}</button>
           </div>
         </div>
 
         <!-- Save to DB group -->
         <div class="action-group">
-          <div class="action-group-label">In DB speichern</div>
+          <div class="action-group-label">{$t('done_save_to_db')}</div>
           <div class="action-row">
-            <button class="primary" on:click={doViewInGallery} disabled={registering}>
-              🖼 {$t('gen_view_in_gallery')}
+            <button class="primary" on:click={doViewInGallery} disabled={registering}
+              title={$t('done_save_gallery_title')}>
+              {registering ? '…' : '🖼'} {$t('gen_view_in_gallery')}
             </button>
-            <button class="primary" on:click={doViewInLightbox} disabled={registering}>
-              🔍 {$t('view')}
+            <button class="primary" on:click={doViewInLightbox} disabled={registering}
+              title={$t('done_save_lightbox_title')}>
+              {registering ? '…' : '🔍'} {$t('view')}
             </button>
-            <button on:click={doSilent} disabled={registering}>
-              {registering ? '…' : '💾 Nur speichern'}
+            <button on:click={doSilent} disabled={registering}
+              title={$t('done_save_silent_title')}>
+              {registering ? '…' : '➕'} {$t('done_save_only')}
             </button>
           </div>
         </div>
 
         <div class="action-row">
-          <button on:click={doGenerateAnother}>+ {$t('gen_image_title')}</button>
+          <button on:click={doGenerateAnother}>🔄 {$t('done_generate_another')}</button>
         </div>
       </div>
     {/if}
@@ -335,6 +390,7 @@
     padding: 5px 8px;
     border-radius: 4px;
     font-size: 12px;
+    width: 100%;
   }
   select:focus { border-color: #6080c0; outline: none; }
 
