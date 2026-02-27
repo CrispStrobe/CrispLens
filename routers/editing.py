@@ -346,7 +346,7 @@ def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_
         cur = conn.execute(
             "INSERT OR IGNORE INTO images "
             "(filepath, filename, width, height, processed, owner_id, visibility) "
-            "VALUES (?, ?, ?, ?, 0, ?, 'shared')",
+            "VALUES (?, ?, ?, ?, 1, ?, 'shared')",
             (out_path, Path(out_path).name, w, h, owner_id),
         )
         conn.commit()
