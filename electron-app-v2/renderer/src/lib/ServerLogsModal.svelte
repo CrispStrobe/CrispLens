@@ -77,12 +77,22 @@
       </div>
 
       {#if error}
-        <div class="error-msg">{error}</div>
+        <div class="error-msg">
+          <strong>⚠ {error}</strong>
+          {#if !lines.length}
+            <div style="margin-top:6px;font-size:10px;opacity:0.8;">
+              Tip: check that FACE_REC_DATA_DIR is set in the service environment,
+              or set the log path explicitly in config.yaml → logging.file
+            </div>
+          {/if}
+        </div>
       {/if}
 
       <div class="log-box" bind:this={logEl}>
-        {#if loading && lines.length === 0}
+        {#if loading}
           <div class="loading-hint">{$t('loading')}</div>
+        {:else if !lines.length && !error}
+          <div class="loading-hint" style="color:#806040;">No log lines found.</div>
         {:else}
           {#each lines as line}
             <div

@@ -40,23 +40,32 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     config_path = (_s.config or {}).get('admin', {}).get('fix_db_path', '')
     script = body.fix_db_path.strip() or config_path or '/root/CrispLense/fix_db.sh'
 
+    # ── Verbose diagnostics (sanitised: password length only) ───────────────
+    pw_len = len(body.root_password) if body.root_password else 0
+    logger.info(
+        "admin.server_update: admin=%s  script=%s  pw_len=%d  fix_db_path_from_body=%r  config_path=%r",
+        admin.username, script, pw_len,
+        body.fix_db_path or '(empty)',
+        config_path or '(not set in config)',
+    )
+
     if not body.root_password:
+        logger.warning("admin.server_update: rejected — root_password is empty")
         raise HTTPException(status_code=400, detail="root_password is required")
 
     # Capture password; keep reference only until proc.stdin.close()
     password = body.root_password
 
-    logger.info("admin.server_update: requested by admin=%s script=%s", admin.username, script)
-
     def _stream():
-        yield f"data: [admin] Executing: sudo -S bash {script}\n\n"
+        yield f"data: [admin] Script: {script}\n\n"
         yield f"data: [admin] Requested by: {admin.username}\n\n"
+        yield f"data: [admin] Running: sudo -S bash {script}\n\n"
 
         env = os.environ.copy()
         env['CRISP_YES'] = '1'   # skip the interactive confirmation in fix_db.sh
 
         try:
-            logger.info("admin.server_update: launching subprocess sudo bash %s", script)
+            logger.info("admin.server_update: launching subprocess: sudo -S bash %s", script)
             proc = subprocess.Popen(
                 ['sudo', '-S', 'bash', script],
                 stdin=subprocess.PIPE,
@@ -72,20 +81,25 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
                 proc.stdin.flush()
                 proc.stdin.close()
             except BrokenPipeError:
-                logger.warning("admin.server_update: BrokenPipeError writing to stdin (sudo may have rejected pw)")
-                yield "data: [warn] stdin pipe closed early — sudo may have rejected the password\n\n"
+                logger.warning(
+                    "admin.server_update: BrokenPipeError writing to stdin — "
+                    "sudo may have rejected the password immediately"
+                )
+                yield "data: [warn] stdin pipe closed early — check the root password\n\n"
 
             line_count = 0
             for line in iter(proc.stdout.readline, ''):
                 stripped = line.rstrip()
-                if stripped:
-                    logger.debug("admin.server_update output: %s", stripped)
-                    line_count += 1
+                logger.debug("admin.server_update output[%d]: %s", line_count, stripped)
+                line_count += 1
                 yield f"data: {stripped}\n\n"
 
             proc.wait()
             rc = proc.returncode
-            logger.info("admin.server_update: script finished exit_code=%d lines=%d", rc, line_count)
+            logger.info(
+                "admin.server_update: DONE  exit_code=%d  lines_streamed=%d",
+                rc, line_count
+            )
             yield f"data: [exit {rc}]\n\n"
             if rc == 0:
                 yield "data: ✓ Update complete — server will restart momentarily.\n\n"
@@ -93,7 +107,7 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
                 yield f"data: ✗ Script exited with code {rc}.\n\n"
 
         except FileNotFoundError as exc:
-            logger.error("admin.server_update: sudo not found — %s", exc)
+            logger.error("admin.server_update: sudo binary not found — %s", exc)
             yield f"data: ✗ Could not launch sudo: {exc}\n\n"
         except Exception as exc:
             logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
@@ -108,18 +122,20 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
 
-    # 1) Most reliable: read path from the root logger's FileHandler (it's already open)
+    # ── Step 1: most reliable — read path from the already-open FileHandler ──
     handler_path = ''
     for h in _logging_mod.root.handlers:
         if hasattr(h, 'baseFilename') and h.baseFilename:
             handler_path = h.baseFilename
-            logger.debug("admin.get_server_logs: handler_path=%s", handler_path)
+            logger.info("admin.get_server_logs: FileHandler path = %s", handler_path)
             break
+    if not handler_path:
+        logger.warning("admin.get_server_logs: no FileHandler found on root logger")
 
-    # 2) Config file override
+    # ── Step 2: config override ───────────────────────────────────────────────
     config_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
 
-    # Build candidate list: handler path first (most reliable), then others
+    # ── Build candidate list (handler path is first and most reliable) ────────
     candidates = []
     for c in [handler_path, config_path, _app_log_file]:
         if c and c not in candidates:
@@ -129,43 +145,47 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     candidates += [
         '/var/log/face_recognition.log',
         '/var/log/face-rec/face_recognition.log',
+        '/opt/crisp-lens/face_recognition.log',
         os.path.expanduser('~/face_recognition.log'),
         'face_recognition.log',
     ]
     # Deduplicate while preserving order
-    seen = set()
-    unique = []
+    seen, unique = set(), []
     for c in candidates:
         if c and c not in seen:
             seen.add(c)
             unique.append(c)
 
-    logger.info("admin.get_server_logs: searching for log file, candidates=%s", unique[:4])
+    logger.info(
+        "admin.get_server_logs: searching %d candidates, first 5 = %s",
+        len(unique), unique[:5]
+    )
 
     log_file = None
     for candidate in unique:
-        logger.debug("admin.get_server_logs: checking path %s", candidate)
-        if os.path.isfile(candidate):
+        exists = os.path.isfile(candidate)
+        logger.debug("admin.get_server_logs:   %s  exists=%s", candidate, exists)
+        if exists:
             log_file = candidate
-            logger.info("admin.get_server_logs: found log file at %s", log_file)
+            logger.info("admin.get_server_logs: FOUND log file at %s", log_file)
             break
 
     if not log_file:
-        tried = ', '.join(unique[:4])
-        logger.warning("admin.get_server_logs: no log file found, tried: %s", tried)
+        tried = ', '.join(unique[:5])
+        logger.warning("admin.get_server_logs: log file not found; tried: %s", tried)
         return {
             "lines": [],
-            "path": unique[0] if unique else '',
-            "error": f"Log file not found. Tried: {tried}",
+            "path": unique[0] if unique else '(none)',
+            "error": f"Log file not found. Tried paths: {tried}",
         }
 
     try:
         logger.info("admin.get_server_logs: reading last %d lines from %s", lines, log_file)
         with open(log_file, 'r', errors='replace') as fh:
             tail = list(collections.deque(fh, maxlen=lines))
-        result_lines = [l.rstrip() for l in tail]
-        logger.info("admin.get_server_logs: returning %d lines", len(result_lines))
-        return {"lines": result_lines, "path": log_file}
+        result = [l.rstrip() for l in tail]
+        logger.info("admin.get_server_logs: returning %d lines", len(result))
+        return {"lines": result, "path": log_file}
     except Exception as exc:
         logger.error("admin.get_server_logs: error reading %s: %s", log_file, exc, exc_info=True)
         return {"lines": [], "path": log_file, "error": str(exc)}

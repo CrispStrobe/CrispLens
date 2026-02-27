@@ -44,38 +44,38 @@
     const pw = password;
     password = '';  // clear from UI immediately after capturing
 
+    // Track whether we got an HTTP error BEFORE streaming started.
+    // We cannot use early-return inside try/finally because finally
+    // always runs and would override state set inside the try block.
+    let preStreamError = '';
+
     try {
       const resp = await streamServerUpdate(pw);
 
-      // HTTP error before streaming started — parse FastAPI detail JSON
       if (!resp.ok) {
-        let msg;
+        // HTTP error before streaming — parse FastAPI detail JSON
         try {
           const json = await resp.json();
-          msg = json.detail || JSON.stringify(json);
+          preStreamError = `[HTTP ${resp.status}] ${json.detail || JSON.stringify(json)}`;
         } catch {
-          msg = await resp.text().catch(() => resp.statusText) || `HTTP ${resp.status}`;
+          preStreamError = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText) || resp.statusText}`;
         }
-        // Go back to password phase so user can try again
-        running = false;
-        done    = false;
-        error   = `[HTTP ${resp.status}] ${msg}`;
-        return;
-      }
+      } else {
+        // Stream the SSE response
+        const reader = resp.body.getReader();
+        const dec    = new TextDecoder();
+        let   buf    = '';
 
-      const reader = resp.body.getReader();
-      const dec    = new TextDecoder();
-      let   buf    = '';
-
-      while (true) {
-        const { done: d, value } = await reader.read();
-        if (d) break;
-        buf += dec.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop();
-        for (const part of parts) {
-          if (part.startsWith('data: ')) {
-            lines = [...lines, part.slice(6)];
+        while (true) {
+          const { done: d, value } = await reader.read();
+          if (d) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          for (const part of parts) {
+            if (part.startsWith('data: ')) {
+              lines = [...lines, part.slice(6)];
+            }
           }
         }
       }
@@ -84,12 +84,18 @@
       if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
         lines = [...lines, '— Connection closed (server restarted) —'];
-      } else {
+      } else if (!preStreamError) {
         error = e.message || String(e);
       }
     } finally {
       running = false;
-      done    = true;
+      if (preStreamError) {
+        // HTTP error before streaming — go back to password phase
+        error = preStreamError;
+        done  = false;
+      } else {
+        done = true;
+      }
     }
   }
 
