@@ -138,7 +138,7 @@ export function importProcessed(data) {
  * Mode B: upload a full local image to VPS for processing.
  * Accepts an ArrayBuffer (from IPC readLocalFile) and the original local path.
  */
-export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}) {
+export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}, { tagIds = [], newTagNames = [], albumId = null, newAlbumName = null } = {}) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
   form.append('local_path', localPath);
@@ -148,6 +148,10 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (detParams.rec_thresh    != null) form.append('rec_thresh',    String(detParams.rec_thresh));
   if (detParams.det_model)             form.append('det_model',     detParams.det_model);
   if (detParams.max_size      != null) form.append('max_size',      String(detParams.max_size));
+  if (tagIds.length)                   form.append('tag_ids',       JSON.stringify(tagIds));
+  if (newTagNames.length)              form.append('new_tag_names', JSON.stringify(newTagNames));
+  if (albumId != null)                 form.append('album_id',      String(albumId));
+  if (newAlbumName)                    form.append('new_album_name', newAlbumName);
   const res = await fetch(`${BASE}/ingest/upload-local`, {
     method: 'POST',
     credentials: 'include',
@@ -693,4 +697,23 @@ export function scanWatchFolder(id, onEvent) {
     if (err.name !== 'AbortError') console.error('scanWatchFolder SSE error:', err);
   });
   return { close: () => ctrl.abort() };
+}
+
+// ── Batch Jobs ─────────────────────────────────────────────────────────────────
+
+export function createBatchJob(params)      { return post('/batch-jobs', params); }
+export function listBatchJobs()             { return get('/batch-jobs'); }
+export function getBatchJob(id)             { return get(`/batch-jobs/${id}`); }
+export function deleteBatchJob(id)          { return del(`/batch-jobs/${id}`); }
+export function cancelBatchJob(id)          { return post(`/batch-jobs/${id}/cancel`, {}); }
+export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
+  return get(`/batch-jobs/${id}/logs?limit=${limit}&offset=${offset}`);
+}
+
+/**
+ * Start or resume a batch job via SSE.
+ * onEvent(jobData) called each poll; returns { close() }.
+ */
+export function startBatchJob(id, onEvent) {
+  return _streamSSE(`${BASE}/batch-jobs/${id}/start`, {}, onEvent);
 }

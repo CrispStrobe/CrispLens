@@ -319,11 +319,52 @@ def startup():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )''',
+            # Persistent batch processing jobs (survive browser disconnect)
+            '''CREATE TABLE IF NOT EXISTS batch_jobs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id         INTEGER NOT NULL,
+                name             TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending',
+                source_path      TEXT,
+                recursive        INTEGER DEFAULT 1,
+                follow_symlinks  INTEGER DEFAULT 0,
+                visibility       TEXT DEFAULT 'shared',
+                det_params       TEXT,
+                tag_ids          TEXT,
+                new_tag_names    TEXT,
+                album_id         INTEGER,
+                new_album_name   TEXT,
+                total_count      INTEGER DEFAULT 0,
+                done_count       INTEGER DEFAULT 0,
+                error_count      INTEGER DEFAULT 0,
+                skipped_count    INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now')),
+                started_at       TEXT,
+                finished_at      TEXT
+            )''',
+            '''CREATE TABLE IF NOT EXISTS batch_job_files (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
+                filepath     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'pending',
+                image_id     INTEGER,
+                error_msg    TEXT,
+                skip_reason  TEXT,
+                processed_at TEXT
+            )''',
+            'CREATE INDEX IF NOT EXISTS idx_bjf_job_status  ON batch_job_files(job_id, status)',
+            'CREATE INDEX IF NOT EXISTS idx_bj_owner_status ON batch_jobs(owner_id, status)',
         ]:
             try:
                 _mig_conn.execute(_sql)
             except _sqlite3.OperationalError:
                 pass  # column / index already exists — silently skip
+        _mig_conn.commit()
+
+        # ── Reset any 'running' batch jobs to 'paused' on startup (server restart) ──
+        _mig_conn.execute(
+            "UPDATE batch_jobs SET status='paused' WHERE status='running'"
+        )
         _mig_conn.commit()
 
         # ── Schema migration: fix file_hash uniqueness (idempotent) ──────────
@@ -523,7 +564,7 @@ def _start_background_scanner():
 
 # ─── Include routers ──────────────────────────────────────────────────────────
 
-from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives, bfl_edit, admin as admin_router
+from routers import images, people, search, processing, auth, settings, api_keys, filesystem, watchfolders, duplicates, albums, face_cluster, editing, ingest, users, cloud_drives, bfl_edit, batch_jobs, admin as admin_router
 
 app.include_router(admin_router.router)   # prefix already set to /api/admin in the router
 app.include_router(images.router,       prefix="/api/images",        tags=["images"])
@@ -543,6 +584,7 @@ app.include_router(editing.router,      prefix="/api/edit",          tags=["edit
 app.include_router(ingest.router,       prefix="/api/ingest",        tags=["ingest"])
 app.include_router(cloud_drives.router, prefix="/api/cloud-drives",  tags=["cloud-drives"])
 app.include_router(bfl_edit.router,    prefix="/api/bfl",            tags=["bfl"])
+app.include_router(batch_jobs.router,  prefix="/api/batch-jobs",     tags=["batch-jobs"])
 
 # ─── Tags & stats convenience routes ─────────────────────────────────────────
 

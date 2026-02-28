@@ -27,6 +27,7 @@
   import EventsView         from './lib/EventsView.svelte';
   import CloudDrivesView    from './lib/CloudDrivesView.svelte';
   import GenerateView       from './lib/GenerateView.svelte';
+  import BatchJobsView      from './lib/BatchJobsView.svelte';
   import PwaInstallBanner   from './lib/PwaInstallBanner.svelte';
   import LoginScreen        from './lib/LoginScreen.svelte';
 
@@ -298,6 +299,8 @@
         <EventsView />
       {:else if view === 'clouddrives'}
         <CloudDrivesView />
+      {:else if view === 'batchjobs'}
+        <BatchJobsView />
       {/if}
     </div>
   </div>

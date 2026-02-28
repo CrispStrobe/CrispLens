@@ -21,9 +21,10 @@
     { id: 'clouddrives',   icon: '☁️', label: $t('cloud_drives') },
   ];
   $: toolItems = [
-    { id: 'process',  icon: '⚙', label: $t('tab_batch') },
-    { id: 'train',    icon: '🎓', label: $t('tab_train') },
-    { id: 'settings', icon: '⚙', label: $t('tab_settings') },
+    { id: 'process',    icon: '⚙', label: $t('tab_batch') },
+    { id: 'batchjobs',  icon: '📋', label: $t('tab_batchjobs') },
+    { id: 'train',      icon: '🎓', label: $t('tab_train') },
+    { id: 'settings',   icon: '⚙', label: $t('tab_settings') },
   ];
 
   async function refreshStats() {

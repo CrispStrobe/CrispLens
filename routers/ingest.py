@@ -89,14 +89,18 @@ class ImportProcessedRequest(BaseModel):
 
 @router.post('/upload-local')
 async def upload_local(
-    file:          UploadFile     = File(...),
-    local_path:    str            = Form(...),
-    visibility:    str            = Form('shared'),
-    det_thresh:    Optional[float] = Form(None),
-    min_face_size: Optional[int]   = Form(None),
-    rec_thresh:    Optional[float] = Form(None),
-    det_model:     str             = Form('auto'),
-    max_size:      int             = Form(0),
+    file:           UploadFile     = File(...),
+    local_path:     str            = Form(...),
+    visibility:     str            = Form('shared'),
+    det_thresh:     Optional[float] = Form(None),
+    min_face_size:  Optional[int]   = Form(None),
+    rec_thresh:     Optional[float] = Form(None),
+    det_model:      str             = Form('auto'),
+    max_size:       int             = Form(0),
+    tag_ids:        str             = Form(''),        # JSON array of existing tag IDs
+    new_tag_names:  str             = Form(''),        # JSON array of new tag names to create
+    album_id:       Optional[int]   = Form(None),
+    new_album_name: Optional[str]   = Form(None),
     user=Depends(get_current_user),
 ):
     """
@@ -247,6 +251,60 @@ async def upload_local(
             else:
                 logger.info('upload_local: image_id=%s already owned by owner_id=%s, skipping local_path update (local_path=%r)',
                             image_id, cur_owner, local_path)
+
+            # Apply tags + album if provided
+            try:
+                import json as _json
+                _tag_ids = _json.loads(tag_ids) if tag_ids else []
+            except Exception:
+                _tag_ids = []
+            try:
+                _new_tag_names = _json.loads(new_tag_names) if new_tag_names else []
+            except Exception:
+                _new_tag_names = []
+
+            # Create new tags
+            for _name in _new_tag_names:
+                _name = _name.strip()
+                if not _name:
+                    continue
+                _existing = conn.execute("SELECT id FROM tags WHERE name=?", (_name,)).fetchone()
+                if _existing:
+                    _tag_ids.append(_existing['id'])
+                else:
+                    _cur = conn.execute("INSERT INTO tags(name) VALUES (?)", (_name,))
+                    _tag_ids.append(_cur.lastrowid)
+
+            # Apply tags to image
+            for _tid in _tag_ids:
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES (?, ?)",
+                        (image_id, _tid)
+                    )
+                except Exception:
+                    pass
+
+            # Resolve + apply album
+            _album_id = album_id
+            if new_album_name:
+                _album_name = new_album_name.strip()
+                _existing_album = conn.execute("SELECT id FROM albums WHERE name=?", (_album_name,)).fetchone()
+                if _existing_album:
+                    _album_id = _existing_album['id']
+                else:
+                    _album_cur = conn.execute("INSERT INTO albums(name) VALUES (?)", (_album_name,))
+                    _album_id = _album_cur.lastrowid
+            if _album_id:
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO album_images(album_id, image_id) VALUES (?, ?)",
+                        (_album_id, image_id)
+                    )
+                except Exception:
+                    pass
+
+            conn.commit()
 
             # Write thumbnail blob to disk so GET /api/images/{id}/thumbnail works
             thumb_row = conn.execute(

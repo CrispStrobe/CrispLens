@@ -1,6 +1,6 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, importProcessed, uploadLocal } from '../api.js';
-  import { t, stats, allPeople, allTags, processingMode, localModel, galleryRefreshTick } from '../stores.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob } from '../api.js';
+  import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
 
@@ -117,10 +117,80 @@
     }
   }
 
+  // ── Tag + Album pickers ────────────────────────────────────────────────────
+  // selectedTags: Array<{id: number|null, name: string}>
+  //   id=null means "create new tag"; id=<number> means existing tag
+  let selectedTags = [];
+  let tagInput = '';
+  let tagDropdownOpen = false;
+
+  // selectedAlbum: {id: number|null, name: string} | null
+  let selectedAlbum = null;
+  let albumInput = '';
+  let albumDropdownOpen = false;
+
+  $: filteredTags = $allTags.filter(tag =>
+    tagInput.trim() &&
+    tag.name.toLowerCase().includes(tagInput.trim().toLowerCase()) &&
+    !selectedTags.find(s => s.id === tag.id)
+  );
+
+  $: filteredAlbums = $allAlbums.filter(a =>
+    albumInput.trim() &&
+    a.name.toLowerCase().includes(albumInput.trim().toLowerCase())
+  );
+
+  function addTag(tag) {
+    if (!selectedTags.find(s => s.id === tag.id)) {
+      selectedTags = [...selectedTags, { id: tag.id, name: tag.name }];
+    }
+    tagInput = '';
+    tagDropdownOpen = false;
+  }
+
+  function addNewTag() {
+    const name = tagInput.trim();
+    if (!name) return;
+    if (!selectedTags.find(s => s.name.toLowerCase() === name.toLowerCase())) {
+      selectedTags = [...selectedTags, { id: null, name }];
+    }
+    tagInput = '';
+    tagDropdownOpen = false;
+  }
+
+  function removeTag(name) {
+    selectedTags = selectedTags.filter(s => s.name !== name);
+  }
+
+  function selectAlbum(album) {
+    selectedAlbum = { id: album.id, name: album.name };
+    albumInput = '';
+    albumDropdownOpen = false;
+  }
+
+  function setNewAlbum() {
+    const name = albumInput.trim();
+    if (!name) return;
+    selectedAlbum = { id: null, name };
+    albumInput = '';
+    albumDropdownOpen = false;
+  }
+
+  function clearAlbum() {
+    selectedAlbum = null;
+    albumInput = '';
+  }
+
+  $: existingTagIds  = selectedTags.filter(s => s.id !== null).map(s => s.id);
+  $: newTagNames     = selectedTags.filter(s => s.id === null).map(s => s.name);
+
   // ── Batch folder mode (mode A — server-side path) ─────────────────────────
   // Persisted to localStorage so it survives page refreshes.
   let batchFolder = '';
   let batchRecursive = true;
+  let batchFollowSymlinks = false;
+  let batchJobCreating = false;
+  let batchJobError = '';
 
   // Persist batchFolder to localStorage on change
   $: if (typeof localStorage !== 'undefined') {
@@ -140,6 +210,10 @@
         if (s) pythonPath = s.pythonPath || '';
       } catch { /* ignore */ }
     }
+
+    // Load tags + albums for pickers
+    try { allTags.set(await fetchTags()); } catch {}
+    try { allAlbums.set(await fetchAlbums()); } catch {}
   });
 
   // ── Detection settings ─────────────────────────────────────────────────────
@@ -217,7 +291,8 @@
           : item.path;
         console.log('[ProcessView] upload-local | item.path=%s | localBasePath=%s | pathForServer=%s',
           item.path ?? '(none)', base || '(none)', pathForServer);
-        const resp   = await uploadLocal(buffer, pathForServer, visibility, detParams);
+        const resp   = await uploadLocal(buffer, pathForServer, visibility, detParams,
+          { tagIds: existingTagIds, newTagNames, albumId: selectedAlbum?.id ?? null, newAlbumName: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null });
         console.log('[ProcessView] upload-local response | image_id=%s | skipped=%s | shared_duplicate=%s',
           resp.image_id, resp.skipped, resp.shared_duplicate ?? false);
         if (resp.skipped) {
@@ -359,45 +434,36 @@
     queue = queue.map(q => q.status === 'processing' ? { ...q, status: 'pending' } : q);
   }
 
-  // Folder-mode start (legacy drop-target for folder path)
-  function startFolderBatch() {
-    if (!batchFolder.trim() || running) return;
-    running   = true;
-    finished  = false;
-    cancelled = false;
-    errorCount = 0;
-    doneCount  = 0;
-    totalCount = 0;
-    queue = [];   // folder mode resets queue
-
-    batchSource = streamBatch(batchFolder.trim(), batchRecursive, ev => {
-      if (ev.started) { totalCount = ev.total ?? 0; return; }
-      if (ev.done)    { running = false; finished = true; batchSource = null; refreshGlobalData(); return; }
-      if (ev.path) {
-        doneCount = ev.index ?? doneCount + 1;
-        const r = ev.result || {};
-        const item = {
-          id: nextId++,
-          path: ev.path,
-          name: ev.path.split('/').pop(),
-          status: ev.error ? 'error' : 'done',
-          imageId: ev.image_id ?? null,
-          faces: r.faces_detected ?? 0,
-          people: r.people ?? [],
-          sceneType: r.scene_type ?? '',
-          description: r.vlm?.description ?? '',
-          error: ev.error ?? '',
-        };
-        if (ev.error) errorCount++;
-        queue = [...queue.slice(-199), item];
-      }
-    }, detParams);
+  // Folder-mode: create persistent batch job and navigate to Batch Jobs view
+  async function createBatchJobAndNavigate() {
+    if (!batchFolder.trim() || batchJobCreating) return;
+    batchJobCreating = true;
+    batchJobError = '';
+    try {
+      await createBatchJob({
+        folder: batchFolder.trim(),
+        recursive: batchRecursive,
+        follow_symlinks: batchFollowSymlinks,
+        visibility,
+        det_params: detParams,
+        tag_ids: existingTagIds,
+        new_tag_names: newTagNames,
+        album_id: selectedAlbum?.id ?? null,
+        new_album_name: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null,
+      });
+      sidebarView.set('batchjobs');
+    } catch (e) {
+      batchJobError = e.message;
+    } finally {
+      batchJobCreating = false;
+    }
   }
 
   async function refreshGlobalData() {
     try { stats.set(await fetchStats()); } catch {}
     try { allPeople.set(await fetchPeople()); } catch {}
     try { allTags.set(await fetchTags()); } catch {}
+    try { allAlbums.set(await fetchAlbums()); } catch {}
     galleryRefreshTick.update(n => n + 1);
   }
 
@@ -493,7 +559,81 @@
     </div>
   {/if}
 
-  <!-- Server folder section: always visible alongside drop zone -->
+  <!-- Tag + Album pickers (file mode + folder mode) -->
+  <div class="meta-pickers">
+    <!-- Tag picker -->
+    <div class="picker-group">
+      <label class="picker-label">{$t('pv_tags_label')}</label>
+      <div class="picker-chips">
+        {#each selectedTags as tag}
+          <span class="chip">{tag.name}{#if tag.id === null} <em>+</em>{/if}
+            <button class="chip-remove" on:click={() => removeTag(tag.name)}>✕</button>
+          </span>
+        {/each}
+        <div class="picker-input-wrap" style="position:relative">
+          <input
+            type="text"
+            class="picker-input"
+            placeholder={$t('pv_tags_placeholder')}
+            bind:value={tagInput}
+            on:focus={() => tagDropdownOpen = true}
+            on:blur={() => setTimeout(() => tagDropdownOpen = false, 150)}
+            on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredTags.length ? addTag(filteredTags[0]) : addNewTag(); } }}
+          />
+          {#if tagDropdownOpen && tagInput.trim()}
+            <div class="picker-dropdown">
+              {#each filteredTags as tag}
+                <button class="picker-option" on:mousedown|preventDefault={() => addTag(tag)}>{tag.name}</button>
+              {/each}
+              {#if !filteredTags.find(tag => tag.name.toLowerCase() === tagInput.trim().toLowerCase())}
+                <button class="picker-option new-item" on:mousedown|preventDefault={addNewTag}>
+                  {$t('pv_album_new_prefix')} <strong>{tagInput.trim()}</strong>
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Album picker (single selection) -->
+    <div class="picker-group">
+      <label class="picker-label">{$t('pv_album_label')}</label>
+      <div class="picker-chips">
+        {#if selectedAlbum}
+          <span class="chip">{selectedAlbum.name}{#if selectedAlbum.id === null} <em>+</em>{/if}
+            <button class="chip-remove" on:click={clearAlbum}>✕</button>
+          </span>
+        {:else}
+          <div class="picker-input-wrap" style="position:relative">
+            <input
+              type="text"
+              class="picker-input"
+              placeholder={$t('pv_album_placeholder')}
+              bind:value={albumInput}
+              on:focus={() => albumDropdownOpen = true}
+              on:blur={() => setTimeout(() => albumDropdownOpen = false, 150)}
+              on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredAlbums.length ? selectAlbum(filteredAlbums[0]) : setNewAlbum(); } }}
+            />
+            {#if albumDropdownOpen && albumInput.trim()}
+              <div class="picker-dropdown">
+                {#each filteredAlbums as album}
+                  <button class="picker-option" on:mousedown|preventDefault={() => selectAlbum(album)}>{album.name}</button>
+                {/each}
+                {#if !filteredAlbums.find(a => a.name.toLowerCase() === albumInput.trim().toLowerCase())}
+                  <button class="picker-option new-item" on:mousedown|preventDefault={setNewAlbum}>
+                    {$t('pv_album_new_prefix')} <strong>{albumInput.trim()}</strong>
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+
+  <!-- Server folder section: creates persistent batch job -->
   <div class="server-path-input">
     <span class="server-path-label">📡 {$t('pv_server_folder_label')}</span>
     <div class="server-path-row">
@@ -504,12 +644,18 @@
       <label class="checkbox-row">
         <input type="checkbox" bind:checked={batchRecursive} /> {$t('pv_subfolders')}
       </label>
-      {#if batchFolder.trim() && !running}
-        <button class="primary" on:click={startFolderBatch}>{$t('process_folder')}</button>
-      {:else if running}
-        <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>
+      <label class="checkbox-row">
+        <input type="checkbox" bind:checked={batchFollowSymlinks} /> {$t('pv_follow_symlinks')}
+      </label>
+      {#if batchFolder.trim()}
+        <button class="primary" on:click={createBatchJobAndNavigate} disabled={batchJobCreating}>
+          {batchJobCreating ? $t('bj_enum_started') : $t('pv_submit_batch_job')}
+        </button>
       {/if}
     </div>
+    {#if batchJobError}
+      <div class="batch-job-error">{batchJobError}</div>
+    {/if}
   </div>
 
   <!-- Detection settings (collapsible) -->
@@ -896,4 +1042,101 @@
   .primary { background: #2a4a8a; border-color: #3a6aba; color: #c0d8ff; }
   .primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .danger  { background: #3a1818; border-color: #6a2828; color: #e07070; }
+
+  /* ── Tag + Album pickers ── */
+  .meta-pickers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #141422;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  .picker-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .picker-label {
+    font-size: 11px;
+    color: #6080a0;
+    white-space: nowrap;
+    padding-top: 4px;
+    min-width: 50px;
+  }
+  .picker-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    flex: 1;
+    align-items: center;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #1e2e50;
+    color: #7090d0;
+    border-radius: 12px;
+    padding: 2px 8px 2px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .chip em { color: #50a050; font-style: normal; font-size: 10px; }
+  .chip-remove {
+    background: none;
+    border: none;
+    color: #507090;
+    font-size: 9px;
+    padding: 0 2px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .chip-remove:hover { color: #c05050; }
+  .picker-input-wrap { flex: 1; min-width: 130px; }
+  .picker-input {
+    width: 100%;
+    font-size: 11px;
+    padding: 3px 8px;
+    background: #0e0e1e;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    color: #c0c8e0;
+    box-sizing: border-box;
+  }
+  .picker-input::placeholder { color: #3a3a58; }
+  .picker-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    z-index: 50;
+    max-height: 160px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .picker-option {
+    background: none;
+    border: none;
+    text-align: left;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: #b0b8d0;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  .picker-option:hover { background: #252540; }
+  .picker-option.new-item { color: #50a050; border-top: 1px solid #2a2a42; }
+
+  .batch-job-error {
+    font-size: 11px;
+    color: #c05050;
+    margin-top: 4px;
+  }
 </style>
