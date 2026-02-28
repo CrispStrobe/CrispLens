@@ -537,10 +537,10 @@ export function adjustImage(params) {
 
 // register=false by default → file saved to disk, NOT added to DB.
 // Call registerBflFile() later to add to DB when the user explicitly requests it.
-export function outpaintImage(params)  { return post('/bfl/outpaint',  { register: false, ...params }); }
-export function inpaintImage(params)   { return post('/bfl/inpaint',   { register: false, ...params }); }
-export function aiEditImage(params)    { return post('/bfl/edit',      { register: false, ...params }); }
-export function generateImage(params)  { return post('/bfl/generate',  { register: false, ...params }); }
+export function outpaintImage(params)  { return post('/bfl/outpaint',  { register_in_db: false, ...params }); }
+export function inpaintImage(params)   { return post('/bfl/inpaint',   { register_in_db: false, ...params }); }
+export function aiEditImage(params)    { return post('/bfl/edit',      { register_in_db: false, ...params }); }
+export function generateImage(params)  { return post('/bfl/generate',  { register_in_db: false, ...params }); }
 export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
 
 /** URL to preview a generated file by server path (requires credentials). */

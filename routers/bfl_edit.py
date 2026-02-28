@@ -221,7 +221,7 @@ class OutpaintRequest(BaseModel):
     prompt:     str  = ""
     save_as:    str  = "new_file"
     suffix:     str  = "_outpainted"
-    register:   bool = True   # False → save to disk only, don't add to DB
+    register_in_db: bool = True   # False → save to disk only, don't add to DB
 
 
 class InpaintRequest(BaseModel):
@@ -233,7 +233,7 @@ class InpaintRequest(BaseModel):
     mask_h:   int  = 0
     save_as:  str  = "new_file"
     suffix:   str  = "_inpainted"
-    register: bool = True
+    register_in_db: bool = True
 
 
 class AIEditRequest(BaseModel):
@@ -244,7 +244,7 @@ class AIEditRequest(BaseModel):
     save_as:      str           = "new_file"
     suffix:       str           = "_edited"
     seed:         Optional[int] = None
-    register:     bool          = True
+    register_in_db:     bool          = True
 
 
 class GenerateRequest(BaseModel):
@@ -263,7 +263,7 @@ class GenerateRequest(BaseModel):
     filename_prefix: str            = "generated"
     # Optional reference image (by DB id); sent as input_image when provided
     image_id:        Optional[int]  = None
-    register:        bool           = True
+    register_in_db:  bool           = True
 
 
 class RegisterFileRequest(BaseModel):
@@ -329,7 +329,7 @@ def outpaint_image(body: OutpaintRequest, user=Depends(get_current_user)):
 
     logger.info("outpaint: user=%s image_id=%s | +top=%d +bottom=%d +left=%d +right=%d | new=%dx%d | register=%s",
                 user.username, body.image_id, body.add_top, body.add_bottom,
-                body.add_left, body.add_right, new_w, new_h, body.register)
+                body.add_left, body.add_right, new_w, new_h, body.register_in_db)
     request_id, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
     logger.info("outpaint: submitted job_id=%s | polling...", request_id)
     sample_url   = _bfl_poll(api_key, polling_url)
@@ -339,7 +339,7 @@ def outpaint_image(body: OutpaintRequest, user=Depends(get_current_user)):
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
     new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
-                                   register=body.register)
+                                   register=body.register_in_db)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img:
@@ -404,7 +404,7 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
 
     logger.info("inpaint: user=%s image_id=%s | mask x=%d y=%d w=%d h=%d | register=%s",
                 user.username, body.image_id, body.mask_x, body.mask_y,
-                body.mask_w, body.mask_h, body.register)
+                body.mask_w, body.mask_h, body.register_in_db)
     request_id, polling_url = _bfl_submit(api_key, FILL_ENDPOINT, payload)
     logger.info("inpaint: submitted job_id=%s | polling...", request_id)
     sample_url   = _bfl_poll(api_key, polling_url)
@@ -414,7 +414,7 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
     new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
-                                   register=body.register)
+                                   register=body.register_in_db)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img:
@@ -467,7 +467,7 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
         endpoint = f"/{body.model}"
 
     logger.info("ai-edit: user=%s image_id=%s | model=%s | prompt=%r | register=%s",
-                user.username, body.image_id, body.model, body.prompt[:80], body.register)
+                user.username, body.image_id, body.model, body.prompt[:80], body.register_in_db)
     request_id, polling_url = _bfl_submit(api_key, endpoint, payload)
     logger.info("ai-edit: submitted job_id=%s | polling...", request_id)
     sample_url   = _bfl_poll(api_key, polling_url)
@@ -477,7 +477,7 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
 
     out_path = info["filepath"] if body.save_as == "replace" else _build_bfl_out_path(info["filepath"], body.suffix)
     new_id   = _save_and_register(s, result_bytes, out_path, body.image_id, body.save_as, user.id,
-                                   register=body.register)
+                                   register=body.register_in_db)
 
     from PIL import Image as _PIL
     with _PIL.open(out_path) as img_out:
@@ -550,7 +550,7 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
                 user.username, body.model, gen_endpoint, is_flux2,
                 payload.get("width"), payload.get("height"),
                 payload.get("aspect_ratio"), body.image_id,
-                body.register, body.prompt[:80])
+                body.register_in_db, body.prompt[:80])
 
     request_id, polling_url = _bfl_submit(api_key, gen_endpoint, payload)
     logger.info("generate: submitted job_id=%s | polling...", request_id)
@@ -566,7 +566,7 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
         w, h = img.size
 
     new_id = None
-    if body.register:
+    if body.register_in_db:
         new_id = _register_converted_file(s.db_path, out_path, w, h, user.id)
         logger.info("generate: registered new_image_id=%s | %dx%d | out_path=%s | user=%s",
                     new_id, w, h, out_path, user.username)
