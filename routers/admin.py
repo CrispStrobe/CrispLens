@@ -6,13 +6,13 @@ routers/admin.py — Admin-only system operations.
   POST /api/admin/test-stream-post  — SSE, POST, 0.4 s sleep (does POST SSE work?)
   GET  /api/admin/test-json         — plain JSONResponse     (does JSON ever arrive?)
 
-  POST /api/admin/update   — stream fix_db.sh output via SSE (async subprocess)
+  POST /api/admin/update   — stream fix_db.sh output via SSE (sync subprocess)
   GET  /api/admin/logs     — last N lines of app log via SSE
 """
-import asyncio
 import collections
 import logging
 import os
+import subprocess
 import time as _time
 
 from fastapi import APIRouter, Depends
@@ -121,17 +121,16 @@ class UpdateRequest(BaseModel):
 
 
 @router.post("/update")
-async def server_update(body: UpdateRequest, admin=Depends(require_admin)):
+def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     """
-    Stream the output of: CRISP_YES=1 sudo bash <fix_db_path>
+    Stream the output of: sudo bash <fix_db_path>
 
-    Uses an async generator + asyncio.create_subprocess_exec so that:
-      • Each output line is yielded to the event loop immediately
-      • await asyncio.sleep(0.05) gives the event loop time to flush the
-        chunk through Apache to the browser before the next line arrives
-      • No thread-pool blocking that could cause Apache to buffer the response
+    Uses a sync generator so Starlette runs it in a thread-pool worker via
+    iterate_in_threadpool — identical pattern to the known-good test endpoints.
+    The fix_db.sh script skips the interactive prompt automatically when stdin
+    is not a terminal (DEVNULL), so no CRISP_YES env var trickery is needed.
 
-    Requires sudoers: face-rec ALL=(ALL) NOPASSWD: /bin/bash /root/recognize_faces/fix_db.sh
+    Requires sudoers: face-rec ALL=(ALL) NOPASSWD: /bin/bash /path/to/fix_db.sh
     """
     from fastapi_app import state as _s
 
@@ -145,54 +144,37 @@ async def server_update(body: UpdateRequest, admin=Depends(require_admin)):
         config_path or '(not set in config)',
     )
 
-    async def _stream():
-        # Helper: yield one SSE line then give the event loop a moment to flush it
-        async def _emit(msg: str):
-            logger.debug("admin.server_update emit: %s", msg[:80])
-            yield f"data: {msg}\n\n"
-            await asyncio.sleep(0.05)   # flush through Apache before next chunk
-
-        async for chunk in _emit(f"[admin] Script:       {script}"):
-            yield chunk
-        async for chunk in _emit(f"[admin] Requested by: {admin.username}"):
-            yield chunk
-        async for chunk in _emit(f"[admin] Running:      sudo bash {script}"):
-            yield chunk
-
-        env = os.environ.copy()
-        env['CRISP_YES'] = '1'   # skips the interactive prompt in fix_db.sh
+    def _gen():
+        yield f"data: [admin] Script:       {script}\n\n"
+        yield f"data: [admin] Requested by: {admin.username}\n\n"
+        yield f"data: [admin] Running:      sudo bash {script}\n\n"
 
         try:
             logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
-            proc = await asyncio.create_subprocess_exec(
-                'sudo', 'bash', script,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env,
+            proc = subprocess.Popen(
+                ['sudo', 'bash', script],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
 
             line_count = 0
-            while True:
-                raw = await proc.stdout.readline()
-                if not raw:
-                    break
+            for raw in iter(proc.stdout.readline, b''):
                 stripped = raw.decode('utf-8', errors='replace').rstrip()
                 logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
                 line_count += 1
                 yield f"data: {stripped}\n\n"
-                await asyncio.sleep(0.05)   # flush each line separately
 
-            await proc.wait()
+            proc.wait()
             rc = proc.returncode
             logger.info(
                 "admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count
             )
 
             yield f"data: [exit {rc}]\n\n"
-            await asyncio.sleep(0.05)
 
-            if rc == 0:
+            # -15 = SIGTERM from the service restarting itself mid-run — treat as success
+            if rc in (0, -15):
                 yield "data: ✓ Update complete — server will restart momentarily.\n\n"
             else:
                 yield f"data: ✗ Script exited with code {rc}.\n\n"
@@ -204,17 +186,16 @@ async def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
             yield f"data: ERROR: {exc}\n\n"
 
-    return _sse_response(_stream())
+    return _sse_response(_gen())
 
 
 @router.get("/logs")
-async def get_server_logs(lines: int = 200, _=Depends(require_admin)):
+def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     """
     Stream the last N lines of the Python app log as SSE.
 
-    Uses an async generator with `await asyncio.sleep(0)` between lines so
-    that the asyncio event loop can flush each SSE chunk through the proxy
-    to the browser before yielding the next one.
+    Uses a sync generator so Starlette runs it in a thread-pool worker via
+    iterate_in_threadpool — identical pattern to the known-good test endpoints.
 
     Protocol:
       data: [PATH]/path/to/logfile     ← first event, log file location
@@ -262,7 +243,7 @@ async def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.info("admin.get_server_logs: FOUND %s", log_file)
             break
 
-    async def _stream():
+    def _gen():
         if not log_file:
             tried = ', '.join(unique[:5])
             logger.warning("admin.get_server_logs: not found; tried: %s", tried)
@@ -276,11 +257,9 @@ async def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.info("admin.get_server_logs: streaming %d lines", len(tail))
 
             yield f"data: [PATH]{log_file}\n\n"
-            await asyncio.sleep(0)   # flush PATH line before the log dump starts
 
             for ln in tail:
                 yield f"data: {ln.rstrip()}\n\n"
-                await asyncio.sleep(0)   # yield to event loop → socket flush per line
 
             yield "data: [DONE]\n\n"
             logger.info("admin.get_server_logs: stream complete")
@@ -289,4 +268,4 @@ async def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
             yield f"data: [ERROR]{exc}\n\n"
 
-    return _sse_response(_stream())
+    return _sse_response(_gen())

@@ -130,6 +130,21 @@ PYEOF
 fi
 
 # =============================================================================
+# STEP 0b — Git pull (update the repo before syncing to install dir)
+# =============================================================================
+step "Updating repository  (git pull)  ${REPO_DIR}"
+
+if git -C "$REPO_DIR" rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+    if git -C "$REPO_DIR" pull 2>&1; then
+        info "Repository updated"
+    else
+        warn "git pull failed — continuing with current version"
+    fi
+else
+    warn "${REPO_DIR} is not a git repository — skipping git pull"
+fi
+
+# =============================================================================
 # STEP 1 — Sync Python / SQL / config files (skip data dirs + venv)
 # =============================================================================
 step "Syncing source files  ${REPO_DIR} → ${INSTALL_DIR}"
