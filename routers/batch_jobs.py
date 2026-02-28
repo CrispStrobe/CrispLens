@@ -23,7 +23,7 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -174,7 +174,7 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
         while not cancel_event.is_set():
             # Fetch next chunk of pending files
             rows = conn.execute(
-                "SELECT id, filepath FROM batch_job_files WHERE job_id=? AND status='pending' LIMIT ?",
+                "SELECT id, filepath, local_path FROM batch_job_files WHERE job_id=? AND status='pending' LIMIT ?",
                 (job_id, chunk_size)
             ).fetchall()
             if not rows:
@@ -186,6 +186,7 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
 
                 file_id = row['id']
                 filepath = row['filepath']
+                local_path = row['local_path']
 
                 # Check accessibility
                 if not os.path.exists(filepath):
@@ -198,6 +199,10 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                     continue
 
                 try:
+                    # If the file is in our temporary batch_uploads dir, we should treat it 
+                    # similar to upload_local (it might need to be moved to permanent uploads).
+                    is_batch_upload = 'batch_uploads' in filepath
+                    
                     result = _state_obj.engine.process_image(
                         filepath, vlm,
                         det_thresh=det_params.get('det_thresh'),
@@ -209,6 +214,19 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                         raise RuntimeError(result.get('error', 'Processing failed'))
 
                     image_id = result['image_id']
+                    
+                    # If it was a temporary upload, move it to permanent uploads
+                    if is_batch_upload:
+                        import shutil
+                        uploads_dir = os.path.join(os.path.dirname(_state_obj.thumb_dir), 'uploads')
+                        os.makedirs(uploads_dir, exist_ok=True)
+                        perm_path = os.path.join(uploads_dir, os.path.basename(filepath))
+                        try:
+                            shutil.move(filepath, perm_path)
+                            # Update the image record to point to the new permanent path
+                            conn.execute("UPDATE images SET filepath=? WHERE id=?", (perm_path, image_id))
+                        except Exception as move_err:
+                            logger.warning(f"Batch job {job_id}: could not move {filepath} to permanent storage: {move_err}")
 
                     # Apply tags
                     for tid in tag_ids:
@@ -233,8 +251,8 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                     # Set owner + visibility on the processed image
                     try:
                         conn.execute(
-                            "UPDATE images SET owner_id=COALESCE(owner_id, ?), visibility=? WHERE id=?",
-                            (job['owner_id'], visibility, image_id)
+                            "UPDATE images SET owner_id=COALESCE(owner_id, ?), visibility=?, local_path=COALESCE(local_path, ?) WHERE id=?",
+                            (job['owner_id'], visibility, local_path, image_id)
                         )
                     except Exception:
                         pass
@@ -285,9 +303,14 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+class BatchFileWithLocalPath(BaseModel):
+    filepath: str
+    local_path: Optional[str] = None
+
 class CreateBatchJobRequest(BaseModel):
     folder: Optional[str] = None
     filepaths: Optional[List[str]] = None
+    batch_files: Optional[List[BatchFileWithLocalPath]] = None
     name: Optional[str] = None
     recursive: bool = True
     follow_symlinks: bool = False
@@ -300,6 +323,33 @@ class CreateBatchJobRequest(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.post('/upload-file')
+async def upload_batch_file(
+    file: UploadFile = File(...),
+    local_path: str = Form(...),
+    user=Depends(get_current_user),
+):
+    """
+    Upload a single file to a temporary location on the server for a future batch job.
+    Returns the server-side path.
+    """
+    import uuid as _uuid
+    s = _state()
+    
+    suffix = os.path.splitext(file.filename or '.jpg')[1] or '.jpg'
+    # Use a 'batch_uploads' directory
+    uploads_dir = os.path.join(os.path.dirname(s.thumb_dir), 'batch_uploads')
+    os.makedirs(uploads_dir, exist_ok=True)
+    
+    server_path = os.path.join(uploads_dir, f'{_uuid.uuid4().hex}{suffix}')
+    
+    content = await file.read()
+    with open(server_path, 'wb') as f:
+        f.write(content)
+        
+    return {'server_path': server_path, 'local_path': local_path}
+
 
 @router.post('')
 def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)):
@@ -347,19 +397,28 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
         # Enumerate or use explicit files
         if body.folder:
             logger.info(f"Batch job {job_id}: enumerating files in {body.folder}")
-            all_files = _enum_image_files(body.folder, body.recursive, body.follow_symlinks)
+            all_files = [(fp, None) for fp in _enum_image_files(body.folder, body.recursive, body.follow_symlinks)]
+        elif body.batch_files:
+            logger.info(f"Batch job {job_id}: using {len(body.batch_files)} explicit batch_files")
+            all_files = [(f.filepath, f.local_path) for f in body.batch_files]
         else:
-            logger.info(f"Batch job {job_id}: using {len(body.filepaths)} explicit files")
-            all_files = body.filepaths
+            logger.info(f"Batch job {job_id}: using {len(body.filepaths)} explicit filepaths")
+            all_files = [(fp, None) for fp in body.filepaths]
 
         total = len(all_files)
+
+        # Ensure local_path column exists (migration)
+        try:
+            conn.execute("ALTER TABLE batch_job_files ADD COLUMN local_path TEXT")
+        except sqlite3.OperationalError:
+            pass # already exists
 
         batch_size = 1000
         for i in range(0, total, batch_size):
             chunk = all_files[i:i + batch_size]
             conn.executemany(
-                "INSERT INTO batch_job_files(job_id, filepath, status) VALUES (?, ?, 'pending')",
-                [(job_id, fp) for fp in chunk]
+                "INSERT INTO batch_job_files(job_id, filepath, local_path, status) VALUES (?, ?, ?, 'pending')",
+                [(job_id, fp, lp) for fp, lp in chunk]
             )
         conn.execute("UPDATE batch_jobs SET total_count=? WHERE id=?", (total, job_id))
         conn.commit()

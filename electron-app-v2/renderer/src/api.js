@@ -711,6 +711,22 @@ export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
 }
 
 /**
+ * Upload a single file for a persistent batch job.
+ */
+export async function uploadBatchFile(buffer, localPath) {
+  const form = new FormData();
+  form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
+  form.append('local_path', localPath);
+  const res = await fetch(`${BASE}/batch-jobs/upload-file`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`uploadBatchFile → ${res.status}`);
+  return res.json();
+}
+
+/**
  * Start or resume a batch job via SSE.
  * onEvent(jobData) called each poll; returns { close() }.
  */

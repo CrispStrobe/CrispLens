@@ -1,5 +1,5 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob } from '../api.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile } from '../api.js';
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
@@ -468,24 +468,33 @@
     if (!pending.length || batchJobCreating) return;
     batchJobCreating = true;
     batchJobError = '';
+    
     try {
-      // In Electron, we have full absolute paths.
-      // In browser mode, we might have webkitRelativePath or just names.
-      const base = localBasePath.trim().replace(/\/+$/, '');
-      const filepaths = pending.map(item => {
-        // If it's already an absolute path (starts with / or C:\ or similar), use it.
-        // Otherwise, if we have a base path, prepend it.
-        const isAbsolute = /^\/|^[a-zA-Z]:\\/.test(item.path);
-        if (isAbsolute) return item.path;
+      const serverFilepaths = [];
+      let uploadIdx = 0;
+      
+      // We must upload the files to the server first, just like "Direct" mode does,
+      // because the server cannot access local paths from a browser.
+      for (const item of pending) {
+        batchJobError = `Uploading ${++uploadIdx} / ${pending.length}...`;
         
-        if (base) {
-          return `${base}/${item.path}`;
-        }
-        return item.path; // Fallback to whatever we have
-      });
+        const buffer = item.file
+          ? await item.file.arrayBuffer()
+          : await window.electronAPI.readLocalFile(item.path);
+          
+        // Use the same path logic as Direct mode for consistency
+        const base = localBasePath.trim().replace(/\/+$/, '');
+        const pathForServer = (base && item.path && !item.path.includes('/'))
+          ? `${base}/${item.path}`
+          : item.path;
+          
+        const { server_path } = await uploadBatchFile(buffer, pathForServer);
+        serverFilepaths.push({ filepath: server_path, local_path: pathForServer });
+      }
 
+      batchJobError = 'Creating job...';
       await createBatchJob({
-        filepaths,
+        batch_files: serverFilepaths,
         visibility,
         det_params: detParams,
         tag_ids: existingTagIds,
