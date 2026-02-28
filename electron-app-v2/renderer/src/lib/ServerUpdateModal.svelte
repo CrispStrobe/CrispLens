@@ -80,7 +80,7 @@
   }
 
   // Start automatically when shown
-  $: if (show && !running && !done) doUpdate();
+  $: if (show === true && !running && !done) doUpdate();
 
   function handleKey(e) { if (e.key === 'Escape') close(); }
 </script>

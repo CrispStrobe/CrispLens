@@ -43,7 +43,7 @@
   }
 
   // Load when shown
-  $: if (show) load();
+  $: if (show === true) load();
 
   function handleKey(e) {
     if (e.key === 'Escape') close();
