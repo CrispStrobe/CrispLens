@@ -41,7 +41,7 @@
             if (!p.startsWith('data: ')) continue;
             const data = p.slice(6);
             if (data.startsWith('[PATH]')) logPath = data.slice(6).trim();
-            else if (data === '[DONE]') { /* nothing */ }
+            else if (data === '[DONE]') { /* end */ }
             else if (data.startsWith('[ERROR]')) error = data.slice(7);
             else lines = [...lines, data];
           }
