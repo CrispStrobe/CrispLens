@@ -346,6 +346,7 @@ def startup():
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
                 filepath     TEXT NOT NULL,
+                local_path   TEXT,
                 status       TEXT NOT NULL DEFAULT 'pending',
                 image_id     INTEGER,
                 error_msg    TEXT,
@@ -360,6 +361,16 @@ def startup():
             except _sqlite3.OperationalError:
                 pass  # column / index already exists — silently skip
         _mig_conn.commit()
+
+        # ── Additive column migrations (idempotent ALTER TABLE) ────────────────
+        for _alter in [
+            "ALTER TABLE batch_job_files ADD COLUMN local_path TEXT",
+        ]:
+            try:
+                _mig_conn.execute(_alter)
+                _mig_conn.commit()
+            except _sqlite3.OperationalError:
+                pass  # column already exists
 
         # ── Reset any 'running' batch jobs to 'paused' on startup (server restart) ──
         _mig_conn.execute(

@@ -131,9 +131,9 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
     try:
         conn = _connect(db_path)
 
-        # Mark job as running
+        # Mark job as running (covers normal start, resume, and retry-after-cancel/done)
         conn.execute(
-            "UPDATE batch_jobs SET status='running', started_at=datetime('now') WHERE id=? AND status IN ('pending','paused')",
+            "UPDATE batch_jobs SET status='running', started_at=COALESCE(started_at, datetime('now')) WHERE id=?",
             (job_id,)
         )
         conn.commit()
@@ -419,12 +419,6 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
             all_files = [(fp, None) for fp in body.filepaths]
 
         total = len(all_files)
-
-        # Ensure local_path column exists (migration)
-        try:
-            conn.execute("ALTER TABLE batch_job_files ADD COLUMN local_path TEXT")
-        except sqlite3.OperationalError:
-            pass # already exists
 
         if all_files:
             batch_size = 1000

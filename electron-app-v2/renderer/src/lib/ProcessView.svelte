@@ -194,7 +194,9 @@
   let batchRecursive = true;
   let batchFollowSymlinks = false;
   let batchJobCreating = false;
-  let batchJobError = '';
+  let batchJobError = '';      // errors from server-folder batch job creation
+  let batchQueueStatus = '';   // progress messages for queue → batch job creation
+  let batchQueueError = '';    // errors from queue → batch job creation
 
   // Persist batchFolder to localStorage on change
   $: if (typeof localStorage !== 'undefined') {
@@ -468,13 +470,13 @@
     const pending = queue.filter(q => q.status === 'pending');
     if (!pending.length || batchJobCreating) return;
     batchJobCreating = true;
-    batchJobError = '';
-    
+    batchQueueStatus = $t('bj_enum_started');
+    batchQueueError = '';
+
     try {
       // 1. Create the empty job record first
-      batchJobError = 'Initializing job...';
       const jobResp = await createBatchJob({
-        batch_files: [], // Start empty
+        batch_files: [], // Start empty; files added one by one below
         visibility,
         det_params: detParams,
         tag_ids: existingTagIds,
@@ -484,31 +486,33 @@
       });
       const jobId = jobResp.job_id;
 
-      // 2. Upload and add files piece by piece (similar to "Direct" mode)
+      // 2. Upload files to server and register them in the job
       let uploadIdx = 0;
       for (const item of pending) {
-        batchJobError = `Uploading ${++uploadIdx} / ${pending.length}...`;
-        
+        batchQueueStatus = `${$t('pv_uploading_progress').replace('{n}', ++uploadIdx).replace('{total}', pending.length)}`;
+
         const buffer = item.file
           ? await item.file.arrayBuffer()
           : await window.electronAPI.readLocalFile(item.path);
-          
+
         const base = localBasePath.trim().replace(/\/+$/, '');
         const isAbsolute = /^\/|^[a-zA-Z]:\\/.test(item.path);
         const pathForServer = (base && !isAbsolute)
           ? `${base}/${item.path}`
           : item.path;
-          
-        // Upload bytes to server
+
+        // Upload bytes to temporary server staging area
         const { server_path } = await uploadBatchFile(buffer, pathForServer);
-        
-        // Register this file in the persistent job
+
+        // Register file in the persistent job
         await addFileToBatchJob(jobId, { filepath: server_path, local_path: pathForServer });
       }
 
+      batchQueueStatus = '';
       sidebarView.set('batchjobs');
     } catch (e) {
-      batchJobError = e.message;
+      batchQueueStatus = '';
+      batchQueueError = e.message;
     } finally {
       batchJobCreating = false;
     }
@@ -619,7 +623,11 @@
             📡 {$t('pv_process_as_batch')}
           </button>
         </div>
-        {#if !inElectron && !localBasePath.trim() && pendingItems.length > 0}
+        {#if batchQueueStatus}
+          <div class="batch-queue-status">{batchQueueStatus}</div>
+        {:else if batchQueueError}
+          <div class="batch-queue-error">{batchQueueError} <button on:click={() => batchQueueError = ''}>✕</button></div>
+        {:else if !inElectron && !localBasePath.trim() && pendingItems.length > 0}
           <div class="path-notice">
             ⚠️ {$t('pv_local_path_notice')}
           </div>
@@ -1232,5 +1240,27 @@
     font-size: 11px;
     color: #c05050;
     margin-top: 4px;
+  }
+  .batch-queue-status {
+    font-size: 10px;
+    color: #8090c0;
+    margin-left: 8px;
+    font-style: italic;
+  }
+  .batch-queue-error {
+    font-size: 10px;
+    color: #c05050;
+    margin-left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .batch-queue-error button {
+    background: none;
+    border: none;
+    color: #c05050;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 2px;
   }
 </style>

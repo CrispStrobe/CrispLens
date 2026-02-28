@@ -371,6 +371,7 @@ else
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
                 filepath     TEXT NOT NULL,
+                local_path   TEXT,
                 status       TEXT NOT NULL DEFAULT 'pending',
                 image_id     INTEGER,
                 error_msg    TEXT,
@@ -381,6 +382,8 @@ else
             CREATE INDEX IF NOT EXISTS idx_bj_owner_status ON batch_jobs(owner_id, status);
             UPDATE batch_jobs SET status='paused' WHERE status='running';
         " 2>/dev/null && info "batch_jobs + batch_job_files tables ensured" || true
+        # Additive column: local_path on batch_job_files (added later — idempotent)
+        sqlite3 "$DB_PATH" "ALTER TABLE batch_job_files ADD COLUMN local_path TEXT;" 2>/dev/null || true
 
         info "All migrations complete"
     fi

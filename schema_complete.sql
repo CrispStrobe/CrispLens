@@ -357,6 +357,7 @@ CREATE TABLE IF NOT EXISTS batch_job_files (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
     filepath     TEXT NOT NULL,
+    local_path   TEXT,
     status       TEXT NOT NULL DEFAULT 'pending',
     image_id     INTEGER,
     error_msg    TEXT,
