@@ -1135,7 +1135,8 @@ class FaceRecognitionEngine:
                      det_thresh: Optional[float] = None, min_face_size: Optional[int] = None,
                      rec_thresh: Optional[float] = None,
                      skip_faces: bool = False, skip_vlm: bool = False,
-                     det_model: str = 'auto', max_size: int = 0) -> Dict[str, Any]:
+                     det_model: str = 'auto', max_size: int = 0,
+                     original_filename: Optional[str] = None) -> Dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
 
@@ -1149,6 +1150,7 @@ class FaceRecognitionEngine:
             skip_faces:  If True, skip face detection/recognition/storage
                          (existing face rows are left untouched)
             skip_vlm:    If True, skip VLM enrichment step
+            original_filename: Optional original filename to store in DB
 
         Returns:
             Processing results dictionary
@@ -1195,7 +1197,7 @@ class FaceRecognitionEngine:
             thumbnail = self._create_thumbnail(image)
             
             # Store image in database
-            image_id = self._store_image(image_path, metadata, image if self.config.store_in_db else None, thumbnail)
+            image_id = self._store_image(image_path, metadata, image if self.config.store_in_db else None, thumbnail, original_filename=original_filename)
             if image_id is None:
                 # Last resort: direct SELECT in case _store_image's recovery also failed
                 _lr_conn = None
@@ -1337,7 +1339,8 @@ class FaceRecognitionEngine:
             }
     
     def _store_image(self, filepath: str, metadata: ImageMetadata, 
-                    image_blob: Optional[np.ndarray], thumbnail_blob: Optional[bytes]) -> int:
+                    image_blob: Optional[np.ndarray], thumbnail_blob: Optional[bytes],
+                    original_filename: Optional[str] = None) -> int:
         """Store image in database with retry on lock."""
         
         def store_operation():
@@ -1364,7 +1367,7 @@ class FaceRecognitionEngine:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
                 """, (
                     filepath,
-                    Path(filepath).name,
+                    original_filename or Path(filepath).name,
                     metadata.file_hash,
                     metadata.file_size,
                     metadata.width,

@@ -211,6 +211,7 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                     # If the file is in our temporary batch_uploads dir, we should treat it 
                     # similar to upload_local (it might need to be moved to permanent uploads).
                     is_batch_upload = 'batch_uploads' in filepath
+                    original_filename = os.path.basename(local_path) if local_path else None
                     
                     result = _state_obj.engine.process_image(
                         filepath, vlm,
@@ -218,6 +219,7 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                         min_face_size=det_params.get('min_face_size'),
                         rec_thresh=det_params.get('rec_thresh'),
                         det_model=det_params.get('det_model', 'auto'),
+                        original_filename=original_filename
                     )
                     if not result.get('success'):
                         raise RuntimeError(result.get('error', 'Processing failed'))
