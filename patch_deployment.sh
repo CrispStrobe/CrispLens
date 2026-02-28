@@ -104,35 +104,50 @@ FIX_DB_PATH="${CRISP_FIX_DB_PATH:-${SCRIPT_DIR}/fix_db.sh}"
 [[ -f "$FIX_DB_PATH" ]] || FIX_DB_PATH="${CRISP_INSTALL_DIR}/fix_db.sh"
 info "fix_db.sh:   ${FIX_DB_PATH}"
 
-# Detect Apache config
+# Detect Apache config(s) — multi-strategy, collect ALL matching confs
 APACHE_SITES_DIR=""
-for _d in /etc/apache2/sites-enabled /etc/httpd/sites-enabled; do
+for _d in /etc/apache2/sites-enabled /etc/httpd/sites-enabled /etc/apache2/conf-enabled; do
     [[ -d "$_d" ]] && { APACHE_SITES_DIR="$_d"; break; }
 done
 
-APACHE_CONF=""
+APACHE_CONF_LIST=""
 if [[ -n "$APACHE_SITES_DIR" ]]; then
-    # Find the site that proxies to us (by looking for ProxyPass with our port)
-    _port=$(grep -oP '(?<=FACE_REC_PORT=)\d+' "$UNIT_FILE" | head -1 || true)
+    # Extract backend port from unit file — try multiple patterns
+    _port=""
+    [[ -z "$_port" ]] && _port=$(grep -oP 'FACE_REC_PORT=\K\d+'  "$UNIT_FILE" 2>/dev/null | head -1 || true)
+    [[ -z "$_port" ]] && _port=$(grep -oP '(?<=--port )\d+'       "$UNIT_FILE" 2>/dev/null | head -1 || true)
+    [[ -z "$_port" ]] && _port=$(grep -oP '127\.0\.0\.1:\K\d+'    "$UNIT_FILE" 2>/dev/null | head -1 || true)
+    info "Backend port detected: ${_port:-unknown}"
+
+    # Search by exact port (most reliable)
     if [[ -n "$_port" ]]; then
-        APACHE_CONF=$(grep -rl "127.0.0.1:${_port}" "$APACHE_SITES_DIR" 2>/dev/null | head -1 || true)
+        APACHE_CONF_LIST=$(grep -rl "127.0.0.1:${_port}" "$APACHE_SITES_DIR" 2>/dev/null || true)
     fi
-    # Fallback: find a conf that mentions face-rec or crisp-lens
-    if [[ -z "$APACHE_CONF" ]]; then
-        APACHE_CONF=$(grep -rl -i -E 'crisp.?lens|face.?rec' "$APACHE_SITES_DIR" 2>/dev/null | head -1 || true)
+    # Fallback: any conf that has ProxyPass to localhost
+    if [[ -z "$APACHE_CONF_LIST" ]]; then
+        APACHE_CONF_LIST=$(grep -rl 'ProxyPass.*127\.0\.0\.1' "$APACHE_SITES_DIR" 2>/dev/null || true)
     fi
-    [[ -n "$APACHE_CONF" ]] \
-        && info "Apache config: ${APACHE_CONF}" \
-        || warn "Apache config not auto-detected — FIX 3 will be skipped"
+
+    if [[ -n "$APACHE_CONF_LIST" ]]; then
+        while IFS= read -r _f; do
+            info "Apache config found: ${_f}"
+        done <<< "$APACHE_CONF_LIST"
+    else
+        warn "Apache config not auto-detected — FIX 3 will be skipped"
+    fi
 fi
+# APACHE_CONF = first match (used in verify section at end)
+APACHE_CONF=$(printf '%s\n' "$APACHE_CONF_LIST" | head -1)
 
 echo
 hr
 echo -e "  ${BOLD}Patch plan${NC}"; echo
 echo -e "    FIX 1  Sudoers NOPASSWD       ${FIX_DB_PATH}"
 echo -e "    FIX 2  NoNewPrivileges        remove from ${UNIT_FILE}"
-if [[ -n "$APACHE_CONF" ]]; then
-    echo -e "    FIX 3  Apache HTTP/1.1+Location  ${APACHE_CONF}"
+if [[ -n "$APACHE_CONF_LIST" ]]; then
+    _nc=$(printf '%s\n' "$APACHE_CONF_LIST" | wc -l)
+    echo -e "    FIX 3  Apache HTTP/1.1+Location  ${_nc} conf file(s)"
+    while IFS= read -r _f; do echo -e "             ↳ ${_f}"; done <<< "$APACHE_CONF_LIST"
 else
     echo -e "    FIX 3  Apache HTTP/1.1+Location  SKIPPED (conf not found)"
 fi
@@ -196,22 +211,22 @@ else
 fi
 
 # =============================================================================
-# FIX 3 — Apache <Location> blocks inside VirtualHost
+# FIX 3 — Apache ProxyHTTPVersion 1.1 + <Location> blocks inside VirtualHost
 # =============================================================================
-step "FIX 3: Apache <Location> blocks"
+step "FIX 3: Apache ProxyHTTPVersion 1.1 + Location blocks"
 
-if [[ -z "$APACHE_CONF" ]]; then
+if [[ -z "$APACHE_CONF_LIST" ]]; then
     warn "Apache config not found — skipping this fix."
-    warn "Apply manually: add these blocks inside every VirtualHost that proxies CrispLens:"
+    warn "Apply manually: add these directives inside every VirtualHost that proxies CrispLens:"
     cat <<'APACHEHELP'
 
-    # Inside your <VirtualHost *:443> (or :80) block, before ProxyPass:
+    # Inside your <VirtualHost *:443> (or :80) block:
 
-    ProxyHTTPVersion 1.1
+    ProxyHTTPVersion 1.1         # <-- add before ProxyPass
     ProxyPass        / http://127.0.0.1:PORT/ flushpackets=on
     ProxyPassReverse / http://127.0.0.1:PORT/
 
-    <Location /api>
+    <Location /api>              # <-- add before </VirtualHost>
         SetEnv no-gzip 1
         SetEnv dont-vary 1
     </Location>
@@ -222,152 +237,76 @@ if [[ -z "$APACHE_CONF" ]]; then
 
 APACHEHELP
 else
-    # Use Python to patch the Apache config reliably.
-    # Strategy: for every VirtualHost block that contains a ProxyPass line,
-    # insert the two Location blocks before </VirtualHost> if not already present.
-    python3 - "$APACHE_CONF" <<'PYEOF'
-import sys, re, shutil, os
-
-conf_path = sys.argv[1]
-with open(conf_path) as fh:
-    text = fh.read()
-
-API_LOC   = '\n    <Location /api>\n        SetEnv no-gzip 1\n        SetEnv dont-vary 1\n    </Location>\n'
-ADMIN_LOC = '\n    <Location /api/admin>\n        SetEnv proxy-nokeepalive 1\n    </Location>\n'
-
-def already_has(block, tag):
-    """Return True if block already contains <Location tag"""
-    return bool(re.search(rf'<Location\s+{re.escape(tag)}\s*>', block, re.IGNORECASE))
-
-vhost_pat = re.compile(
-    r'(<VirtualHost[^>]*>.*?</VirtualHost>)',
-    re.DOTALL | re.IGNORECASE
-)
-
-changed = False
-def patch_vhost(m):
-    global changed
-    block = m.group(1)
-    # Only patch VirtualHost blocks that proxy to uvicorn (have ProxyPass)
-    if not re.search(r'ProxyPass', block, re.IGNORECASE):
-        return block
-
-    insert = ''
-    if not already_has(block, '/api'):
-        insert += API_LOC
-    if not already_has(block, '/api/admin'):
-        insert += ADMIN_LOC
-
-    needs_http11 = not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE)
-
-    if not insert and not needs_http11:
-        return block
-
-    patched = block
-    if insert:
-        # Insert Location blocks just before </VirtualHost>
-        patched = re.sub(
-            r'(</VirtualHost>)',
-            insert + r'\1',
-            patched,
-            count=1,
-            flags=re.IGNORECASE
-        )
-    if needs_http11:
-        # Insert ProxyHTTPVersion 1.1 before the first ProxyPass line
-        patched = re.sub(
-            r'(\n[ \t]*ProxyPass\b)',
-            r'\n    ProxyHTTPVersion 1.1\1',
-            patched,
-            count=1,
-            flags=re.IGNORECASE
-        )
-    changed = True
-    return patched
-
-new_text = vhost_pat.sub(patch_vhost, text)
-
-if changed:
-    shutil.copy2(conf_path, conf_path + '.bak.' + str(int(__import__('time').time())))
-    with open(conf_path, 'w') as fh:
-        fh.write(new_text)
-    print('patched')
-else:
-    print('already_ok')
-PYEOF
-
-    PATCH_RESULT=$(python3 - "$APACHE_CONF" <<'PYEOF2'
-import sys, re
-conf_path = sys.argv[1]
-with open(conf_path) as fh:
-    text = fh.read()
-vhosts = re.findall(r'<VirtualHost[^>]*>.*?</VirtualHost>', text, re.DOTALL | re.IGNORECASE)
-for v in vhosts:
-    if re.search(r'ProxyPass', v, re.IGNORECASE):
-        has_api   = bool(re.search(r'<Location\s+/api\s*>', v, re.IGNORECASE))
-        has_admin = bool(re.search(r'<Location\s+/api/admin\s*>', v, re.IGNORECASE))
-        if has_api and has_admin:
-            print("already_ok"); sys.exit()
-        else:
-            print("needs_patch"); sys.exit()
-print("no_vhost_found")
-PYEOF2
-    )
-
-    # Re-run the actual patcher
-    python3 - "$APACHE_CONF" <<'PYEOF3'
+    # Patch every detected conf file.
+    # The Python script:
+    #   1. Removes any <Location /api*> blocks that landed OUTSIDE a VirtualHost
+    #      (a previous buggy run could place them after </VirtualHost></IfModule>)
+    #   2. Adds ProxyHTTPVersion 1.1 before the first ProxyPass inside each
+    #      VirtualHost that proxies to localhost (idempotent)
+    #   3. Adds <Location /api> and <Location /api/admin> before </VirtualHost>
+    #      inside each proxying VirtualHost (idempotent)
+    while IFS= read -r _conf; do
+        info "Patching: ${_conf}"
+        python3 - "$_conf" <<'PYEOF3'
 import sys, re, shutil, time
 
 conf_path = sys.argv[1]
 with open(conf_path) as fh:
-    text = fh.read()
+    original = fh.read()
 
-API_LOC   = '\n    <Location /api>\n        SetEnv no-gzip 1\n        SetEnv dont-vary 1\n    </Location>\n'
-ADMIN_LOC = '\n    <Location /api/admin>\n        SetEnv proxy-nokeepalive 1\n    </Location>\n'
+API_LOC   = '    <Location /api>\n        SetEnv no-gzip 1\n        SetEnv dont-vary 1\n    </Location>\n'
+ADMIN_LOC = '    <Location /api/admin>\n        SetEnv proxy-nokeepalive 1\n    </Location>\n'
 
+vhost_re = re.compile(r'(<VirtualHost[^>]*>.*?</VirtualHost>)', re.DOTALL | re.IGNORECASE)
+
+# ── Step 1: remove orphaned Location /api* blocks outside all VirtualHost ──
+# Find end-of-last-VirtualHost; everything after that is "outside".
+last_end = max((m.end() for m in vhost_re.finditer(original)), default=0)
+text = original
+if last_end > 0:
+    suffix = text[last_end:]
+    suffix_clean = re.sub(
+        r'\n[ \t]*<Location\s+/api(?:/admin)?\s*>[\s\S]*?</Location>[ \t]*',
+        '', suffix, flags=re.IGNORECASE)
+    if suffix_clean != suffix:
+        text = text[:last_end] + suffix_clean
+        text = re.sub(r'\n{3,}', '\n\n', text)   # collapse blank lines
+
+# ── Step 2: patch each proxying VirtualHost ──────────────────────────────────
 def already_has(block, tag):
     return bool(re.search(rf'<Location\s+{re.escape(tag)}\s*>', block, re.IGNORECASE))
 
-vhost_pat = re.compile(r'(<VirtualHost[^>]*>.*?</VirtualHost>)', re.DOTALL | re.IGNORECASE)
-changed = False
-
 def patch_vhost(m):
-    global changed
     block = m.group(1)
     if not re.search(r'ProxyPass', block, re.IGNORECASE):
         return block
+    patched = block
     insert = ''
     if not already_has(block, '/api'):
-        insert += API_LOC
+        insert += '\n' + API_LOC
     if not already_has(block, '/api/admin'):
-        insert += ADMIN_LOC
-    needs_http11 = not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE)
-    if not insert and not needs_http11:
-        return block
-    patched = block
+        insert += '\n' + ADMIN_LOC
     if insert:
-        patched = re.sub(r'(</VirtualHost>)', insert + r'\1', patched, count=1, flags=re.IGNORECASE)
-    if needs_http11:
-        patched = re.sub(
-            r'(\n[ \t]*ProxyPass\b)',
-            r'\n    ProxyHTTPVersion 1.1\1',
-            patched, count=1, flags=re.IGNORECASE
-        )
-    changed = True
+        patched = re.sub(r'([ \t]*</VirtualHost>)', '\n' + insert + r'\1',
+                         patched, count=1, flags=re.IGNORECASE)
+    if not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE):
+        patched = re.sub(r'(\n[ \t]*ProxyPass\b)', r'\n    ProxyHTTPVersion 1.1\1',
+                         patched, count=1, flags=re.IGNORECASE)
     return patched
 
-new_text = vhost_pat.sub(patch_vhost, text)
+new_text = vhost_re.sub(patch_vhost, text)
 
-if changed:
+if new_text == original:
+    print("  already correct — no changes made")
+else:
     shutil.copy2(conf_path, conf_path + '.bak.' + str(int(time.time())))
     with open(conf_path, 'w') as fh:
         fh.write(new_text)
-    print("  patched: ProxyHTTPVersion 1.1 + Location blocks added inside VirtualHost")
-else:
-    print("  already correct — no changes made")
+    print("  patched: ProxyHTTPVersion 1.1 + Location blocks added/moved inside VirtualHost")
 PYEOF3
+    done <<< "$APACHE_CONF_LIST"
 
-    # Validate and reload Apache
+    # Validate and reload Apache once after all confs are patched
     APACHE_BIN=""
     for _ab in apachectl apache2ctl httpd; do
         command -v "$_ab" &>/dev/null && { APACHE_BIN="$_ab"; break; }
@@ -381,11 +320,11 @@ PYEOF3
                 info "Apache reloaded"
             fi
         else
-            warn "Apache config test FAILED — review ${APACHE_CONF} and restore from .bak if needed"
-            "$APACHE_BIN" configtest 2>&1 | tail -10
+            warn "Apache config test FAILED — restore from .bak and fix manually"
+            "$APACHE_BIN" configtest 2>&1 | tail -15
         fi
     else
-        warn "Could not find apachectl/apache2ctl — please run: sudo apachectl configtest && sudo systemctl reload apache2"
+        warn "apachectl not found — run manually: apachectl configtest && systemctl reload apache2"
     fi
 fi
 
