@@ -6,16 +6,16 @@ routers/admin.py — Admin-only system operations.
   POST /api/admin/test-stream-post  — SSE, POST, 0.4 s sleep (does POST SSE work?)
   GET  /api/admin/test-json         — plain JSONResponse     (does JSON ever arrive?)
 
-  POST /api/admin/update   — stream fix_db.sh output via SSE
-  GET  /api/admin/logs     — last N lines of app log via SSE (avoids JSONResponse hang)
+  POST /api/admin/update   — stream fix_db.sh output via SSE (async subprocess)
+  GET  /api/admin/logs     — last N lines of app log via SSE
 """
+import asyncio
 import collections
 import logging
 import os
-import subprocess
 import time as _time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -63,8 +63,8 @@ def test_stream(admin=Depends(require_admin)):
 def test_stream_fast(admin=Depends(require_admin)):
     """
     GET SSE with NO sleep (burst).
-    EXPECTED: if this hangs but /test-stream works → TCP/Nagle coalescing is
-    the root cause. The fix is to add micro-sleeps to the update generator.
+    If this works but /update hangs → the issue is NOT burst size; it's something
+    specific to the real endpoints (subprocess, file I/O, or large response body).
     """
     def _gen():
         logger.info("test-stream-fast: starting burst of 6 lines")
@@ -81,9 +81,8 @@ def test_stream_fast(admin=Depends(require_admin)):
 def test_stream_post(admin=Depends(require_admin)):
     """
     POST SSE with 0.4 s sleep.
-    EXPECTED: if this hangs but GET /test-stream works → Apache treats POST
-    response bodies differently (may buffer until backend closes connection).
-    The fix is proxy-nokeepalive + disablereuse for /api/admin.
+    If this works but POST /update hangs → the issue is specific to the update
+    endpoint (subprocess I/O or nested generator pattern).
     """
     def _gen():
         logger.info("test-stream-post: starting POST SSE stream")
@@ -101,9 +100,7 @@ def test_stream_post(admin=Depends(require_admin)):
 def test_json(admin=Depends(require_admin)):
     """
     Tiny JSONResponse (no streaming).
-    EXPECTED: if this hangs → Apache buffers ALL non-SSE responses from this
-    VirtualHost. Confirm mod_deflate is loaded and <Location /api> no-gzip
-    is inside the VirtualHost block.
+    If this hangs → Apache buffers ALL non-SSE responses from this VirtualHost.
     """
     logger.info("test-json: returning tiny JSON")
     return JSONResponse(
@@ -121,19 +118,20 @@ def test_json(admin=Depends(require_admin)):
 
 class UpdateRequest(BaseModel):
     fix_db_path: str = ''  # optional override; falls back to config then default
-    # root_password removed: sudoers must have NOPASSWD: for the script.
-    # sudo -S with a service-account password never works (no shell password).
-    # The admin web-UI login is the security gate.
 
 
 @router.post("/update")
-def server_update(body: UpdateRequest, admin=Depends(require_admin)):
+async def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     """
     Stream the output of: CRISP_YES=1 sudo bash <fix_db_path>
-    Requires sudoers: face-rec ALL=(ALL) NOPASSWD: /bin/bash /root/recognize_faces/fix_db.sh
 
-    Micro-sleeps (20 ms) between every yield prevent TCP/Nagle coalescing
-    that otherwise causes Apache to buffer all chunks and never forward them.
+    Uses an async generator + asyncio.create_subprocess_exec so that:
+      • Each output line is yielded to the event loop immediately
+      • await asyncio.sleep(0.05) gives the event loop time to flush the
+        chunk through Apache to the browser before the next line arrives
+      • No thread-pool blocking that could cause Apache to buffer the response
+
+    Requires sudoers: face-rec ALL=(ALL) NOPASSWD: /bin/bash /root/recognize_faces/fix_db.sh
     """
     from fastapi_app import state as _s
 
@@ -147,66 +145,76 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
         config_path or '(not set in config)',
     )
 
-    def _stream():
-        def _emit(msg):
+    async def _stream():
+        # Helper: yield one SSE line then give the event loop a moment to flush it
+        async def _emit(msg: str):
             logger.debug("admin.server_update emit: %s", msg[:80])
             yield f"data: {msg}\n\n"
-            _time.sleep(0.02)   # 20 ms — forces separate TCP packet per chunk
+            await asyncio.sleep(0.05)   # flush through Apache before next chunk
 
-        yield from _emit(f"[admin] Script:       {script}")
-        yield from _emit(f"[admin] Requested by: {admin.username}")
-        yield from _emit(f"[admin] Running:      sudo bash {script}")
+        async for chunk in _emit(f"[admin] Script:       {script}"):
+            yield chunk
+        async for chunk in _emit(f"[admin] Requested by: {admin.username}"):
+            yield chunk
+        async for chunk in _emit(f"[admin] Running:      sudo bash {script}"):
+            yield chunk
 
         env = os.environ.copy()
         env['CRISP_YES'] = '1'
 
         try:
             logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
-            proc = subprocess.Popen(
-                ['sudo', 'bash', script],   # NOPASSWD — no -S, no stdin password
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+            proc = await asyncio.create_subprocess_exec(
+                'sudo', 'bash', script,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 env=env,
-                text=True,
-                bufsize=1,
             )
 
             line_count = 0
-            for line in iter(proc.stdout.readline, ''):
-                stripped = line.rstrip()
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
+                    break
+                stripped = raw.decode('utf-8', errors='replace').rstrip()
                 logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
                 line_count += 1
-                yield from _emit(stripped)
+                yield f"data: {stripped}\n\n"
+                await asyncio.sleep(0.05)   # flush each line separately
 
-            proc.wait()
+            await proc.wait()
             rc = proc.returncode
-            logger.info("admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count)
-            yield from _emit(f"[exit {rc}]")
+            logger.info(
+                "admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count
+            )
+
+            yield f"data: [exit {rc}]\n\n"
+            await asyncio.sleep(0.05)
+
             if rc == 0:
-                yield from _emit("✓ Update complete — server will restart momentarily.")
+                yield "data: ✓ Update complete — server will restart momentarily.\n\n"
             else:
-                yield from _emit(f"✗ Script exited with code {rc}.")
+                yield f"data: ✗ Script exited with code {rc}.\n\n"
 
         except FileNotFoundError as exc:
             logger.error("admin.server_update: sudo not found — %s", exc)
-            yield from _emit(f"✗ Could not launch sudo: {exc}")
+            yield f"data: ✗ Could not launch sudo: {exc}\n\n"
         except Exception as exc:
             logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
-            yield from _emit(f"ERROR: {exc}")
+            yield f"data: ERROR: {exc}\n\n"
 
     return _sse_response(_stream())
 
 
 @router.get("/logs")
-def get_server_logs(lines: int = 200, _=Depends(require_admin)):
+async def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     """
     Stream the last N lines of the Python app log as SSE.
 
-    Converted from JSONResponse to StreamingResponse because JSONResponse body
-    is buffered by Apache and never forwarded to the browser in this setup.
-    SSE (text/event-stream) is handled correctly by Apache's mod_proxy_http
-    with flushpackets=on.
+    Uses an async generator with `await asyncio.sleep(0)` between lines so
+    that the asyncio event loop can flush each SSE chunk through the proxy
+    to the browser before yielding the next one.
 
     Protocol:
       data: [PATH]/path/to/logfile     ← first event, log file location
@@ -217,7 +225,7 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
 
-    # ── Locate log file (same logic as before) ────────────────────────────────
+    # ── Locate log file ───────────────────────────────────────────────────────
     handler_path = ''
     for h in _logging_mod.root.handlers:
         if hasattr(h, 'baseFilename') and h.baseFilename:
@@ -254,7 +262,7 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.info("admin.get_server_logs: FOUND %s", log_file)
             break
 
-    def _stream():
+    async def _stream():
         if not log_file:
             tried = ', '.join(unique[:5])
             logger.warning("admin.get_server_logs: not found; tried: %s", tried)
@@ -266,11 +274,17 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             with open(log_file, 'r', errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
             logger.info("admin.get_server_logs: streaming %d lines", len(tail))
+
             yield f"data: [PATH]{log_file}\n\n"
+            await asyncio.sleep(0)   # flush PATH line before the log dump starts
+
             for ln in tail:
                 yield f"data: {ln.rstrip()}\n\n"
+                await asyncio.sleep(0)   # yield to event loop → socket flush per line
+
             yield "data: [DONE]\n\n"
             logger.info("admin.get_server_logs: stream complete")
+
         except Exception as exc:
             logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
             yield f"data: [ERROR]{exc}\n\n"
