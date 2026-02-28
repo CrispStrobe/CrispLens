@@ -553,9 +553,11 @@ from routers.deps import get_current_user
 @app.get("/api/health")
 def health():
     """Lightweight liveness probe — always 200, no auth required."""
+    from routers.images import _thumb_mem
     return {
         "ok": True,
         "model_ready": state.engine._backend_ready if state.engine else False,
+        "thumb_cache": _thumb_mem.stats(),
     }
 
 

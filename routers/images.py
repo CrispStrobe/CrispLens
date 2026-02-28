@@ -1,10 +1,13 @@
 """
 routers/images.py — Image browse, detail, thumbnail, full, patch, rename, delete.
 """
+import hashlib
 import os
 import sqlite3
 import subprocess
 import logging
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,11 +25,62 @@ from image_ops import (
 )
 from routers.deps import can_access_image, get_current_user, require_admin_or_mediamanager
 
-# Thumbnails are keyed by (image_id, size) — content is effectively immutable
-# per URL. Cache for 1 day; stale-while-revalidate lets the browser serve cached
-# copy while ETag is verified in the background.
+# HTTP cache headers — 1 day browser cache, stale-while-revalidate for background refresh.
 _THUMB_CACHE = {'Cache-Control': 'public, max-age=86400, stale-while-revalidate=3600'}
 from routers.settings import get_effective_vlm_provider
+
+
+# ── In-process thumbnail memory cache ────────────────────────────────────────
+# Stores JPEG bytes keyed by (image_id, size). Avoids repeated disk reads and
+# DB queries (get_image_record) for frequently accessed thumbnails.
+# Bounded by total byte size; evicts least-recently-used entries when full.
+_THUMB_CACHE_MAX_BYTES = 256 * 1024 * 1024   # 256 MB default
+
+
+class _ThumbCache:
+    """Thread-safe, byte-size-bounded LRU cache for thumbnail JPEG bytes."""
+
+    def __init__(self, max_bytes: int = _THUMB_CACHE_MAX_BYTES):
+        self._data: OrderedDict = OrderedDict()   # (image_id, size) → (bytes, etag)
+        self._total = 0
+        self._max = max_bytes
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple):
+        """Return (bytes, etag) on hit, None on miss."""
+        with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
+                return self._data[key]
+            return None
+
+    def put(self, key: tuple, data: bytes) -> str:
+        """Store bytes, evict LRU entries if over budget. Returns the ETag."""
+        etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
+        with self._lock:
+            if key in self._data:
+                self._total -= len(self._data[key][0])
+            self._data[key] = (data, etag)
+            self._data.move_to_end(key)
+            self._total += len(data)
+            while self._total > self._max and self._data:
+                _, (evicted, _) = self._data.popitem(last=False)
+                self._total -= len(evicted)
+        return etag
+
+    def invalidate(self, image_id: int):
+        """Remove all cached sizes for a given image (call on delete/replace)."""
+        with self._lock:
+            keys = [k for k in self._data if k[0] == image_id]
+            for k in keys:
+                self._total -= len(self._data[k][0])
+                del self._data[k]
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {'entries': len(self._data), 'size_mb': round(self._total / 1_048_576, 1)}
+
+_thumb_mem = _ThumbCache()
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -192,6 +246,14 @@ def get_image_faces(image_id: int, user=Depends(get_current_user)) -> List[Dict[
             conn.close()
 
 
+def _thumb_response(data: bytes, etag: str) -> Response:
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={**_THUMB_CACHE, 'ETag': f'"{etag}"'},
+    )
+
+
 @router.get("/{image_id}/thumbnail")
 def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
                   user=Depends(get_current_user)):
@@ -199,34 +261,47 @@ def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
     if not can_access_image(image_id, user, s.db_path):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    # ── Memory cache hit: skip DB lookup + disk I/O entirely ──────────────────
+    cache_key = (image_id, size)
+    cached = _thumb_mem.get(cache_key)
+    if cached:
+        return _thumb_response(*cached)
+
+    # ── Cache miss: resolve image record and serve ─────────────────────────────
     rec = get_image_record(s.db_path, image_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Image not found")
 
     filepath = rec.get('filepath', '')
 
-    # Try disk-cached thumbnail first
+    # 1. Disk-cached thumbnail file
     thumb_path = Path(s.thumb_dir) / f"{image_id}_{size}.jpg"
     if thumb_path.exists():
-        return FileResponse(str(thumb_path), media_type="image/jpeg", headers=_THUMB_CACHE)
+        data = thumb_path.read_bytes()
+        etag = _thumb_mem.put(cache_key, data)
+        return _thumb_response(data, etag)
 
-    # If source file exists on disk, generate thumbnail
+    # 2. Generate thumbnail from source file
     if filepath and Path(filepath).exists():
         thumb = get_or_create_thumbnail(image_id, filepath, s.thumb_dir, size)
         if thumb and Path(thumb).exists():
-            return FileResponse(thumb, media_type="image/jpeg", headers=_THUMB_CACHE)
+            data = Path(thumb).read_bytes()
+            etag = _thumb_mem.put(cache_key, data)
+            return _thumb_response(data, etag)
+        # Source exists but thumbnail generation failed — serve original (not cached)
         return FileResponse(filepath, headers=_THUMB_CACHE)
 
-    # Fallback: serve thumbnail_blob stored in DB
-    import sqlite3 as _sqlite3
-    conn = _sqlite3.connect(s.db_path, timeout=10.0)
-    conn.row_factory = _sqlite3.Row
+    # 3. Fallback: thumbnail_blob stored in DB (remote/cloud images)
+    conn = sqlite3.connect(s.db_path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
     blob_row = conn.execute(
         "SELECT thumbnail_blob FROM images WHERE id = ?", (image_id,)
     ).fetchone()
     conn.close()
     if blob_row and blob_row['thumbnail_blob']:
-        return Response(content=blob_row['thumbnail_blob'], media_type="image/jpeg")
+        data = bytes(blob_row['thumbnail_blob'])
+        etag = _thumb_mem.put(cache_key, data)
+        return _thumb_response(data, etag)
 
     raise HTTPException(status_code=404, detail="Thumbnail not available")
 
@@ -372,6 +447,7 @@ def delete_image(image_id: int, user=Depends(get_current_user)):
         conn.execute("DELETE FROM faces WHERE image_id = ?", (image_id,))
         conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
         conn.commit()
+        _thumb_mem.invalidate(image_id)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

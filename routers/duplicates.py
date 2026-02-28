@@ -193,6 +193,11 @@ def _do_resolve(db_path: str, keep_id: int, delete_ids: List[int],
             _delete_image_record(conn, did)
         conn.commit()
 
+        # Evict deleted images from the thumbnail memory cache
+        from routers.images import _thumb_mem
+        for did in delete_ids:
+            _thumb_mem.invalidate(did)
+
         # Filesystem actions
         for did, dup_path in dup_paths.items():
             if not dup_path or not Path(dup_path).exists():
