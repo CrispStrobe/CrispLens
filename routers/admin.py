@@ -141,37 +141,22 @@ class UpdateRequest(BaseModel):
 def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     """
     Stream the output of: sudo bash <fix_db_path>
-
-    Uses a sync generator so Starlette runs it in a thread-pool worker via
-    iterate_in_threadpool — identical pattern to the known-good test endpoints.
-    The fix_db.sh script skips the interactive prompt automatically when stdin
-    is not a terminal (DEVNULL), so no CRISP_YES env var trickery is needed.
-
-    Requires sudoers: face-rec ALL=(ALL) NOPASSWD: /bin/bash /path/to/fix_db.sh
+    Uses EXACTLY the same pattern as test-stream (0.4s sleep) to ensure
+    Apache flushes every line and the UI remains responsive.
     """
     from fastapi_app import state as _s
 
     config_path = (_s.config or {}).get('admin', {}).get('fix_db_path', '')
     script = body.fix_db_path.strip() or config_path or '/root/recognize_faces/fix_db.sh'
 
-    logger.info(
-        "admin.server_update: admin=%s  script=%s  fix_db_path_from_body=%r  config_path=%r",
-        admin.username, script,
-        body.fix_db_path or '(empty)',
-        config_path or '(not set in config)',
-    )
+    logger.info("admin.server_update: admin=%s  script=%s", admin.username, script)
 
     def _gen():
-        logger.info("admin.server_update: starting SSE stream for script: %s", script)
-        
-        # Increased sleeps between every yield to ensure Apache flushpackets=on
-        # sees real chunk gaps and flushes each event to the browser UI.
-        yield f"data: [admin] Script:       {script}\n\n";  _time.sleep(0.2)
-        yield f"data: [admin] Requested by: {admin.username}\n\n"; _time.sleep(0.2)
-        yield f"data: [admin] Running:      sudo bash {script}\n\n"; _time.sleep(0.2)
+        logger.info("admin.server_update: starting stream")
+        yield f"data: [admin] Script: {script}\n\n"; _time.sleep(0.4)
+        yield f"data: [admin] Running: sudo bash {script}\n\n"; _time.sleep(0.4)
 
         try:
-            logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
             proc = subprocess.Popen(
                 ['sudo', 'bash', script],
                 stdin=subprocess.DEVNULL,
@@ -182,96 +167,62 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             line_count = 0
             for raw in iter(proc.stdout.readline, b''):
                 stripped = raw.decode('utf-8', errors='replace').rstrip()
-                # Server-side logging for visibility
-                if line_count % 20 == 0:
-                    logger.info("admin.server_update: streaming line %d: %s", line_count, stripped[:80])
+                if line_count % 10 == 0:
+                    logger.info("admin.server_update: line %d: %s", line_count, stripped[:60])
                 
-                line_count += 1
                 yield f"data: {stripped}\n\n"
-                # Use a larger sleep per line (0.05s) to guarantee a proxy flush.
-                _time.sleep(0.05)
+                _time.sleep(0.4) # Matches test-stream
+                line_count += 1
 
             proc.wait()
             rc = proc.returncode
-            logger.info(
-                "admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count
-            )
-
-            yield f"data: [exit {rc}]\n\n";  _time.sleep(0.2)
-
-            # -15 = SIGTERM from the service restarting itself mid-run — treat as success
+            yield f"data: [exit {rc}]\n\n"; _time.sleep(0.4)
             if rc in (0, -15):
-                logger.info("admin.server_update: Success (rc=%d)", rc)
-                yield "data: ✓ Update complete — server will restart momentarily.\n\n"
+                yield "data: ✓ Update complete — server will restart.\n\n"
             else:
-                logger.warning("admin.server_update: Script failed with code %d", rc)
                 yield f"data: ✗ Script exited with code {rc}.\n\n"
 
-        except FileNotFoundError as exc:
-            logger.error("admin.server_update: sudo not found — %s", exc)
-            yield f"data: ✗ Could not launch sudo: {exc}\n\n"
         except Exception as exc:
-            logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
+            logger.error("admin.server_update error: %s", exc)
             yield f"data: ERROR: {exc}\n\n"
-        
-        logger.info("admin.server_update: generator finishing")
 
     return _sse_response(_gen())
 
 
 @router.get("/logs")
-def get_server_logs(lines: int = 200, admin=Depends(require_admin)):
+def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
     """
-    Return the last N lines of the Python app log as an SSE stream.
-    Uses significant sleeps to ensure Apache flushpackets=on works and 
-    to prevent overwhelming the browser UI with too many rapid updates.
+    Return last N lines of log as an SSE stream.
+    Uses EXACTLY the same pattern as test-stream (0.4s sleep).
     """
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
 
-    logger.info("admin.get_server_logs: request for %d lines from %s", lines, admin.username)
+    logger.info("admin.get_server_logs: %d lines for %s", lines, admin.username)
 
     def _gen():
-        # ── Locate log file ───────────────────────────────────────────────────
-        handler_path = ''
-        for h in _logging_mod.root.handlers:
-            if hasattr(h, 'baseFilename') and h.baseFilename:
-                handler_path = h.baseFilename
-                break
-
+        handler_path = next((h.baseFilename for h in _logging_mod.root.handlers if hasattr(h, 'baseFilename') and h.baseFilename), '')
         config_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
-        candidates = [handler_path, config_path, _app_log_file, 
-                      '/opt/crisp-lens/face_recognition.log', 'face_recognition.log',
-                      '/var/log/face_recognition.log']
-        
+        candidates = [handler_path, config_path, _app_log_file, '/opt/crisp-lens/face_recognition.log']
         log_file = next((c for c in candidates if c and os.path.isfile(c)), None)
 
         if not log_file:
-            yield f"data: [ERROR] Log file not found. Checked: {candidates[:3]}\n\n"
-            return
+            yield "data: [ERROR] Log file not found\n\n"; return
 
-        # First yield with significant sleep to break proxy buffering
-        yield f"data: [PATH] {log_file}\n\n"
-        _time.sleep(0.2)
+        yield f"data: [PATH] {log_file}\n\n"; _time.sleep(0.4)
 
         try:
-            logger.info("admin.get_server_logs: reading %d lines from %s", lines, log_file)
             with open(log_file, 'r', errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
             
             logger.info("admin.get_server_logs: streaming %d lines", len(tail))
             for i, ln in enumerate(tail):
-                # Echo each line as SSE
                 yield f"data: {ln.rstrip()}\n\n"
-                # 0.05s sleep = 20 lines per second. 200 lines = 10 seconds total.
-                # This is slow enough for any proxy to flush and for the UI to stay responsive.
-                _time.sleep(0.05)
+                logger.info("yielded the line:", ln.rstrip(), "\n")
+                _time.sleep(0.4) # Matches test-stream
 
             yield "data: [DONE]\n\n"
-            logger.info("admin.get_server_logs: stream complete")
-
         except Exception as exc:
-            logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
             yield f"data: [ERROR] {exc}\n\n"
 
     return _sse_response(_gen())

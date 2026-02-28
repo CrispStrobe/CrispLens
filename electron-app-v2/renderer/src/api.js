@@ -274,66 +274,50 @@ export function streamServerUpdate(fix_db_path = '') {
  *   data: [DONE]                   ← end marker
  *   data: [ERROR]<message>         ← on failure
  */
-export async function fetchServerLogs(lines = 300, onLine = null) {
+export async function fetchServerLogs(lines = 50, onLine = null) {
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 60000);
-  console.log(`[SSE] fetchServerLogs started: lines=${lines}`);
+  const tid = setTimeout(() => controller.abort(), 120000);
   try {
     const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
       credentials: 'include',
       signal: controller.signal,
     });
-    console.log(`[SSE] fetchServerLogs response: ok=${res.ok}, status=${res.status}`);
     if (!res.ok) {
       clearTimeout(tid);
       const text = await res.text().catch(() => res.statusText);
       throw new Error(`[HTTP ${res.status}] ${text}`);
     }
-    const reader   = res.body.getReader();
-    const dec      = new TextDecoder();
-    let   buf      = '';
-    let   path     = '';
+    const reader = res.body.getReader();
+    const dec    = new TextDecoder();
+    let   buf    = '';
     const outLines = [];
-    let   receivedCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) {
-        console.log(`[SSE] fetchServerLogs stream reader done. Total received: ${receivedCount}`);
-        break;
-      }
+      if (done) break;
       buf += dec.decode(value, { stream: true });
       const parts = buf.split('\n\n');
       buf = parts.pop();
       for (const p of parts) {
-        if (!p.startsWith('data: ')) {
-          console.warn(`[SSE] fetchServerLogs unexpected part: ${p.slice(0, 50)}...`);
-          continue;
-        }
+        if (!p.startsWith('data: ')) continue;
         const data = p.slice(6);
         if (data.startsWith('[PATH]')) {
-          path = data.slice(6);
-          console.log(`[SSE] fetchServerLogs [PATH]: ${path}`);
-          if (onLine) onLine({ path });
+          if (onLine) onLine({ path: data.slice(7).trim() });
         } else if (data === '[DONE]') {
-          console.log(`[SSE] fetchServerLogs [DONE] marker received`);
           if (onLine) onLine({ done: true });
         } else if (data.startsWith('[ERROR]')) {
-          console.error(`[SSE] fetchServerLogs [ERROR] marker: ${data.slice(7)}`);
           throw new Error(data.slice(7));
         } else {
-          receivedCount++;
           outLines.push(data);
           if (onLine) onLine({ line: data });
         }
       }
     }
     clearTimeout(tid);
-    return { lines: outLines, path };
+    return { lines: outLines };
   } catch (e) {
     clearTimeout(tid);
-    console.error(`[SSE] fetchServerLogs error:`, e);
-    if (e.name === 'AbortError') throw new Error('Timed out after 60 s');
+    if (e.name === 'AbortError') throw new Error('Timed out after 120 s');
     throw e;
   }
 }

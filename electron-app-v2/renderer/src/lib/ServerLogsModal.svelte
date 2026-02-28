@@ -11,7 +11,7 @@
   let logPath   = '';
   let loading   = false;
   let error     = '';
-  let lineCount = 300;
+  let lineCount = 50;
   let followLog = true;
   let logEl;
 
