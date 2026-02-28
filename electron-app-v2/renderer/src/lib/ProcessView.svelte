@@ -404,7 +404,7 @@
 
 </script>
 
-<ServerDirPicker bind:open={serverPickerOpen} title="Select server folder to process"
+<ServerDirPicker bind:open={serverPickerOpen} title="📡 {$t('pv_server_folder_label')}"
   startPath={batchFolder}
   on:select={e => batchFolder = e.detail} />
 
@@ -413,17 +413,17 @@
     <h2>
       {$t('tab_batch')}
       {#if $processingMode === 'local_process'}
-        <span class="mode-badge local">⚡ Local process</span>
+        <span class="mode-badge local">⚡ {$t('pv_mode_local')}</span>
       {:else}
-        <span class="mode-badge upload">⬆ Upload full</span>
+        <span class="mode-badge upload">⬆ {$t('pv_mode_upload')}</span>
       {/if}
     </h2>
     {#if queue.length > 0 && !running}
       <div class="header-actions">
         <button class="btn-sm" on:click={clearDone} disabled={doneItems.length === 0}>
-          Clear done ({doneItems.length})
+          {$t('pv_clear_done')} ({doneItems.length})
         </button>
-        <button class="btn-sm danger" on:click={clearAll}>Clear all</button>
+        <button class="btn-sm danger" on:click={clearAll}>{$t('pv_clear_all')}</button>
       </div>
     {/if}
   </div>
@@ -439,10 +439,10 @@
   <!-- Local base path (browser mode only — Electron has real paths) -->
   {#if !inElectron}
     <div class="base-path-row">
-      <label class="base-path-label" for="pv-base-path">Local base folder (optional):</label>
-      <input id="pv-base-path" class="base-path-input" type="text" placeholder="/Users/you/Downloads/pics"
+      <label class="base-path-label" for="pv-base-path">{$t('pv_local_base_label')}</label>
+      <input id="pv-base-path" class="base-path-input" type="text" placeholder={$t('pv_local_base_placeholder')}
              bind:value={localBasePath}
-             title="Prepended to filenames when the browser cannot expose the full path" />
+             title={$t('pv_local_base_hint')} />
     </div>
   {/if}
 
@@ -458,12 +458,12 @@
   >
     <div class="drop-icon">📂</div>
     <div class="drop-label">
-      {dragOver ? 'Drop to add to queue' : 'Drop images or folders here'}
+      {dragOver ? $t('pv_drop_active') : $t('pv_drop_idle')}
     </div>
-    <div class="drop-sub">Multiple files supported · JPEG, PNG, WebP, …</div>
+    <div class="drop-sub">{$t('pv_drop_sub')}</div>
     <div class="drop-buttons">
-      <button on:click={pickFiles}>💻 Select files…</button>
-      <button on:click={pickFolder}>💻 Select folder…</button>
+      <button on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
+      <button on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
     </div>
   </div>
 
@@ -471,21 +471,21 @@
   {#if queue.length > 0}
     <div class="controls-bar">
       <span class="queue-count">
-        {#if finished}✓ Done —{/if}
-        {queue.length} item{queue.length !== 1 ? 's' : ''}
-        ({pendingItems.length} pending)
+        {#if finished}✓ {$t('batch_complete').replace('!','')} —{/if}
+        {queue.length} {queue.length !== 1 ? $t('pv_items') : $t('pv_item')}
+        ({pendingItems.length} {$t('pv_pending')})
       </span>
       {#if !running}
         <select bind:value={visibility} class="vis-select" title="Visibility">
-          <option value="shared">Shared</option>
-          <option value="private">Private</option>
+          <option value="shared">{$t('fs_shared')}</option>
+          <option value="private">{$t('fs_private')}</option>
         </select>
         <button
           class="primary"
           on:click={startProcessing}
           disabled={pendingItems.length === 0}
         >
-          ▶ Process {pendingItems.length} image{pendingItems.length !== 1 ? 's' : ''}
+          {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')}
         </button>
       {:else}
         <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>
@@ -495,14 +495,14 @@
 
   <!-- Server folder section: always visible alongside drop zone -->
   <div class="server-path-input">
-    <span class="server-path-label">📡 Or process a server-side folder directly</span>
+    <span class="server-path-label">📡 {$t('pv_server_folder_label')}</span>
     <div class="server-path-row">
-      <input type="text" bind:value={batchFolder} placeholder="/data/photos  (path on the VPS)" class="flex1" />
-      <button on:click={() => serverPickerOpen = true} title="Browse server filesystem">Browse…</button>
+      <input type="text" bind:value={batchFolder} placeholder={$t('pv_server_folder_ph')} class="flex1" />
+      <button on:click={() => serverPickerOpen = true} title="Browse server filesystem">{$t('pv_browse')}</button>
     </div>
     <div class="server-folder-row2">
       <label class="checkbox-row">
-        <input type="checkbox" bind:checked={batchRecursive} /> Subfolders
+        <input type="checkbox" bind:checked={batchRecursive} /> {$t('pv_subfolders')}
       </label>
       {#if batchFolder.trim() && !running}
         <button class="primary" on:click={startFolderBatch}>{$t('process_folder')}</button>
@@ -515,24 +515,24 @@
   <!-- Detection settings (collapsible) -->
   <div class="det-settings">
     <button class="det-toggle" on:click={() => showDetParams = !showDetParams}>
-      ⚙ Erkennungseinstellungen {showDetParams ? '▲' : '▼'}
+      ⚙ {$t('pv_det_settings')} {showDetParams ? '▲' : '▼'}
     </button>
     {#if showDetParams}
       <div class="det-params-box">
         <div class="det-param-row">
-          <label>Erkennungsschwelle: <strong>{detThresh}</strong></label>
+          <label>{$t('detection_threshold')}: <strong>{detThresh}</strong></label>
           <input type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} />
         </div>
         <div class="det-param-row">
-          <label>Min. Gesichtsgröße: <strong>{minFaceSize}px</strong></label>
+          <label>{$t('min_face_size')}: <strong>{minFaceSize}px</strong></label>
           <input type="range" min="10" max="200" step="5" bind:value={minFaceSize} />
         </div>
         <div class="det-param-row">
-          <label>Gewissheit: <strong>{recThresh}</strong></label>
+          <label>{$t('recognition_certainty')}: <strong>{recThresh}</strong></label>
           <input type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
         </div>
         <div class="det-param-row">
-          <label>Erkennungsmodell</label>
+          <label>{$t('detection_model')}</label>
           <select bind:value={detModel}>
             {#each DET_MODELS as m}
               <option value={m.value}>{m.label}</option>
@@ -540,7 +540,7 @@
           </select>
         </div>
         <div class="det-param-row">
-          <label>Verkleinern auf (px) <span class="hint">0 = Original</span></label>
+          <label>{$t('pv_max_size_label')} <span class="hint">{$t('pv_max_size_hint')}</span></label>
           <input type="number" bind:value={maxSize} min="0" max="9999" step="100"
                  placeholder="0" class="num-input" />
         </div>
@@ -557,8 +557,8 @@
       <div class="progress-label">
         {doneCount} / {totalCount}
         {#if errorCount > 0}<span class="err-count"> · {errorCount} {$t('failed')}</span>{/if}
-        {#if skippedCount > 0}<span class="skip-count"> · {skippedCount} already uploaded</span>{/if}
-        {#if sharedDupCount > 0}<span class="shared-count"> · {sharedDupCount} shared by others</span>{/if}
+        {#if skippedCount > 0}<span class="skip-count"> · {skippedCount} {$t('pv_already_uploaded')}</span>{/if}
+        {#if sharedDupCount > 0}<span class="shared-count"> · {sharedDupCount} {$t('pv_shared_by_others')}</span>{/if}
         {#if finished} · {$t('batch_complete')} ✓{/if}
         {#if cancelled} · {$t('operation_cancelled')}{/if}
         <span class="pct">{progressPct}%</span>
@@ -588,12 +588,12 @@
           <div class="info-cell">
             <div class="line1">
               <span class="item-name" title={item.path}>{item.name}</span>
-              {#if item.status === 'pending'}<span class="badge pending">pending</span>{/if}
-              {#if item.status === 'processing'}<span class="badge processing">processing…</span>{/if}
+              {#if item.status === 'pending'}<span class="badge pending">{$t('pv_badge_pending')}</span>{/if}
+              {#if item.status === 'processing'}<span class="badge processing">{$t('pv_badge_processing')}</span>{/if}
               {#if item.status === 'done'}
                 <span class="badge done">✓</span>
                 {#if item.faces > 0}
-                  <span class="badge faces">{item.faces} face{item.faces !== 1 ? 's' : ''}</span>
+                  <span class="badge faces">{item.faces} {item.faces !== 1 ? $t('pv_images') : $t('pv_image')}</span>
                 {/if}
                 {#if item.people?.length > 0}
                   <span class="badge people">{item.people.join(', ')}</span>
@@ -601,12 +601,12 @@
               {/if}
               {#if item.status === 'skipped'}
                 {#if item.skipReason === 'shared'}
-                  <span class="badge shared-dup" title="Same content already uploaded by another user">↩ shared</span>
+                  <span class="badge shared-dup" title={$t('pv_shared_dup_title')}>↩ {$t('fs_shared').toLowerCase()}</span>
                 {:else}
-                  <span class="badge skipped" title="Already uploaded by you">↩ duplicate</span>
+                  <span class="badge skipped" title={$t('pv_own_dup_title')}>↩ {$t('skipped').toLowerCase()}</span>
                 {/if}
               {/if}
-              {#if item.status === 'error'}<span class="badge error">error</span>{/if}
+              {#if item.status === 'error'}<span class="badge error">{$t('pv_badge_error')}</span>{/if}
             </div>
             <div class="line2">
               {#if item.status === 'done' && item.description}
@@ -623,7 +623,7 @@
 
           <!-- Remove button (only when not running) -->
           {#if !running}
-            <button class="remove-btn" title="Remove" on:click={() => removeItem(item.id)}>✕</button>
+            <button class="remove-btn" title={$t('pv_remove')} on:click={() => removeItem(item.id)}>✕</button>
           {/if}
         </div>
       {/each}

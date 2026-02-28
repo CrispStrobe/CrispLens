@@ -644,7 +644,11 @@ def get_or_create_thumbnail(
     Files are named  <image_id>_<size>.jpg  inside thumb_dir.
     Returns None if Pillow is unavailable or the source file cannot be opened.
 
-    Phase-B API: GET /api/images/{image_id}/thumbnail?size={size}
+    When generating a new size, prefers the smallest existing on-disk thumbnail
+    that is >= the requested size as the resize source (much faster to decode
+    than the full original, e.g. 20 KB cached JPEG vs 20 MB RAW file).
+    EXIF rotation is only applied when opening the original file — disk
+    thumbnails already have rotation baked in.
     """
     if not PIL_AVAILABLE:
         return None
@@ -653,11 +657,32 @@ def get_or_create_thumbnail(
     if thumb_path.exists():
         return str(thumb_path)
 
+    # Find the best source to resize from: prefer the smallest existing
+    # disk thumbnail that is still >= the requested size.  Avoids decoding
+    # a large original when a compact cached JPEG already exists.
+    source_path = filepath
+    from_existing_thumb = False
+    try:
+        best_size = None
+        for candidate in Path(thumb_dir).glob(f"{image_id}_*.jpg"):
+            try:
+                csize = int(candidate.stem.split('_')[1])
+            except (ValueError, IndexError):
+                continue
+            if csize >= size and (best_size is None or csize < best_size):
+                best_size = csize
+                source_path = str(candidate)
+                from_existing_thumb = True
+    except Exception:
+        pass  # fall back to original
+
     try:
         from PIL import ImageOps as _ImageOps
         Path(thumb_dir).mkdir(parents=True, exist_ok=True)
-        with Image.open(filepath) as img:
-            img = _ImageOps.exif_transpose(img)   # bake EXIF rotation before resizing
+        with Image.open(source_path) as img:
+            if not from_existing_thumb:
+                # Original file: bake EXIF rotation before resizing
+                img = _ImageOps.exif_transpose(img)
             img.thumbnail((size, size), Image.LANCZOS)
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')

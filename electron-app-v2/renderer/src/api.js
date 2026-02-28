@@ -44,7 +44,14 @@ export function fetchImages({ person='', tag='', scene='', folder='', path='', d
 
 export function fetchImage(id) { return get(`/images/${id}`); }
 
-export function thumbnailUrl(id, size = 200) { return `${BASE}/images/${id}/thumbnail?size=${size}`; }
+// Snap the requested size to the nearest standard bucket so that small slider
+// movements share a browser-cache entry.  The <img> CSS width/height still uses
+// the real thumbSize, so the browser downscales visually — imperceptibly.
+const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];
+function _snapSize(size) {
+  return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
+}
+export function thumbnailUrl(id, size = 200) { return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`; }
 export function previewUrl(id)               { return `${BASE}/images/${id}/preview`; }
 export function fullUrl(id)                  { return `${BASE}/images/${id}/full`; }
 export function downloadUrl(id)              { return `${BASE}/images/${id}/download`; }

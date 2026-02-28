@@ -41,6 +41,10 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 - [Deployment topologies](#deployment-topologies)
 - [File structure](#file-structure)
 - [Troubleshooting](#troubleshooting)
+- [Internationalisation (i18n)](#internationalisation-i18n)
+- [Thumbnail caching](#thumbnail-caching)
+- [Admin: Server Update & Logs](#admin-server-update--logs)
+- [Batch processing — ProcessView details](#batch-processing--processview-details)
 
 ---
 
@@ -958,3 +962,202 @@ face_rec/
 | Admin "Update Server" exit code 1 | `NoNewPrivileges=yes` in systemd unit blocks sudo setuid | Run `sudo bash patch_deployment.sh` (FIX 2) or manually remove `NoNewPrivileges=yes` from `/etc/systemd/system/face-rec.service` and `systemctl daemon-reload && systemctl restart face-rec` |
 | Server logs / API responses hang in browser | Apache mod_deflate buffering (missing `no-gzip` Location block) | Add `<Location /api> SetEnv no-gzip 1 </Location>` inside each Apache VirtualHost; or run `sudo bash patch_deployment.sh` (FIX 3) |
 | SSE stream works on HTTP but not HTTPS | certbot added a new `<VirtualHost *:443>` block without Location directives | Re-run `sudo bash patch_deployment.sh` — it patches all VirtualHost blocks that contain a ProxyPass directive |
+
+---
+
+## Internationalisation (i18n)
+
+CrispLens supports **German (de)** and **English (en)**. The active language is chosen in Settings and stored per-user.
+
+### How i18n works at runtime
+
+The translation system has **one authoritative runtime source**: `routers/settings.py`.
+
+```
+GET /api/settings/i18n   →  returns the _DE dict from routers/settings.py
+```
+
+On startup the Svelte frontend calls `fetchTranslations()` which merges the backend dict into the global `translations` store. The `$t('key')` helper function reads from this store.
+
+```
+App.svelte → fetchTranslations() → GET /api/settings/i18n
+                                        ↓
+                              routers/settings.py _DE dict
+                                        ↓
+                              translations store (Svelte writable)
+                                        ↓
+                              $t('key') → translated string
+```
+
+### Files overview
+
+| File | Role |
+|---|---|
+| `routers/settings.py` `_DE` dict | **Authoritative runtime source.** All German translations served to the frontend. |
+| `electron-app-v2/renderer/src/stores.js` `EN` object | English fallback strings embedded in the Svelte bundle. The `_DE` fallback in `stores.js` is dead code — it is never loaded at runtime. |
+| `i18n.py` (root-level) | Dead code from the Gradio v1 era — not imported by the FastAPI v2 app. |
+
+### Adding or modifying translations
+
+1. **Add the English string** to `stores.js` `EN` object (this is the fallback if a key is missing from the backend).
+2. **Add the German translation** to `routers/settings.py` `_DE` dict.
+3. Use `$t('your_key')` in Svelte templates.
+
+> **Common mistake:** adding a key only to `stores.js TRANSLATIONS.de` — this dict is never loaded at runtime and the translation will silently not appear in German.
+
+### Language selection
+
+```
+Settings → Interface → Language (de / en)
+PUT /api/settings/ui  { "language": "de" }
+```
+
+The language preference is stored per-user in the `settings` table. Changing language triggers a `fetchTranslations()` call to reload the i18n dict.
+
+---
+
+## Thumbnail caching
+
+CrispLens uses a three-layer caching strategy for thumbnails to minimise latency across all deployment scenarios (local, remote VPS, PWA).
+
+### Layer 1 — Disk cache
+
+`image_ops.py` `get_or_create_thumbnail(image_id, filepath, thumb_dir, size)` writes `<thumb_dir>/<image_id>_<size>.jpg` on first access. Subsequent requests for the same `(image_id, size)` pair read directly from disk — the full image file is never opened again.
+
+**Source optimisation:** when a larger disk thumbnail already exists (e.g., the 400 px thumbnail is cached and a 200 px one is requested), Pillow opens the smaller existing thumbnail instead of the full original. This saves I/O for large RAW/TIFF files.
+
+### Layer 2 — In-process memory cache (LRU)
+
+`routers/images.py` holds a thread-safe `_ThumbCache` (256 MB limit by default, `OrderedDict`-based LRU). Hot thumbnails are served entirely from RAM — no disk read, no DB query.
+
+- Key: `(image_id, size)`
+- Value: `(bytes, etag)` where `etag = MD5(bytes)`
+- Eviction: LRU when total byte size exceeds the limit
+- Invalidation: `_thumb_mem.invalidate(image_id)` is called on image delete and duplicate resolution to prevent stale bytes
+
+Cache stats are exposed at `GET /health` → `thumb_cache.entries` / `thumb_cache.size_mb`.
+
+### Layer 3 — HTTP cache (browser / CDN)
+
+Every thumbnail response includes:
+
+```
+Cache-Control: public, max-age=86400, stale-while-revalidate=3600
+ETag: "<md5-of-bytes>"
+```
+
+On re-request the browser sends `If-None-Match: "<etag>"`. If the bytes haven't changed, the server returns `304 Not Modified` with no body — zero bandwidth for unchanged thumbnails.
+
+### Client-side size snapping
+
+`api.js` `thumbnailUrl(id, size)` snaps the requested size to the nearest standard bucket before building the URL:
+
+```
+buckets: [150, 200, 300, 400, 600, 800, 1000]
+```
+
+This means small gallery-slider adjustments (e.g., 270 → 280 px) don't produce unique URLs. The browser cache hit rate stays high even as the user drags the size slider.
+
+CSS `width`/`height` still use the exact `$thumbSize` value for pixel-perfect layout; only the URL parameter is snapped.
+
+### PWA / remote scenario
+
+When the browser runs on one machine and FastAPI+images run on a VPS:
+
+- Layer 1 (disk) and Layer 2 (memory) live on the VPS → the server never re-generates a thumbnail for the same `(id, size)` pair
+- Layer 3 (browser cache) lives on the user's device → unchanged images are served as `304` over the network
+- Result: only the first load per `(id, size)` per device requires a full network transfer
+
+---
+
+## Admin: Server Update & Logs
+
+> Available only to users with the `admin` role. Requires a deployed VPS with `fix_db.sh` configured.
+
+### "Update Server" button
+
+Located at **Settings → Admin → Server Management → Update Server**.
+
+Clicking **Run Update** executes `fix_db.sh` as root via `sudo` on the server. The script typically:
+
+1. `git pull` — pull the latest code
+2. Pip install — apply any new Python dependencies
+3. DB migrations — `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` statements
+4. `systemctl restart face-rec` — restart the service (connection drops momentarily)
+
+The script path is configured via `config.yaml`:
+
+```yaml
+admin:
+  fix_db_path: /opt/crisp-lens/fix_db.sh
+```
+
+It is set automatically by `deploy-v2.sh` and `patch_deployment.sh`. You can also set it manually in Settings → Admin → fix_db.sh path.
+
+**Prerequisites on the VPS:**
+
+1. `/etc/sudoers.d/crisp-lens` must grant the service user NOPASSWD access to `fix_db.sh`:
+   ```
+   face-rec ALL=(root) NOPASSWD: /opt/crisp-lens/fix_db.sh
+   ```
+2. The systemd unit must **not** have `NoNewPrivileges=yes` (it blocks the sudo setuid bit).
+
+Run `sudo bash patch_deployment.sh` to apply both fixes automatically.
+
+### "View Logs" button
+
+Located at **Settings → Admin → Server Management → View Logs**.
+
+Opens a modal that fetches the last N lines from the server log file via `GET /api/admin/logs`. The **Follow** toggle polls every 2 seconds for new lines. **Refresh** fetches once.
+
+The log file path is resolved from `config.yaml → logging.file` (default: `face_recognition.log` in the data directory).
+
+API: `GET /api/admin/logs?lines=200&path=<optional-override>`
+
+---
+
+## Batch processing — ProcessView details
+
+The **Batch / Process** view (`ProcessView.svelte`) supports two ingest modes and a server-side folder scan:
+
+### Mode B — Upload full (default for remote VPS)
+
+Electron or browser reads each image file and POSTs it to `POST /api/ingest/upload-local`. The VPS runs InsightFace + optional VLM and stores the image server-side. The `local_path` column records the original file path so the Electron lightbox can serve full-res images via `localfile://` without a network round-trip.
+
+### Mode C — Local process (Electron only)
+
+The Electron subprocess runs InsightFace locally and uploads only the computed face embeddings + a small JPEG thumbnail. No VLM. Useful when the original files must not leave the local machine.
+
+### Server folder section
+
+Always visible below the drop zone. Enter (or browse with **Browse…**) any server-side absolute path, tick **Subfolders** to recurse, and click **Process folder** (`POST /api/process/batch` SSE). No file transfer — the VPS reads the files directly from its own filesystem.
+
+### "Local base folder (optional)" field
+
+Visible in **browser / PWA mode only** (hidden in Electron where full file paths are available).
+
+Web browsers deliberately hide the full absolute path of selected files (security restriction). Only the bare filename (e.g. `IMG_1234.jpg`) is accessible to JavaScript. The `local_path` stored on the server would therefore be useless for the Electron lightbox.
+
+Set **Local base folder** to the absolute path of the folder you selected:
+
+```
+Local base folder: /Users/alice/Downloads/holiday_pics
+```
+
+When processing, the frontend prepends this base to each bare filename:
+```
+/Users/alice/Downloads/holiday_pics/IMG_1234.jpg
+```
+
+This reconstructed path is sent as `local_path` to the server and stored in the DB, so the Electron lightbox on the same machine can later serve the file via `localfile://`.
+
+Leave it empty if you do not use the Electron lightbox or if the server already has access to the files.
+
+### Duplicate handling
+
+| Status badge | Meaning |
+|---|---|
+| `↩ duplicate` | Same file already uploaded by **you** — returned existing record, no reprocessing |
+| `↩ shared` | Same file content uploaded by **another user** — returned that user's record (cross-user deduplication) |
+
+Progress line shows counts: `N already uploaded` (own) / `N shared by others` (cross-user).
