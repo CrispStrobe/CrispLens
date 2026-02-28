@@ -12,7 +12,7 @@
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags, fetchAlbums, fetchServerLogs,
-           testAdminStream, testAdminStreamFast, testAdminStreamPost, testAdminJson } from '../api.js';
+           testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
 
@@ -629,9 +629,6 @@
     }
   }
 
-  const doTestStream     = () => _runSseTest('GET SSE+sleep',  testAdminStream);
-  const doTestStreamFast = () => _runSseTest('GET SSE fast',   testAdminStreamFast);
-  const doTestStreamPost = () => _runSseTest('POST SSE+sleep', testAdminStreamPost);
   const doTestLogs       = () => _runSseTest('Logs SSE (20)',  () => fetchServerLogs(20));
   const doTestLogsFull   = () => _runSseTest('Logs SSE (100)', () => fetchServerLogs(100));
 
@@ -1101,18 +1098,6 @@
         SSE / transport diagnostics
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="small" on:click={doTestStream}     disabled={testRunning}
-                title="GET SSE with 0.4 s sleep — baseline, should always work">
-          🟢 GET SSE+sleep
-        </button>
-        <button class="small" on:click={doTestStreamFast} disabled={testRunning}
-                title="GET SSE with NO sleep (burst) — hangs? → TCP/Nagle coalescing is root cause">
-          🟡 GET SSE fast
-        </button>
-        <button class="small" on:click={doTestStreamPost} disabled={testRunning}
-                title="POST SSE with sleep — hangs? → Apache buffers POST response bodies">
-          🟠 POST SSE+sleep
-        </button>
         <button class="small" on:click={doTestLogs}       disabled={testRunning}
                 title="Fetch 20 log lines via SSE — should work exactly like the others">
           📋 Logs (20)

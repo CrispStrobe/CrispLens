@@ -11,7 +11,7 @@
   let logPath   = '';
   let loading   = false;
   let error     = '';
-  let lineCount = 50;
+  let lineCount = 100;
   let followLog = true;
   let logEl;
   let transport = 'sse'; // 'sse' or 'json'

@@ -246,12 +246,6 @@ export function fetchUserVlmPrefs()                 { return get('/settings/user
  */
 // ── Admin debug test endpoints ────────────────────────────────────────────
 
-/** GET SSE with sleep (known good). */
-export function testAdminStream()     { return fetch(`${BASE}/admin/test-stream`,      { credentials: 'include' }); }
-/** GET SSE with NO sleep (burst — does Apache buffer fast SSE?). */
-export function testAdminStreamFast() { return fetch(`${BASE}/admin/test-stream-fast`, { credentials: 'include' }); }
-/** POST SSE with sleep (does Apache buffer POST response bodies?). */
-export function testAdminStreamPost() { return fetch(`${BASE}/admin/test-stream-post`, { method: 'POST', credentials: 'include' }); }
 /** GET plain JSONResponse (does Apache ever deliver JSON body?). */
 export function testAdminJson()       { return fetch(`${BASE}/admin/test-json`,         { credentials: 'include' }); }
 

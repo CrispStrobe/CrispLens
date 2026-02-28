@@ -42,77 +42,6 @@ def _sse_response(gen):
 
 # ─────────────────────────── DEBUG TEST ENDPOINTS ────────────────────────────
 
-@router.get("/test-stream")
-def test_stream(admin=Depends(require_admin)):
-    """
-    KNOWN GOOD: GET SSE with 0.4 s sleep between lines.
-    If this works but the others don't, use the results to narrow down the cause.
-    """
-    def _gen():
-        for i in range(1, 6):
-            msg = f"data: [GET/sleep] line {i} — {_time.strftime('%H:%M:%S')} user={admin.username}\n\n"
-            logger.debug("test-stream yield %d", i)
-            yield msg
-            _time.sleep(0.4)
-        yield "data: ✓ GET/sleep stream complete\n\n"
-
-    return _sse_response(_gen())
-
-
-@router.get("/test-stream-fast")
-def test_stream_fast(admin=Depends(require_admin)):
-    """
-    GET SSE with NO sleep (burst) — 6 lines, ~300 bytes total.
-    Works because the response is tiny (fits in one TCP segment).
-    """
-    def _gen():
-        logger.info("test-stream-fast: starting burst of 6 lines")
-        for i in range(1, 6):
-            logger.debug("test-stream-fast yield %d", i)
-            yield f"data: [GET/fast] line {i} — {_time.strftime('%H:%M:%S')}\n\n"
-        yield "data: ✓ GET/fast stream complete\n\n"
-        logger.info("test-stream-fast: generator exhausted")
-
-    return _sse_response(_gen())
-
-
-@router.get("/test-stream-large")
-def test_stream_large(admin=Depends(require_admin)):
-    """
-    GET SSE — 300 dummy lines, NO sleep.
-    If this hangs too → the problem is response SIZE (Apache flushpackets needs
-    real time-gaps; large bursts don't get flushed).
-    If this works → the problem is specific to the /logs content.
-    """
-    def _gen():
-        logger.info("test-stream-large: starting 300-line burst")
-        for i in range(1, 301):
-            yield f"data: [large] line {i:03d} of 300 — {_time.strftime('%H:%M:%S')}\n\n"
-        yield "data: ✓ large burst complete\n\n"
-        logger.info("test-stream-large: done")
-
-    return _sse_response(_gen())
-
-
-@router.post("/test-stream-post")
-def test_stream_post(admin=Depends(require_admin)):
-    """
-    POST SSE with 0.4 s sleep.
-    If this works but POST /update hangs → the issue is specific to the update
-    endpoint (subprocess I/O or nested generator pattern).
-    """
-    def _gen():
-        logger.info("test-stream-post: starting POST SSE stream")
-        for i in range(1, 4):
-            logger.debug("test-stream-post yield %d", i)
-            yield f"data: [POST/sleep] line {i} — {_time.strftime('%H:%M:%S')}\n\n"
-            _time.sleep(0.4)
-        yield "data: ✓ POST/sleep stream complete\n\n"
-        logger.info("test-stream-post: done")
-
-    return _sse_response(_gen())
-
-
 @router.get("/test-json")
 def test_json(admin=Depends(require_admin)):
     """
@@ -140,21 +69,21 @@ class UpdateRequest(BaseModel):
 @router.post("/update")
 def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     """
-    Stream fix_db.sh output. Matches test-stream 0.4s pattern.
+    Stream fix_db.sh output. 0.05s sleep per line for responsiveness.
     """
     from fastapi_app import state as _s
     config_path = (_s.config or {}).get('admin', {}).get('fix_db_path', '')
     script = body.fix_db_path.strip() or config_path or '/root/recognize_faces/fix_db.sh'
 
     def _gen():
-        yield f"data: [admin] Script: {script}\n\n"; _time.sleep(0.4)
+        yield f"data: [admin] Script: {script}\n\n"; _time.sleep(0.05)
         try:
             proc = subprocess.Popen(['sudo', 'bash', script], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for raw in iter(proc.stdout.readline, b''):
                 yield f"data: {raw.decode('utf-8', errors='replace').rstrip()}\n\n"
-                _time.sleep(0.4)
+                _time.sleep(0.05)
             proc.wait()
-            yield f"data: [exit {proc.returncode}]\n\n"; _time.sleep(0.4)
+            yield f"data: [exit {proc.returncode}]\n\n"; _time.sleep(0.05)
         except Exception as e:
             yield f"data: ERROR: {e}\n\n"
 
@@ -162,9 +91,9 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
 
 
 @router.get("/logs")
-def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
+def get_server_logs(lines: int = 100, admin=Depends(require_admin)):
     """
-    Stream app logs. Matches test-stream 0.4s pattern.
+    Stream app logs. 0.05s sleep per line for responsiveness.
     """
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
@@ -174,13 +103,13 @@ def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
         log_file = next((c for c in [h_path, c_path, _app_log_file, '/opt/crisp-lens/face_recognition.log'] if c and os.path.isfile(c)), None)
         if not log_file:
             yield "data: [ERROR] Log file not found\n\n"; return
-        yield f"data: [PATH] {log_file}\n\n"; _time.sleep(0.4)
+        yield f"data: [PATH] {log_file}\n\n"; _time.sleep(0.05)
         try:
             with open(log_file, 'r', errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
             for ln in tail:
                 yield f"data: {ln.rstrip()}\n\n"
-                _time.sleep(0.4)
+                _time.sleep(0.05)
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {e}\n\n"
@@ -189,7 +118,7 @@ def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
 
 
 @router.get("/logs-json")
-def get_server_logs_json(lines: int = 50, _=Depends(require_admin)):
+def get_server_logs_json(lines: int = 100, _=Depends(require_admin)):
     """
     Method 2: Non-streaming JSON response for log retrieval.
     If SSE hangs, this static method should still work through any proxy.

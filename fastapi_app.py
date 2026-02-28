@@ -32,6 +32,12 @@ logging.basicConfig(
     ],
     force=True,
 )
+# Ensure uvicorn access logs also go to our log file
+for _logname in ["uvicorn", "uvicorn.error", "uvicorn.access"]:
+    _log = logging.getLogger(_logname)
+    _log.handlers = logging.root.handlers
+    _log.propagate = False
+
 logger = logging.getLogger(__name__)
 
 from datetime import datetime
