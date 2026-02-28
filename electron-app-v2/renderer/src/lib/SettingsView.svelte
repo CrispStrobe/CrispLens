@@ -633,6 +633,7 @@
   const doTestStreamFast = () => _runSseTest('GET SSE fast',   testAdminStreamFast);
   const doTestStreamPost = () => _runSseTest('POST SSE+sleep', testAdminStreamPost);
   const doTestLogs       = () => _runSseTest('Logs SSE (20)',  () => fetchServerLogs(20));
+  const doTestLogsFull   = () => _runSseTest('Logs SSE (100)', () => fetchServerLogs(100));
 
   // ── DB credential health check ────────────────────────────────────────────
   async function doCheckCredentials() {
@@ -1114,7 +1115,11 @@
         </button>
         <button class="small" on:click={doTestLogs}       disabled={testRunning}
                 title="Fetch 20 log lines via SSE — should work exactly like the others">
-          📋 Logs SSE
+          📋 Logs (20)
+        </button>
+        <button class="small" on:click={doTestLogsFull}   disabled={testRunning}
+                title="Fetch 100 log lines via SSE — proves large SSE works in-page">
+          📋 Logs (100)
         </button>
         <button class="small" on:click={_runJsonTest}     disabled={testRunning}
                 title="GET plain JSON — hangs? → Apache buffers all non-SSE responses">

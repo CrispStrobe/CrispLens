@@ -17,46 +17,57 @@
   let transport = 'sse'; // 'sse' or 'json'
   let controller = null;
 
-  $: if (lines && followLog && logEl) tick().then(() => {
+  $: if (lines && followLog && logEl) {
+    // Simple direct scroll to avoid tick() overhead during rapid updates
     logEl.scrollTop = logEl.scrollHeight;
-  });
+  }
 
   async function load() {
     if (loading) return;
+    console.log('[LogsModal] load() started, transport=', transport);
     loading = true;
     error   = '';
     lines   = [];
     
-    // Cancel any existing controller
     if (controller) controller.abort();
     controller = new AbortController();
 
-    // Small delay to let the modal UI render fully before we start potentially heavy processing
-    await new Promise(r => setTimeout(r, 100));
+    // Small delay to ensure modal is painted
+    await new Promise(r => setTimeout(r, 200));
 
     try {
       if (transport === 'sse') {
+        console.log('[LogsModal] Fetching SSE logs...');
         const resp = await fetchServerLogs(lineCount, { signal: controller.signal });
         if (!resp.ok) { error = `HTTP ${resp.status}`; return; }
+        
         const reader = resp.body.getReader();
         const dec    = new TextDecoder();
         let   buf    = '';
+        
+        console.log('[LogsModal] SSE Reader obtained, starting loop');
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          
           buf += dec.decode(value, { stream: true });
           const parts = buf.split('\n\n');
           buf = parts.pop();
+          
           for (const p of parts) {
             if (!p.startsWith('data: ')) continue;
             const data = p.slice(6);
             if (data.startsWith('[PATH]')) logPath = data.slice(6).trim();
             else if (data === '[DONE]') { /* end */ }
             else if (data.startsWith('[ERROR]')) error = data.slice(7);
-            else lines = [...lines, data];
+            else {
+              lines = [...lines, data];
+            }
           }
         }
+        console.log('[LogsModal] SSE Loop finished, total lines:', lines.length);
       } else {
+        console.log('[LogsModal] Fetching JSON logs...');
         const data = await fetchServerLogsJson(lineCount);
         if (data.error) error = data.error;
         else {
@@ -65,6 +76,7 @@
         }
       }
     } catch (e) {
+      console.error('[LogsModal] Error:', e);
       if (e.name !== 'AbortError') error = e.message || String(e);
     } finally {
       loading = false;
@@ -133,7 +145,7 @@
       {/if}
 
       <div class="log-box" bind:this={logEl}>
-        {#if loading}
+        {#if !lines.length && !error && loading}
           <div class="loading-hint">{$t('loading')}</div>
         {:else if !lines.length && !error}
           <div class="loading-hint" style="color:#806040;">No log lines found.</div>
@@ -146,6 +158,9 @@
               class:info={line.includes(' INFO ')}
             >{line}</div>
           {/each}
+          {#if loading && lines.length > 0}
+            <div class="log-line" style="opacity:0.5;">...</div>
+          {/if}
         {/if}
       </div>
 

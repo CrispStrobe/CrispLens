@@ -13,85 +13,95 @@
   let done     = false;
   let error    = '';
   let logEl;
-  let followLog = true;
-
-  let controller = null;
-
-  $: if (lines && followLog && logEl) tick().then(() => { logEl.scrollTop = logEl.scrollHeight; });
-
-  function reset() { 
-    if (controller) controller.abort();
-    lines = []; 
-    running = false; 
-    done = false; 
-    error = ''; 
-  }
-
-  function close() {
-    if (running) return;
-    if (controller) controller.abort();
-    show = false;
-    reset();
-    dispatch('close');
-  }
-
-  async function doUpdate() {
-    if (running) return;
-    running = true;
-    lines   = [];
-    done    = false;
-    error   = '';
-
-    if (controller) controller.abort();
-    controller = new AbortController();
-
-    // Delay to let UI render first
-    await new Promise(r => setTimeout(r, 150));
-
-    try {
-      const resp = await streamServerUpdate(fixDbPath.trim(), { signal: controller.signal });
-      if (!resp.ok) {
-        try {
-          const json = await resp.json();
-          error = `[HTTP ${resp.status}] ${json.detail || JSON.stringify(json)}`;
-        } catch {
-          error = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText)}`;
+    let followLog = true;
+    let controller = null;
+  
+    $: if (lines && followLog && logEl) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  
+    function reset() { 
+      console.log('[UpdateModal] resetting state');
+      if (controller) controller.abort();
+      lines = []; 
+      running = false; 
+      done = false; 
+      error = ''; 
+    }
+  
+    function close() {
+      console.log('[UpdateModal] close() clicked, running=', running);
+      if (running) return;
+      if (controller) controller.abort();
+      show = false;
+      reset();
+      dispatch('close');
+    }
+  
+    async function doUpdate() {
+      if (running) return;
+      console.log('[UpdateModal] doUpdate() starting, fixDbPath=', fixDbPath);
+      running = true;
+      lines   = [];
+      done    = false;
+      error   = '';
+  
+      if (controller) controller.abort();
+      controller = new AbortController();
+  
+      // Delay to let UI render first
+      await new Promise(r => setTimeout(r, 200));
+  
+      try {
+        console.log('[UpdateModal] Calling streamServerUpdate...');
+        const resp = await streamServerUpdate(fixDbPath.trim(), { signal: controller.signal });
+        console.log('[UpdateModal] Response received, ok=', resp.ok);
+        if (!resp.ok) {
+          try {
+            const json = await resp.json();
+            error = `[HTTP ${resp.status}] ${json.detail || JSON.stringify(json)}`;
+          } catch {
+            error = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText)}`;
+          }
+          return;
         }
-        return;
-      }
-
-      const reader = resp.body.getReader();
-      const dec    = new TextDecoder();
-      let   buf    = '';
-
-      while (true) {
-        const { done: d, value } = await reader.read();
-        if (d) break;
-        buf += dec.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop();
-        for (const part of parts) {
-          if (part.startsWith('data: ')) {
-            const data = part.slice(6);
-            if (data.startsWith('[exit ')) { /* handle exit code */ }
-            lines = [...lines, data];
+  
+        const reader = resp.body.getReader();
+        const dec    = new TextDecoder();
+        let   buf    = '';
+  
+        console.log('[UpdateModal] Reader loop starting');
+        while (true) {
+          const { done: d, value } = await reader.read();
+          if (d) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          for (const part of parts) {
+            if (part.startsWith('data: ')) {
+              const data = part.slice(6);
+              lines = [...lines, data];
+            }
           }
         }
+        console.log('[UpdateModal] Reader loop finished');
+      } catch (e) {
+        console.error('[UpdateModal] Error in doUpdate:', e);
+        if (e.name === 'AbortError') {
+          /* ignore */
+        } else if (e.name === 'TypeError' &&
+            (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
+          lines = [...lines, '— Connection closed (server restarted) —'];
+        } else {
+          error = e.message || String(e);
+        }
+      } finally {
+        running = false;
+        done    = true;
+        console.log('[UpdateModal] doUpdate() finally block, done=true');
       }
-    } catch (e) {
-      if (e.name === 'AbortError') {
-        /* ignore */
-      } else if (e.name === 'TypeError' &&
-          (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
-        lines = [...lines, '— Connection closed (server restarted) —'];
-      } else {
-        error = e.message || String(e);
-      }
-    } finally {
-      running = false;
-      done    = true;
     }
-  }
+  
 
   // Start automatically when shown
   $: if (show === true && !running && !done) doUpdate();
