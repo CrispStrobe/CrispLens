@@ -328,6 +328,46 @@ CREATE INDEX IF NOT EXISTS idx_album_shares_album ON album_shares(album_id);
 CREATE INDEX IF NOT EXISTS idx_album_shares_user  ON album_shares(user_id);
 
 -- ============================================================================
+-- BATCH_JOBS TABLES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS batch_jobs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id         INTEGER NOT NULL,
+    name             TEXT,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    source_path      TEXT,
+    recursive        INTEGER DEFAULT 1,
+    follow_symlinks  INTEGER DEFAULT 0,
+    visibility       TEXT DEFAULT 'shared',
+    det_params       TEXT,
+    tag_ids          TEXT,
+    new_tag_names    TEXT,
+    album_id         INTEGER,
+    new_album_name   TEXT,
+    total_count      INTEGER DEFAULT 0,
+    done_count       INTEGER DEFAULT 0,
+    error_count      INTEGER DEFAULT 0,
+    skipped_count    INTEGER DEFAULT 0,
+    created_at       TEXT DEFAULT (datetime('now')),
+    started_at       TEXT,
+    finished_at      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS batch_job_files (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
+    filepath     TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    image_id     INTEGER,
+    error_msg    TEXT,
+    skip_reason  TEXT,
+    processed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bjf_job_status  ON batch_job_files(job_id, status);
+CREATE INDEX IF NOT EXISTS idx_bj_owner_status ON batch_jobs(owner_id, status);
+
+-- ============================================================================
 -- TRIGGERS
 -- ============================================================================
 

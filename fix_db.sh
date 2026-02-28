@@ -343,6 +343,45 @@ else
             CREATE INDEX IF NOT EXISTS idx_cloud_drives_status ON cloud_drives(status);
         " 2>/dev/null && info "cloud_drives table ensured" || true
 
+        # batch_jobs + batch_job_files tables (added 2026-02-28)
+        run_sql "
+            CREATE TABLE IF NOT EXISTS batch_jobs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id         INTEGER NOT NULL,
+                name             TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending',
+                source_path      TEXT,
+                recursive        INTEGER DEFAULT 1,
+                follow_symlinks  INTEGER DEFAULT 0,
+                visibility       TEXT DEFAULT 'shared',
+                det_params       TEXT,
+                tag_ids          TEXT,
+                new_tag_names    TEXT,
+                album_id         INTEGER,
+                new_album_name   TEXT,
+                total_count      INTEGER DEFAULT 0,
+                done_count       INTEGER DEFAULT 0,
+                error_count      INTEGER DEFAULT 0,
+                skipped_count    INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now')),
+                started_at       TEXT,
+                finished_at      TEXT
+            );
+            CREATE TABLE IF NOT EXISTS batch_job_files (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id       INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
+                filepath     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'pending',
+                image_id     INTEGER,
+                error_msg    TEXT,
+                skip_reason  TEXT,
+                processed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_bjf_job_status  ON batch_job_files(job_id, status);
+            CREATE INDEX IF NOT EXISTS idx_bj_owner_status ON batch_jobs(owner_id, status);
+            UPDATE batch_jobs SET status='paused' WHERE status='running';
+        " 2>/dev/null && info "batch_jobs + batch_job_files tables ensured" || true
+
         info "All migrations complete"
     fi
 fi
