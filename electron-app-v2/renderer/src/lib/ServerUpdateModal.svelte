@@ -15,27 +15,10 @@
   let logEl;
   let followLog = true;
 
-  let pending = [];
-  let batchTimer = null;
-
   $: if (lines && followLog && logEl) tick().then(() => { logEl.scrollTop = logEl.scrollHeight; });
-
-  function addLine(line) {
-    pending.push(line);
-    if (!batchTimer) {
-      batchTimer = setTimeout(() => {
-        lines = [...lines, ...pending];
-        pending = [];
-        batchTimer = null;
-      }, 100);
-    }
-  }
 
   function reset() { 
     lines = []; 
-    pending = [];
-    if (batchTimer) clearTimeout(batchTimer);
-    batchTimer = null;
     running = false; 
     done = false; 
     error = ''; 
@@ -52,7 +35,6 @@
     if (running) return;
     running = true;
     lines   = [];
-    pending = [];
     done    = false;
     error   = '';
 
@@ -80,14 +62,14 @@
         buf = parts.pop();
         for (const part of parts) {
           if (part.startsWith('data: ')) {
-            addLine(part.slice(6));
+            lines = [...lines, part.slice(6)];
           }
         }
       }
     } catch (e) {
       if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
-        addLine('— Connection closed (server restarted) —');
+        lines = [...lines, '— Connection closed (server restarted) —'];
       } else {
         error = e.message || String(e);
       }

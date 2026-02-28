@@ -15,51 +15,22 @@
   let followLog = true;
   let logEl;
 
-  let pending   = [];
-  let batchTimer = null;
-
   $: if (lines && followLog && logEl) tick().then(() => {
     logEl.scrollTop = logEl.scrollHeight;
   });
 
-  function addLine(line) {
-    pending.push(line);
-    if (!batchTimer) {
-      batchTimer = setTimeout(() => {
-        lines = [...lines, ...pending];
-        pending = [];
-        batchTimer = null;
-      }, 100);
-    }
-  }
-
   async function load() {
-    console.log(`[LogsModal] Loading logs (count=${lineCount})...`);
     loading = true;
     error   = '';
     lines   = []; 
-    pending = [];
-    if (batchTimer) clearTimeout(batchTimer);
-    batchTimer = null;
-
     try {
       const data = await fetchServerLogs(lineCount, (update) => {
-        if (update.path) {
-          logPath = update.path;
-          console.log(`[LogsModal] Log path: ${logPath}`);
-        }
-        if (update.line) {
-          addLine(update.line);
-        }
-        if (update.done) {
-          console.log(`[LogsModal] Log stream done signal received.`);
-        }
+        if (update.path) logPath = update.path;
+        if (update.line) lines = [...lines, update.line];
       });
-      console.log(`[LogsModal] Log load finished. Total lines: ${lines.length}`);
-      if (!lines.length && !pending.length && data.lines) lines = data.lines;
+      if (!lines.length && data.lines) lines = data.lines;
       if (!logPath && data.path) logPath = data.path;
     } catch (e) {
-      console.error('[LogsModal] Error loading logs:', e);
       error = e.message || String(e);
     } finally {
       loading = false;

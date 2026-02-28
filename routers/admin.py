@@ -217,8 +217,9 @@ def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
             
             logger.info("admin.get_server_logs: streaming %d lines", len(tail))
             for i, ln in enumerate(tail):
-                yield f"data: {ln.rstrip()}\n\n"
-                logger.info("yielded the line:", ln.rstrip(), "\n")
+                line_text = ln.rstrip()
+                yield f"data: {line_text}\n\n"
+                logger.info(f"admin.get_server_logs: yielded line {i}: {line_text[:80]}")
                 _time.sleep(0.4) # Matches test-stream
 
             yield "data: [DONE]\n\n"
