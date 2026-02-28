@@ -4,11 +4,10 @@
   import { createEventDispatcher, tick } from 'svelte';
 
   export let show      = false;
-  export let fixDbPath = '';   // passed from SettingsView so the user-configured path is used
+  export let fixDbPath = '';
 
   const dispatch = createEventDispatcher();
 
-  let password = '';
   let lines    = [];
   let running  = false;
   let done     = false;
@@ -16,95 +15,71 @@
   let logEl;
   let followLog = true;
 
-  // Auto-scroll when new lines arrive and followLog is on
-  $: if (lines && followLog && logEl) tick().then(() => {
-    logEl.scrollTop = logEl.scrollHeight;
-  });
+  $: if (lines && followLog && logEl) tick().then(() => { logEl.scrollTop = logEl.scrollHeight; });
 
-  function reset() {
-    password = '';
-    lines    = [];
-    running  = false;
-    done     = false;
-    error    = '';
-  }
+  function reset() { lines = []; running = false; done = false; error = ''; }
 
   function close() {
-    if (running) return;   // don't close while running
+    if (running) return;
     show = false;
     reset();
     dispatch('close');
   }
 
   async function doUpdate() {
-    if (!password || running) return;
+    if (running) return;
     running = true;
     lines   = [];
     done    = false;
     error   = '';
-    const pw = password;
-    password = '';  // clear from UI immediately after capturing
-
-    // Track whether we got an HTTP error BEFORE streaming started.
-    // We cannot use early-return inside try/finally because finally
-    // always runs and would override state set inside the try block.
-    let preStreamError = '';
 
     try {
-      const resp = await streamServerUpdate(pw, fixDbPath.trim());
+      const resp = await streamServerUpdate(fixDbPath.trim());
 
       if (!resp.ok) {
-        // HTTP error before streaming — parse FastAPI detail JSON
         try {
           const json = await resp.json();
-          preStreamError = `[HTTP ${resp.status}] ${json.detail || JSON.stringify(json)}`;
+          error = `[HTTP ${resp.status}] ${json.detail || JSON.stringify(json)}`;
         } catch {
-          preStreamError = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText) || resp.statusText}`;
+          error = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText)}`;
         }
-      } else {
-        // Stream the SSE response
-        const reader = resp.body.getReader();
-        const dec    = new TextDecoder();
-        let   buf    = '';
+        return;
+      }
 
-        while (true) {
-          const { done: d, value } = await reader.read();
-          if (d) break;
-          buf += dec.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop();
-          for (const part of parts) {
-            if (part.startsWith('data: ')) {
-              lines = [...lines, part.slice(6)];
-            }
-          }
+      const reader = resp.body.getReader();
+      const dec    = new TextDecoder();
+      let   buf    = '';
+
+      while (true) {
+        const { done: d, value } = await reader.read();
+        if (d) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          if (part.startsWith('data: ')) lines = [...lines, part.slice(6)];
         }
       }
     } catch (e) {
-      // Connection drop after restart is expected — treat gracefully
       if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
         lines = [...lines, '— Connection closed (server restarted) —'];
-      } else if (!preStreamError) {
+      } else {
         error = e.message || String(e);
       }
     } finally {
       running = false;
-      if (preStreamError) {
-        // HTTP error before streaming — go back to password phase
-        error = preStreamError;
-        done  = false;
-      } else {
-        done = true;
-      }
+      done    = true;
     }
   }
 
-  function handleKey(e) {
-    if (e.key === 'Enter') doUpdate();
-    if (e.key === 'Escape') close();
-  }
+  // Start automatically when shown
+  $: if (show && !running && !done) doUpdate();
+
+  function handleKey(e) { if (e.key === 'Escape') close(); }
 </script>
+
+<svelte:window on:keydown={handleKey} />
 
 {#if show}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -112,65 +87,45 @@
     <div class="modal-box">
       <div class="modal-header">
         <h3>🔄 {$t('admin_update_server')}</h3>
-        {#if !running}
-          <button class="close-btn" on:click={close}>✕</button>
-        {/if}
-      </div>
-
-      {#if !running && !done}
-        <!-- Password entry phase -->
-        {#if error}
-          <div class="error-msg pre-error">{error}</div>
-        {/if}
-        <p class="hint">{$t('update_modal_hint')}</p>
-
-        <label class="field-label" for="upd-pw">{$t('root_password')}</label>
-        <input
-          id="upd-pw"
-          type="password"
-          bind:value={password}
-          autocomplete="new-password"
-          class="pw-input"
-          on:keydown={handleKey}
-          placeholder="••••••••"
-        />
-
-        <div class="action-row">
-          <button class="primary" on:click={doUpdate} disabled={!password}>
-            {$t('admin_run_update')}
-          </button>
-          <button on:click={close}>{$t('cancel')}</button>
-        </div>
-
-      {:else}
-        <!-- Streaming log phase -->
-        <div class="log-header">
-          <span class="log-label">{running ? $t('running') : '✓ Done'}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
           <label class="follow-toggle">
             <input type="checkbox" bind:checked={followLog} />
             {$t('logs_follow')}
           </label>
-        </div>
-
-        <div class="log-box" bind:this={logEl}>
-          {#each lines as line}
-            <div class="log-line" class:ok={line.startsWith('✓')} class:err={line.startsWith('✗') || line.startsWith('ERROR')}>
-              {line}
-            </div>
-          {/each}
-          {#if running}
-            <div class="log-line blink">▌</div>
+          {#if !running}
+            <button class="close-btn" on:click={close}>✕</button>
           {/if}
         </div>
+      </div>
 
-        {#if done}
-          {#if error}
-            <div class="error-msg">{error}</div>
-          {/if}
-          <div class="action-row">
-            <button on:click={close}>{$t('close')}</button>
-          </div>
+      <div class="log-header">
+        <span class="log-label">{running ? $t('running') : done ? '✓ Done' : ''}</span>
+        {#if done && !running}
+          <button class="small" on:click={() => { reset(); doUpdate(); }}>🔄 Run again</button>
         {/if}
+      </div>
+
+      <div class="log-box" bind:this={logEl}>
+        {#each lines as line}
+          <div class="log-line"
+               class:ok={line.startsWith('✓')}
+               class:err={line.startsWith('✗') || line.startsWith('ERROR')}>
+            {line}
+          </div>
+        {/each}
+        {#if running}
+          <div class="log-line blink">▌</div>
+        {/if}
+      </div>
+
+      {#if error}
+        <div class="error-msg">{error}</div>
+      {/if}
+
+      {#if done}
+        <div class="action-row">
+          <button on:click={close}>{$t('close')}</button>
+        </div>
       {/if}
     </div>
   </div>
@@ -197,7 +152,6 @@
   }
   .modal-header {
     display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 4px;
   }
   .modal-header h3 { margin: 0; font-size: 16px; color: #c0c8e0; font-weight: 600; }
   .close-btn {
@@ -206,47 +160,12 @@
   }
   .close-btn:hover { color: #a0b0d0; }
 
-  .hint {
-    font-size: 12px; color: #7080a0;
-    background: #1e1e2e; border: 1px solid #2a2a3a;
-    border-radius: 6px; padding: 8px 12px; margin: 0;
-  }
-
-  .field-label {
-    font-size: 11px; color: #6070a0;
-    text-transform: uppercase; letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-
-  .pw-input {
-    width: 100%; box-sizing: border-box;
-    background: #1e1e2e; border: 1px solid #3a3a5a;
-    color: #e0e0e0; padding: 8px 10px;
-    border-radius: 6px; font-size: 14px;
-  }
-  .pw-input:focus { border-color: #6080c0; outline: none; }
-
-  .action-row { display: flex; gap: 8px; flex-wrap: wrap; }
-  button {
-    background: #2a2a42; color: #8090b8;
-    border: 1px solid #3a3a5a; padding: 7px 14px;
-    border-radius: 6px; font-size: 12px; cursor: pointer;
-  }
-  button:hover:not(:disabled) { background: #3a3a5a; color: #a0c4ff; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.primary {
-    background: #364070; color: #a0c4ff;
-    border-color: #4a5a90; padding: 8px 20px;
-    font-size: 13px; font-weight: 500;
-  }
-  button.primary:hover:not(:disabled) { background: #4a5a90; }
-
   .log-header {
     display: flex; align-items: center; justify-content: space-between;
     font-size: 11px; color: #6070a0;
   }
   .log-label { font-weight: 600; }
-  .follow-toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .follow-toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #7080a0; cursor: pointer; }
   .follow-toggle input { cursor: pointer; }
 
   .log-box {
@@ -260,7 +179,7 @@
     font-size: 11px;
     line-height: 1.6;
     min-height: 200px;
-    max-height: 50vh;
+    max-height: 55vh;
     color: #c0d0c0;
   }
   .log-line { white-space: pre-wrap; word-break: break-all; }
@@ -269,11 +188,19 @@
   .log-line.blink { animation: blink 1s step-end infinite; }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
+  .action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    background: #2a2a42; color: #8090b8;
+    border: 1px solid #3a3a5a; padding: 7px 14px;
+    border-radius: 6px; font-size: 12px; cursor: pointer;
+  }
+  button.small { padding: 4px 10px; font-size: 11px; }
+  button:hover:not(:disabled) { background: #3a3a5a; color: #a0c4ff; }
+
   .error-msg {
     font-size: 12px; color: #e07070;
     background: #2a1010; border: 1px solid #5a2020;
     padding: 8px 10px; border-radius: 4px;
     word-break: break-word;
   }
-  .pre-error { margin-bottom: 0; }
 </style>

@@ -244,43 +244,77 @@ export function fetchUserVlmPrefs()                 { return get('/settings/user
  * Returns a native Response whose body is an SSE stream.
  * The caller reads from response.body (ReadableStream).
  */
-/** Raw fetch for the SSE test endpoint — no body needed. */
-export function testAdminStream() {
-  return fetch(`${BASE}/admin/test-stream`, { credentials: 'include' });
-}
+// ── Admin debug test endpoints ────────────────────────────────────────────
 
-export function streamServerUpdate(root_password, fix_db_path = '') {
+/** GET SSE with sleep (known good). */
+export function testAdminStream()     { return fetch(`${BASE}/admin/test-stream`,      { credentials: 'include' }); }
+/** GET SSE with NO sleep (burst — does Apache buffer fast SSE?). */
+export function testAdminStreamFast() { return fetch(`${BASE}/admin/test-stream-fast`, { credentials: 'include' }); }
+/** POST SSE with sleep (does Apache buffer POST response bodies?). */
+export function testAdminStreamPost() { return fetch(`${BASE}/admin/test-stream-post`, { method: 'POST', credentials: 'include' }); }
+/** GET plain JSONResponse (does Apache ever deliver JSON body?). */
+export function testAdminJson()       { return fetch(`${BASE}/admin/test-json`,         { credentials: 'include' }); }
+
+export function streamServerUpdate(fix_db_path = '') {
+  // root_password removed — sudoers NOPASSWD handles auth, UI login is the gate.
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ root_password, fix_db_path }),
+    body: JSON.stringify({ fix_db_path }),
   });
 }
 
-/** Return last N lines of the server application log (30 s timeout covers body). */
+/**
+ * Return last N lines of the server application log.
+ *
+ * The backend now returns text/event-stream (SSE) instead of JSON to avoid
+ * the Apache proxy buffering that causes res.json() to hang indefinitely.
+ * Protocol:
+ *   data: [PATH]/path/to/logfile   ← first event
+ *   data: <log line>               ← one per line
+ *   data: [DONE]                   ← end marker
+ *   data: [ERROR]<message>         ← on failure
+ */
 export async function fetchServerLogs(lines = 300) {
   const controller = new AbortController();
-  // Keep the timeout active through res.json() — not just the headers phase.
-  const tid = setTimeout(() => controller.abort(), 30000);
+  const tid = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
       credentials: 'include',
       signal: controller.signal,
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      let detail = text;
-      try { detail = JSON.parse(text).detail || text; } catch { /* keep raw */ }
       clearTimeout(tid);
-      throw new Error(`[HTTP ${res.status}] ${detail}`);
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`[HTTP ${res.status}] ${text}`);
     }
-    const data = await res.json();   // timeout still armed while reading body
+    const reader   = res.body.getReader();
+    const dec      = new TextDecoder();
+    let   buf      = '';
+    let   path     = '';
+    const outLines = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const p of parts) {
+        if (!p.startsWith('data: ')) continue;
+        const data = p.slice(6);
+        if      (data.startsWith('[PATH]'))  path = data.slice(6);
+        else if (data === '[DONE]')          { /* end marker — normal */ }
+        else if (data.startsWith('[ERROR]')) throw new Error(data.slice(7));
+        else                                 outLines.push(data);
+      }
+    }
     clearTimeout(tid);
-    return data;
+    return { lines: outLines, path };
   } catch (e) {
     clearTimeout(tid);
-    if (e.name === 'AbortError') throw new Error('Request timed out (30 s) — check Apache mod_deflate');
+    if (e.name === 'AbortError') throw new Error('Timed out after 60 s');
     throw e;
   }
 }

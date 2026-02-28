@@ -11,7 +11,8 @@
     changePassword, fetchTranslations,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
-  import { fetchStats, fetchPeople, fetchTags, fetchAlbums, testAdminStream } from '../api.js';
+  import { fetchStats, fetchPeople, fetchTags, fetchAlbums,
+           testAdminStream, testAdminStreamFast, testAdminStreamPost, testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
 
@@ -37,8 +38,10 @@
   // Admin — server management
   let showUpdateModal = false;
   let showLogsModal   = false;
-  let testStreamLines   = [];
-  let testStreamRunning = false;
+  // Debug test state: label + lines + running flag per button
+  let testLabel   = '';
+  let testLines   = [];
+  let testRunning = false;
   let exemptPaths     = ['/mnt'];
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
@@ -577,16 +580,14 @@
     }
   }
 
-  // ── SSE test stream ───────────────────────────────────────────────────────
-  async function doTestStream() {
-    testStreamLines   = [];
-    testStreamRunning = true;
+  // ── Debug test stream helpers ─────────────────────────────────────────────
+  async function _runSseTest(label, fetchFn) {
+    testLabel   = label;
+    testLines   = [`[${label}] started at ${new Date().toLocaleTimeString()}`];
+    testRunning = true;
     try {
-      const resp = await testAdminStream();
-      if (!resp.ok) {
-        testStreamLines = [`✗ HTTP ${resp.status}`];
-        return;
-      }
+      const resp = await fetchFn();
+      if (!resp.ok) { testLines = [...testLines, `✗ HTTP ${resp.status}`]; return; }
       const reader = resp.body.getReader();
       const dec    = new TextDecoder();
       let   buf    = '';
@@ -597,15 +598,40 @@
         const parts = buf.split('\n\n');
         buf = parts.pop();
         for (const p of parts) {
-          if (p.startsWith('data: ')) testStreamLines = [...testStreamLines, p.slice(6)];
+          if (p.startsWith('data: ')) testLines = [...testLines, p.slice(6)];
         }
       }
+      testLines = [...testLines, `[${label}] stream ended`];
     } catch (e) {
-      testStreamLines = [...testStreamLines, '✗ Error: ' + e.message];
+      testLines = [...testLines, `✗ ${e.message}`];
     } finally {
-      testStreamRunning = false;
+      testRunning = false;
     }
   }
+
+  async function _runJsonTest() {
+    testLabel   = 'GET JSON';
+    testLines   = [`[GET JSON] started at ${new Date().toLocaleTimeString()}`];
+    testRunning = true;
+    try {
+      const resp = await testAdminJson();
+      testLines = [...testLines, `HTTP ${resp.status} ${resp.statusText}`];
+      if (resp.ok) {
+        const data = await resp.json();
+        testLines = [...testLines, JSON.stringify(data, null, 2)];
+      } else {
+        testLines = [...testLines, '✗ not ok'];
+      }
+    } catch (e) {
+      testLines = [...testLines, `✗ ${e.message}`];
+    } finally {
+      testRunning = false;
+    }
+  }
+
+  const doTestStream     = () => _runSseTest('GET SSE+sleep',  testAdminStream);
+  const doTestStreamFast = () => _runSseTest('GET SSE fast',   testAdminStreamFast);
+  const doTestStreamPost = () => _runSseTest('POST SSE+sleep', testAdminStreamPost);
 
   // ── DB credential health check ────────────────────────────────────────────
   async function doCheckCredentials() {
@@ -1065,19 +1091,42 @@
       <button class="small" on:click={() => showLogsModal = true}>
         📋 {$t('admin_view_logs')}
       </button>
-      <button class="small" on:click={doTestStream} disabled={testStreamRunning}
-              title="Stream 5 lines via SSE — confirms Apache delivers chunked responses to the browser">
-        🧪 {testStreamRunning ? '…' : 'Test SSE'}
-      </button>
     </div>
 
-    {#if testStreamLines.length || testStreamRunning}
-      <div style="margin-top:8px;background:#0e0e18;border:1px solid #2a2a3a;border-radius:5px;
-                  padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#90b890;">
-        {#each testStreamLines as l}<div>{l}</div>{/each}
-        {#if testStreamRunning}<div style="opacity:0.5;">▌</div>{/if}
+    <!-- Debug transport tests ── run all 4, compare results in journalctl -f -->
+    <div style="margin-top:10px;">
+      <div style="font-size:10px;color:#505070;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;">
+        SSE / transport diagnostics
       </div>
-    {/if}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="small" on:click={doTestStream}     disabled={testRunning}
+                title="GET SSE with 0.4 s sleep — baseline, should always work">
+          🟢 GET SSE+sleep
+        </button>
+        <button class="small" on:click={doTestStreamFast} disabled={testRunning}
+                title="GET SSE with NO sleep (burst) — hangs? → TCP/Nagle coalescing is root cause">
+          🟡 GET SSE fast
+        </button>
+        <button class="small" on:click={doTestStreamPost} disabled={testRunning}
+                title="POST SSE with sleep — hangs? → Apache buffers POST response bodies">
+          🟠 POST SSE+sleep
+        </button>
+        <button class="small" on:click={_runJsonTest}     disabled={testRunning}
+                title="GET plain JSON — hangs? → Apache buffers all non-SSE responses">
+          🔵 GET JSON
+        </button>
+      </div>
+
+      {#if testLines.length || testRunning}
+        <div style="margin-top:6px;background:#0e0e18;border:1px solid #2a2a3a;border-radius:5px;
+                    padding:8px 10px;font-family:monospace;font-size:10.5px;line-height:1.65;color:#90b890;
+                    max-height:160px;overflow-y:auto;">
+          <div style="color:#505570;margin-bottom:4px;">{testLabel}</div>
+          {#each testLines as l}<div>{l}</div>{/each}
+          {#if testRunning}<div style="opacity:0.4;">▌</div>{/if}
+        </div>
+      {/if}
+    </div>
 
     <div class="form-grid" style="margin-top:14px;">
       <label>{$t('fix_db_path_label')}</label>
