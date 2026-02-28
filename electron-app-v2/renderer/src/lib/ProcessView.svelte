@@ -578,23 +578,26 @@
           <option value="shared">{$t('fs_shared')}</option>
           <option value="private">{$t('fs_private')}</option>
         </select>
-        <button
-          class="primary"
-          on:click={startProcessing}
-          disabled={pendingItems.length === 0}
-        >
-          {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')}
-        </button>
-        {#if inElectron || localBasePath.trim()}
+        <div class="proc-btn-group">
           <button
-            class="act-btn start"
-            on:click={createBatchJobFromQueue}
-            disabled={pendingItems.length === 0 || batchJobCreating}
-            title={$t('bj_persistent_hint')}
+            class="primary"
+            on:click={startProcessing}
+            disabled={pendingItems.length === 0}
+            title={$t('pv_process_direct_hint') || 'Process immediately in this window'}
           >
-            📡 {$t('pv_submit_batch_job')}
+            {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')} ({$t('pv_process_direct')})
           </button>
-        {/if}
+          {#if inElectron || localBasePath.trim()}
+            <button
+              class="act-btn start"
+              on:click={createBatchJobFromQueue}
+              disabled={pendingItems.length === 0 || batchJobCreating}
+              title={$t('bj_persistent_hint')}
+            >
+              📡 {$t('pv_process_as_batch')}
+            </button>
+          {/if}
+        </div>
       {:else}
         <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>
       {/if}
@@ -918,6 +921,12 @@
   .drop-buttons { display: flex; gap: 8px; margin-top: 4px; }
 
   .vis-select { font-size: 11px; padding: 3px 6px; width: 90px; }
+
+  .proc-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
 
   /* ── Controls bar ── */
   .controls-bar {
