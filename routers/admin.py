@@ -160,12 +160,14 @@ async def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             yield chunk
 
         env = os.environ.copy()
-        env['CRISP_YES'] = '1'
+        # CRISP_YES is passed explicitly via `sudo env` because sudo's env_reset
+        # strips it from the environment by default.  Setting it in `env` alone
+        # would have no effect once sudo resets the environment.
 
         try:
-            logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
+            logger.info("admin.server_update: launching subprocess: sudo env CRISP_YES=1 bash %s", script)
             proc = await asyncio.create_subprocess_exec(
-                'sudo', 'bash', script,
+                'sudo', 'env', 'CRISP_YES=1', 'bash', script,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,

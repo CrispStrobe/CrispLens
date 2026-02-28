@@ -15,11 +15,13 @@
 #            setuid binaries including sudo.  The admin "Update Server" feature
 #            silently fails with exit code 1 when this is set.
 #
-#   FIX 3 — Apache <Location> blocks inside VirtualHost
-#            Without these blocks inside the HTTPS VirtualHost Apache's
-#            mod_deflate buffers API responses and SSE streams never arrive
-#            in the browser (fetch/res.json hangs indefinitely).
-#            Adds:
+#   FIX 3 — Apache ProxyHTTPVersion 1.1 + <Location> blocks
+#            Without these fixes Apache buffers API and SSE responses so that
+#            the browser's fetch/ReadableStream hangs indefinitely:
+#              ProxyHTTPVersion 1.1  — force HTTP/1.1 to uvicorn so that
+#                                      chunked transfer encoding is used and
+#                                      flushpackets=on works per-chunk (HTTP/1.0
+#                                      causes full buffering until conn closes)
 #              <Location /api>     SetEnv no-gzip 1  (disables deflate buffer)
 #              <Location /api/admin>  SetEnv proxy-nokeepalive 1 (force flush)
 #
@@ -130,9 +132,9 @@ echo -e "  ${BOLD}Patch plan${NC}"; echo
 echo -e "    FIX 1  Sudoers NOPASSWD       ${FIX_DB_PATH}"
 echo -e "    FIX 2  NoNewPrivileges        remove from ${UNIT_FILE}"
 if [[ -n "$APACHE_CONF" ]]; then
-    echo -e "    FIX 3  Apache Location blocks  ${APACHE_CONF}"
+    echo -e "    FIX 3  Apache HTTP/1.1+Location  ${APACHE_CONF}"
 else
-    echo -e "    FIX 3  Apache Location blocks  SKIPPED (conf not found)"
+    echo -e "    FIX 3  Apache HTTP/1.1+Location  SKIPPED (conf not found)"
 fi
 echo -e "    FIX 4  config.yaml            admin.fix_db_path"
 hr; echo
@@ -203,7 +205,11 @@ if [[ -z "$APACHE_CONF" ]]; then
     warn "Apply manually: add these blocks inside every VirtualHost that proxies CrispLens:"
     cat <<'APACHEHELP'
 
-    # Inside your <VirtualHost *:443> (or :80) block, before </VirtualHost>:
+    # Inside your <VirtualHost *:443> (or :80) block, before ProxyPass:
+
+    ProxyHTTPVersion 1.1
+    ProxyPass        / http://127.0.0.1:PORT/ flushpackets=on
+    ProxyPassReverse / http://127.0.0.1:PORT/
 
     <Location /api>
         SetEnv no-gzip 1
@@ -252,17 +258,30 @@ def patch_vhost(m):
     if not already_has(block, '/api/admin'):
         insert += ADMIN_LOC
 
-    if not insert:
+    needs_http11 = not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE)
+
+    if not insert and not needs_http11:
         return block
 
-    # Insert just before </VirtualHost>
-    patched = re.sub(
-        r'(</VirtualHost>)',
-        insert + r'\1',
-        block,
-        count=1,
-        flags=re.IGNORECASE
-    )
+    patched = block
+    if insert:
+        # Insert Location blocks just before </VirtualHost>
+        patched = re.sub(
+            r'(</VirtualHost>)',
+            insert + r'\1',
+            patched,
+            count=1,
+            flags=re.IGNORECASE
+        )
+    if needs_http11:
+        # Insert ProxyHTTPVersion 1.1 before the first ProxyPass line
+        patched = re.sub(
+            r'(\n[ \t]*ProxyPass\b)',
+            r'\n    ProxyHTTPVersion 1.1\1',
+            patched,
+            count=1,
+            flags=re.IGNORECASE
+        )
     changed = True
     return patched
 
@@ -322,9 +341,18 @@ def patch_vhost(m):
         insert += API_LOC
     if not already_has(block, '/api/admin'):
         insert += ADMIN_LOC
-    if not insert:
+    needs_http11 = not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE)
+    if not insert and not needs_http11:
         return block
-    patched = re.sub(r'(</VirtualHost>)', insert + r'\1', block, count=1, flags=re.IGNORECASE)
+    patched = block
+    if insert:
+        patched = re.sub(r'(</VirtualHost>)', insert + r'\1', patched, count=1, flags=re.IGNORECASE)
+    if needs_http11:
+        patched = re.sub(
+            r'(\n[ \t]*ProxyPass\b)',
+            r'\n    ProxyHTTPVersion 1.1\1',
+            patched, count=1, flags=re.IGNORECASE
+        )
     changed = True
     return patched
 
@@ -334,7 +362,7 @@ if changed:
     shutil.copy2(conf_path, conf_path + '.bak.' + str(int(time.time())))
     with open(conf_path, 'w') as fh:
         fh.write(new_text)
-    print("  patched: Location blocks added inside VirtualHost")
+    print("  patched: ProxyHTTPVersion 1.1 + Location blocks added inside VirtualHost")
 else:
     print("  already correct — no changes made")
 PYEOF3
