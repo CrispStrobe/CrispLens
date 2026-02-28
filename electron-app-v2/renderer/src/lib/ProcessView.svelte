@@ -290,7 +290,8 @@
         //   Browser mode → f.name (basename only — browser security limitation)
         // If the user set localBasePath and the path is basename-only, prepend it.
         const base = localBasePath.trim().replace(/\/+$/, '');
-        const pathForServer = (base && item.path && !item.path.includes('/'))
+        const isAbsolute = /^\/|^[a-zA-Z]:\\/.test(item.path);
+        const pathForServer = (base && !isAbsolute)
           ? `${base}/${item.path}`
           : item.path;
         console.log('[ProcessView] upload-local | item.path=%s | localBasePath=%s | pathForServer=%s',
@@ -493,7 +494,8 @@
           : await window.electronAPI.readLocalFile(item.path);
           
         const base = localBasePath.trim().replace(/\/+$/, '');
-        const pathForServer = (base && item.path && !item.path.includes('/'))
+        const isAbsolute = /^\/|^[a-zA-Z]:\\/.test(item.path);
+        const pathForServer = (base && !isAbsolute)
           ? `${base}/${item.path}`
           : item.path;
           
