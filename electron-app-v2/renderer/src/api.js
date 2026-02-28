@@ -266,24 +266,24 @@ export function streamServerUpdate(fix_db_path = '') {
 }
 
 /**
- * Return last N lines of the server application log.
+ * Return last N lines of the server application log via SSE.
  *
- * The backend now returns text/event-stream (SSE) instead of JSON to avoid
- * the Apache proxy buffering that causes res.json() to hang indefinitely.
  * Protocol:
  *   data: [PATH]/path/to/logfile   ← first event
  *   data: <log line>               ← one per line
  *   data: [DONE]                   ← end marker
  *   data: [ERROR]<message>         ← on failure
  */
-export async function fetchServerLogs(lines = 300) {
+export async function fetchServerLogs(lines = 300, onLine = null) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 60000);
+  console.log(`[SSE] fetchServerLogs started: lines=${lines}`);
   try {
     const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
       credentials: 'include',
       signal: controller.signal,
     });
+    console.log(`[SSE] fetchServerLogs response: ok=${res.ok}, status=${res.status}`);
     if (!res.ok) {
       clearTimeout(tid);
       const text = await res.text().catch(() => res.statusText);
@@ -294,26 +294,45 @@ export async function fetchServerLogs(lines = 300) {
     let   buf      = '';
     let   path     = '';
     const outLines = [];
+    let   receivedCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        console.log(`[SSE] fetchServerLogs stream reader done. Total received: ${receivedCount}`);
+        break;
+      }
       buf += dec.decode(value, { stream: true });
       const parts = buf.split('\n\n');
       buf = parts.pop();
       for (const p of parts) {
-        if (!p.startsWith('data: ')) continue;
+        if (!p.startsWith('data: ')) {
+          console.warn(`[SSE] fetchServerLogs unexpected part: ${p.slice(0, 50)}...`);
+          continue;
+        }
         const data = p.slice(6);
-        if      (data.startsWith('[PATH]'))  path = data.slice(6);
-        else if (data === '[DONE]')          { /* end marker — normal */ }
-        else if (data.startsWith('[ERROR]')) throw new Error(data.slice(7));
-        else                                 outLines.push(data);
+        if (data.startsWith('[PATH]')) {
+          path = data.slice(6);
+          console.log(`[SSE] fetchServerLogs [PATH]: ${path}`);
+          if (onLine) onLine({ path });
+        } else if (data === '[DONE]') {
+          console.log(`[SSE] fetchServerLogs [DONE] marker received`);
+          if (onLine) onLine({ done: true });
+        } else if (data.startsWith('[ERROR]')) {
+          console.error(`[SSE] fetchServerLogs [ERROR] marker: ${data.slice(7)}`);
+          throw new Error(data.slice(7));
+        } else {
+          receivedCount++;
+          outLines.push(data);
+          if (onLine) onLine({ line: data });
+        }
       }
     }
     clearTimeout(tid);
     return { lines: outLines, path };
   } catch (e) {
     clearTimeout(tid);
+    console.error(`[SSE] fetchServerLogs error:`, e);
     if (e.name === 'AbortError') throw new Error('Timed out after 60 s');
     throw e;
   }

@@ -20,14 +20,31 @@
   });
 
   async function load() {
+    console.log(`[LogsModal] Loading logs (count=${lineCount})...`);
     loading = true;
     error   = '';
+    lines   = []; // Clear previous lines on refresh
     try {
-      const data = await fetchServerLogs(lineCount);
-      lines   = data.lines || [];
-      logPath = data.path  || '';
-      if (data.error) error = data.error;
+      // Use the new streaming callback to update the UI line-by-line
+      const data = await fetchServerLogs(lineCount, (update) => {
+        if (update.path) {
+          logPath = update.path;
+          console.log(`[LogsModal] Log path: ${logPath}`);
+        }
+        if (update.line) {
+          lines = [...lines, update.line];
+          if (lines.length % 50 === 0) console.log(`[LogsModal] Received ${lines.length} lines...`);
+        }
+        if (update.done) {
+          console.log(`[LogsModal] Log stream done signal received.`);
+        }
+      });
+      console.log(`[LogsModal] Log load finished. Total lines: ${lines.length}`);
+      // The final result still contains everything if we want to use it
+      if (!lines.length && data.lines) lines = data.lines;
+      if (!logPath && data.path) logPath = data.path;
     } catch (e) {
+      console.error('[LogsModal] Error loading logs:', e);
       error = e.message || String(e);
     } finally {
       loading = false;

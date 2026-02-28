@@ -28,13 +28,16 @@
 
   async function doUpdate() {
     if (running) return;
+    console.log('[UpdateModal] doUpdate starting...');
     running = true;
     lines   = [];
     done    = false;
     error   = '';
 
     try {
+      console.log(`[UpdateModal] Calling streamServerUpdate(fixDbPath=${fixDbPath})...`);
       const resp = await streamServerUpdate(fixDbPath.trim());
+      console.log(`[UpdateModal] Response received: ok=${resp.ok}, status=${resp.status}`);
 
       if (!resp.ok) {
         try {
@@ -43,24 +46,38 @@
         } catch {
           error = `[HTTP ${resp.status}] ${await resp.text().catch(() => resp.statusText)}`;
         }
+        console.error(`[UpdateModal] Server returned error: ${error}`);
         return;
       }
 
       const reader = resp.body.getReader();
       const dec    = new TextDecoder();
       let   buf    = '';
+      let   lineCount = 0;
 
+      console.log('[UpdateModal] Starting to read from response body reader...');
       while (true) {
         const { done: d, value } = await reader.read();
-        if (d) break;
+        if (d) {
+          console.log(`[UpdateModal] Reader done. Total lines received: ${lineCount}`);
+          break;
+        }
         buf += dec.decode(value, { stream: true });
         const parts = buf.split('\n\n');
         buf = parts.pop();
         for (const part of parts) {
-          if (part.startsWith('data: ')) lines = [...lines, part.slice(6)];
+          if (part.startsWith('data: ')) {
+            const lineContent = part.slice(6);
+            lines = [...lines, lineContent];
+            lineCount++;
+            if (lineCount % 20 === 0) console.log(`[UpdateModal] Received ${lineCount} lines...`);
+          } else {
+            console.warn(`[UpdateModal] Received non-SSE part: ${part.slice(0, 50)}...`);
+          }
         }
       }
     } catch (e) {
+      console.error('[UpdateModal] Exception in doUpdate:', e);
       if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
         lines = [...lines, '— Connection closed (server restarted) —'];
@@ -70,6 +87,7 @@
     } finally {
       running = false;
       done    = true;
+      console.log('[UpdateModal] doUpdate finished.');
     }
   }
 

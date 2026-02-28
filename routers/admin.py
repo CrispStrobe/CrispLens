@@ -62,9 +62,8 @@ def test_stream(admin=Depends(require_admin)):
 @router.get("/test-stream-fast")
 def test_stream_fast(admin=Depends(require_admin)):
     """
-    GET SSE with NO sleep (burst).
-    If this works but /update hangs → the issue is NOT burst size; it's something
-    specific to the real endpoints (subprocess, file I/O, or large response body).
+    GET SSE with NO sleep (burst) — 6 lines, ~300 bytes total.
+    Works because the response is tiny (fits in one TCP segment).
     """
     def _gen():
         logger.info("test-stream-fast: starting burst of 6 lines")
@@ -73,6 +72,24 @@ def test_stream_fast(admin=Depends(require_admin)):
             yield f"data: [GET/fast] line {i} — {_time.strftime('%H:%M:%S')}\n\n"
         yield "data: ✓ GET/fast stream complete\n\n"
         logger.info("test-stream-fast: generator exhausted")
+
+    return _sse_response(_gen())
+
+
+@router.get("/test-stream-large")
+def test_stream_large(admin=Depends(require_admin)):
+    """
+    GET SSE — 300 dummy lines, NO sleep.
+    If this hangs too → the problem is response SIZE (Apache flushpackets needs
+    real time-gaps; large bursts don't get flushed).
+    If this works → the problem is specific to the /logs content.
+    """
+    def _gen():
+        logger.info("test-stream-large: starting 300-line burst")
+        for i in range(1, 301):
+            yield f"data: [large] line {i:03d} of 300 — {_time.strftime('%H:%M:%S')}\n\n"
+        yield "data: ✓ large burst complete\n\n"
+        logger.info("test-stream-large: done")
 
     return _sse_response(_gen())
 
@@ -145,6 +162,8 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     )
 
     def _gen():
+        logger.info("admin.server_update: starting SSE stream for script: %s", script)
+        
         # Small sleeps between every yield so Apache's flushpackets=on
         # sees real chunk gaps and flushes each event to the browser.
         yield f"data: [admin] Script:       {script}\n\n";  _time.sleep(0.05)
@@ -163,7 +182,12 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             line_count = 0
             for raw in iter(proc.stdout.readline, b''):
                 stripped = raw.decode('utf-8', errors='replace').rstrip()
-                logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
+                # Log to server console for visibility
+                if line_count % 20 == 0:
+                    logger.info("admin.server_update: streaming line %d: %s", line_count, stripped[:80])
+                else:
+                    logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
+                
                 line_count += 1
                 yield f"data: {stripped}\n\n"
                 _time.sleep(0.02)   # flush each line through Apache before the next
@@ -178,8 +202,10 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
 
             # -15 = SIGTERM from the service restarting itself mid-run — treat as success
             if rc in (0, -15):
+                logger.info("admin.server_update: Success (rc=%d)", rc)
                 yield "data: ✓ Update complete — server will restart momentarily.\n\n"
             else:
+                logger.warning("admin.server_update: Script failed with code %d", rc)
                 yield f"data: ✗ Script exited with code {rc}.\n\n"
 
         except FileNotFoundError as exc:
@@ -188,96 +214,86 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
         except Exception as exc:
             logger.error("admin.server_update: unexpected error: %s", exc, exc_info=True)
             yield f"data: ERROR: {exc}\n\n"
+        
+        logger.info("admin.server_update: generator finishing")
 
     return _sse_response(_gen())
 
 
 @router.get("/logs")
-def get_server_logs(lines: int = 200, _=Depends(require_admin)):
+def get_server_logs(lines: int = 300, _=Depends(require_admin)):
     """
-    Return the last N lines of the Python app log as an SSE-formatted body.
-
-    Uses Response (not StreamingResponse) so Apache receives a single
-    Content-Length response it can forward immediately — no generator chunk
-    batching, no flushpackets timing issues.
-
-    Protocol:
-      data: [PATH]/path/to/logfile     ← first event, log file location
-      data: <log line text>            ← one event per line
-      data: [DONE]                     ← final event
-      data: [ERROR]<message>           ← only if something went wrong
+    Return the last N lines of the Python app log as an SSE stream.
+    Now uses StreamingResponse with small sleeps to ensure Apache flushpackets=on
+    works reliably, matching the 'test-stream' baseline.
     """
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
 
-    # ── Locate log file ───────────────────────────────────────────────────────
-    handler_path = ''
-    for h in _logging_mod.root.handlers:
-        if hasattr(h, 'baseFilename') and h.baseFilename:
-            handler_path = h.baseFilename
-            logger.info("admin.get_server_logs: FileHandler path = %s", handler_path)
-            break
+    logger.info("admin.get_server_logs: request for %d lines", lines)
 
-    config_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
+    def _gen():
+        # ── Locate log file ───────────────────────────────────────────────────
+        handler_path = ''
+        for h in _logging_mod.root.handlers:
+            if hasattr(h, 'baseFilename') and h.baseFilename:
+                handler_path = h.baseFilename
+                break
 
-    candidates = []
-    for c in [handler_path, config_path, _app_log_file]:
-        if c and c not in candidates:
-            candidates.append(c)
-    candidates += [
-        '/var/log/face_recognition.log',
-        '/var/log/face-rec/face_recognition.log',
-        '/opt/crisp-lens/face_recognition.log',
-        os.path.expanduser('~/face_recognition.log'),
-        'face_recognition.log',
-    ]
-    seen, unique = set(), []
-    for c in candidates:
-        if c and c not in seen:
-            seen.add(c)
-            unique.append(c)
+        config_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
+        candidates = []
+        for c in [handler_path, config_path, _app_log_file]:
+            if c and c not in candidates:
+                candidates.append(c)
+        candidates += [
+            '/opt/crisp-lens/face_recognition.log',
+            'face_recognition.log',
+            '/var/log/face_recognition.log',
+            '/var/log/face-rec/face_recognition.log',
+            os.path.expanduser('~/face_recognition.log'),
+        ]
+        
+        seen, unique = set(), []
+        for c in candidates:
+            if c and c not in seen:
+                seen.add(c)
+                unique.append(c)
 
-    logger.info("admin.get_server_logs: searching %d candidates, first 5 = %s",
-                len(unique), unique[:5])
+        log_file = None
+        for candidate in unique:
+            if os.path.isfile(candidate):
+                log_file = candidate
+                break
 
-    log_file = None
-    for candidate in unique:
-        if os.path.isfile(candidate):
-            log_file = candidate
-            logger.info("admin.get_server_logs: FOUND %s", log_file)
-            break
-
-    # ── Build the complete SSE body in memory, then return with Content-Length ─
-    # Returning Response (not StreamingResponse) gives Apache an exact byte count
-    # so it can forward the body immediately without waiting for a buffer threshold.
-    try:
         if not log_file:
             tried = ', '.join(unique[:5])
             logger.warning("admin.get_server_logs: not found; tried: %s", tried)
-            body = f"data: [ERROR]Log file not found. Tried: {tried}\n\n"
-        else:
-            logger.info("admin.get_server_logs: reading last %d lines from %s", lines, log_file)
+            yield f"data: [ERROR]Log file not found. Tried: {tried}\n\n"
+            return
+
+        yield f"data: [PATH]{log_file}\n\n"
+        _time.sleep(0.05)
+
+        try:
+            logger.info("admin.get_server_logs: reading %d lines from %s", lines, log_file)
             with open(log_file, 'r', errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
-            logger.info("admin.get_server_logs: returning %d lines", len(tail))
+            
+            logger.info("admin.get_server_logs: streaming %d lines", len(tail))
+            for i, ln in enumerate(tail):
+                # High verbosity: log every 50 lines to server console
+                if i % 50 == 0:
+                    logger.debug("admin.get_server_logs: streaming line %d/%d", i, len(tail))
+                
+                yield f"data: {ln.rstrip()}\n\n"
+                # Crucial for Apache: tiny sleep between lines to force a flush
+                _time.sleep(0.01)
 
-            parts = [f"data: [PATH]{log_file}\n\n"]
-            for ln in tail:
-                parts.append(f"data: {ln.rstrip()}\n\n")
-            parts.append("data: [DONE]\n\n")
-            body = ''.join(parts)
+            yield "data: [DONE]\n\n"
+            logger.info("admin.get_server_logs: stream complete")
 
-    except Exception as exc:
-        logger.error("admin.get_server_logs: error building body: %s", exc, exc_info=True)
-        body = f"data: [ERROR]{exc}\n\n"
+        except Exception as exc:
+            logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
+            yield f"data: [ERROR]{exc}\n\n"
 
-    body_bytes = body.encode('utf-8')
-    return Response(
-        content=body_bytes,
-        media_type="text/event-stream",
-        headers={
-            "Content-Length":    str(len(body_bytes)),
-            "X-Accel-Buffering": "no",
-            "Cache-Control":     "no-cache",
-        },
-    )
+    return _sse_response(_gen())
