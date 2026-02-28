@@ -11,7 +11,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -246,26 +246,34 @@ def get_image_faces(image_id: int, user=Depends(get_current_user)) -> List[Dict[
             conn.close()
 
 
-def _thumb_response(data: bytes, etag: str) -> Response:
+def _thumb_response(data: bytes, etag: str, if_none_match: str = '') -> Response:
+    quoted = f'"{etag}"'
+    if if_none_match and if_none_match == quoted:
+        # Client already has the current version — send 304 with no body
+        return Response(status_code=304, headers={**_THUMB_CACHE, 'ETag': quoted})
     return Response(
         content=data,
         media_type="image/jpeg",
-        headers={**_THUMB_CACHE, 'ETag': f'"{etag}"'},
+        headers={**_THUMB_CACHE, 'ETag': quoted},
     )
 
 
 @router.get("/{image_id}/thumbnail")
 def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
+                  request: Request = None,
                   user=Depends(get_current_user)):
     s = _state()
     if not can_access_image(image_id, user, s.db_path):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    inm = request.headers.get('if-none-match', '') if request else ''
+
     # ── Memory cache hit: skip DB lookup + disk I/O entirely ──────────────────
     cache_key = (image_id, size)
     cached = _thumb_mem.get(cache_key)
     if cached:
-        return _thumb_response(*cached)
+        data, etag = cached
+        return _thumb_response(data, etag, inm)
 
     # ── Cache miss: resolve image record and serve ─────────────────────────────
     rec = get_image_record(s.db_path, image_id)
@@ -279,7 +287,7 @@ def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
     if thumb_path.exists():
         data = thumb_path.read_bytes()
         etag = _thumb_mem.put(cache_key, data)
-        return _thumb_response(data, etag)
+        return _thumb_response(data, etag, inm)
 
     # 2. Generate thumbnail from source file
     if filepath and Path(filepath).exists():
@@ -287,7 +295,7 @@ def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
         if thumb and Path(thumb).exists():
             data = Path(thumb).read_bytes()
             etag = _thumb_mem.put(cache_key, data)
-            return _thumb_response(data, etag)
+            return _thumb_response(data, etag, inm)
         # Source exists but thumbnail generation failed — serve original (not cached)
         return FileResponse(filepath, headers=_THUMB_CACHE)
 
@@ -301,7 +309,7 @@ def get_thumbnail(image_id: int, size: int = Query(200, ge=50, le=1000),
     if blob_row and blob_row['thumbnail_blob']:
         data = bytes(blob_row['thumbnail_blob'])
         etag = _thumb_mem.put(cache_key, data)
-        return _thumb_response(data, etag)
+        return _thumb_response(data, etag, inm)
 
     raise HTTPException(status_code=404, detail="Thumbnail not available")
 
