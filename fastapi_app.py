@@ -563,9 +563,11 @@ def health():
 def get_translations():
     from i18n import TRANSLATIONS, i18n
     lang = i18n.get_language()
+    t_dict = TRANSLATIONS.get(lang, TRANSLATIONS['en'])
+    logger.info(f"[i18n-trace] BACKEND serving lang={lang} tab_identify={t_dict.get('tab_identify')}")
     return {
         "lang": lang,
-        "translations": TRANSLATIONS.get(lang, TRANSLATIONS['en'])
+        "translations": t_dict
     }
 
 
