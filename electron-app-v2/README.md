@@ -63,6 +63,20 @@ See the [root README](../README.md) for complete environment variable, config.ya
 | **Providers** | Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama |
 | **Per-user VLM** | Non-admins can override provider, model, and enable/disable for their own processing via Settings (personal VLM section) or `PUT /api/settings/user-vlm`. Resolves as: user override → global `config.yaml` → disabled |
 
+### Admin Panel
+
+| Feature | Description |
+|---|---|
+| **Update Server** | Streams `fix_db.sh` output live in-browser (git pull + DB migrate + service restart); no SSH required |
+| **View Logs** | Displays the last N lines of the FastAPI application log in a scrollable modal; streams via SSE |
+| **Reload Engine** | Hot-reloads the face recognition engine without a full service restart |
+| **User management** | Create / promote / deactivate users |
+
+The Update Server button requires:
+- A NOPASSWD sudoers entry for the service user (added automatically by `deploy-v2.sh` Phase 3b or `patch_deployment.sh` FIX 1)
+- No `NoNewPrivileges=yes` in the systemd unit (removed by `deploy-v2.sh` or `patch_deployment.sh` FIX 2)
+- Apache `<Location /api/admin> SetEnv proxy-nokeepalive 1 </Location>` inside the VirtualHost (`patch_deployment.sh` FIX 3)
+
 ### Settings & Auth
 
 | Feature | Description |
@@ -470,7 +484,8 @@ ui:
 | `localfile://` images don't load | macOS Full Disk Access: System Preferences → Privacy → Full Disk Access → add CrispLens |
 | Mode C subprocess crash | Check Python path in Settings; run `python local_processor.py` manually to see error |
 | Mode C "model not found" | Settings → Model Management → Download `buffalo_l` (or whichever model is selected) |
-| SSE stream stops in browser | nginx must have `proxy_buffering off` in the `/api/` location block |
+| SSE stream stops in browser | nginx: `proxy_buffering off` in `/api/` location. Apache: `SetEnv no-gzip 1` inside the VirtualHost `<Location /api>` block |
+| Admin Update Server hangs / exit code 1 | Missing NOPASSWD sudoers entry or `NoNewPrivileges=yes` in systemd unit | Run `sudo bash patch_deployment.sh` on the VPS |
 | FAISS not reloaded after import | `POST /api/ingest/import-processed` reloads FAISS internally |
 | Electron remote: 401 after login | Ensure `CRISP_HTTPS_COOKIES=1` in the systemd unit (set automatically by `deploy-v2.sh`) |
 | Face clusters show broken images | Expected for Mode C imports — face crops now fall back to stored thumbnail automatically |

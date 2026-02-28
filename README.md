@@ -338,6 +338,20 @@ cd electron-app-v2/renderer && sudo -u face-rec npm run build && cd -
 systemctl restart face-rec
 ```
 
+### Patching an existing install (deployed from an older script)
+
+If the server was deployed before the admin-update feature was added, run the targeted patcher once:
+
+```bash
+sudo bash patch_deployment.sh
+```
+
+This applies four fixes without touching your data or database:
+1. Creates `/etc/sudoers.d/crisp-lens` — NOPASSWD for `fix_db.sh` (service accounts have no shell password; sudo always fails without this)
+2. Removes `NoNewPrivileges=yes` from the systemd unit — older scripts set this, which blocks the `sudo` setuid bit entirely
+3. Adds `<Location /api>` + `<Location /api/admin>` blocks inside the Apache VirtualHost — prevents mod_deflate buffering of SSE streams
+4. Writes `admin.fix_db_path` to `config.yaml` so the UI finds the script path automatically
+
 ### Container / Docker
 
 Build the image (no admin credentials baked in):
@@ -660,6 +674,12 @@ All settings live in `config.yaml` (copy from `config.example.yaml`). When runni
 | `preprocessing.cache_preprocessed` | `true` | Cache resized images |
 | `preprocessing.cache_size_mb` | `512` | Preprocessing cache size |
 
+### `admin`
+
+| Key | Default | Description |
+|---|---|---|
+| `fix_db_path` | `/root/recognize_faces/fix_db.sh` | Absolute path to `fix_db.sh`; set automatically by `deploy-v2.sh` and `patch_deployment.sh`; used by the admin "Update Server" UI |
+
 ### `logging`
 
 | Key | Default | Description |
@@ -934,3 +954,7 @@ face_rec/
 | Shared DB: stale FAISS | Other instance trained | Lower `faiss_sync_interval` (e.g. `10`) |
 | dlib not available | `face-recognition` not installed | `pip install face-recognition` (requires cmake + dlib headers) |
 | VPS: "Default login" message | Old deploy.sh used | Use `deploy-v2.sh` which sets `CRISP_ADMIN_USER`/`CRISP_ADMIN_PASS` |
+| Admin "Update Server" hangs | Missing sudoers NOPASSWD or `NoNewPrivileges=yes` in unit | Run `sudo bash patch_deployment.sh` to apply all fixes at once |
+| Admin "Update Server" exit code 1 | `NoNewPrivileges=yes` in systemd unit blocks sudo setuid | Run `sudo bash patch_deployment.sh` (FIX 2) or manually remove `NoNewPrivileges=yes` from `/etc/systemd/system/face-rec.service` and `systemctl daemon-reload && systemctl restart face-rec` |
+| Server logs / API responses hang in browser | Apache mod_deflate buffering (missing `no-gzip` Location block) | Add `<Location /api> SetEnv no-gzip 1 </Location>` inside each Apache VirtualHost; or run `sudo bash patch_deployment.sh` (FIX 3) |
+| SSE stream works on HTTP but not HTTPS | certbot added a new `<VirtualHost *:443>` block without Location directives | Re-run `sudo bash patch_deployment.sh` — it patches all VirtualHost blocks that contain a ProxyPass directive |

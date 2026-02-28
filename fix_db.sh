@@ -65,6 +65,71 @@ if [[ "${CRISP_YES:-0}" != "1" ]]; then
 fi
 
 # =============================================================================
+# STEP 0 — Sudoers NOPASSWD + config.yaml fix_db_path (idempotent)
+# =============================================================================
+# Ensure the service user can call "sudo bash fix_db.sh" without a password.
+# The face-rec user is a system account with no shell password, so sudo -S
+# always fails unless NOPASSWD is in sudoers.  We write a dedicated drop-in
+# file so the main /etc/sudoers is never modified.
+step "Ensuring NOPASSWD sudoers entry for ${SVC_USER}"
+
+SUDOERS_FILE="/etc/sudoers.d/crisp-lens"
+THIS_SCRIPT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SUDOERS_LINE="${SVC_USER} ALL=(ALL) NOPASSWD: /bin/bash ${THIS_SCRIPT_ABS}"
+
+_write_sudoers=false
+if [[ -f "$SUDOERS_FILE" ]]; then
+    if grep -qF "$SUDOERS_LINE" "$SUDOERS_FILE"; then
+        info "Sudoers entry already correct"
+    else
+        _write_sudoers=true
+        info "Sudoers entry outdated — updating"
+    fi
+else
+    _write_sudoers=true
+fi
+
+if [[ "$_write_sudoers" == true ]]; then
+    echo "$SUDOERS_LINE" > "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    if visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
+        info "Sudoers drop-in written: ${SUDOERS_FILE}"
+        info "  → ${SUDOERS_LINE}"
+    else
+        warn "Sudoers syntax check failed — removing ${SUDOERS_FILE}"
+        rm -f "$SUDOERS_FILE"
+    fi
+fi
+
+# Also keep config.yaml in sync so the admin UI always knows the script path.
+CFG="${INSTALL_DIR}/config.yaml"
+if [[ -f "$CFG" ]]; then
+    python3 - "$CFG" "admin.fix_db_path" "$THIS_SCRIPT_ABS" <<'PYEOF' 2>/dev/null && \
+        info "config.yaml: admin.fix_db_path = ${THIS_SCRIPT_ABS}" || \
+        warn "Could not patch admin.fix_db_path in config.yaml"
+import sys, re
+cfg_path, key, val = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    import yaml
+    with open(cfg_path) as fh: data = yaml.safe_load(fh) or {}
+    parts = key.split('.')
+    node = data
+    for p in parts[:-1]: node = node.setdefault(p, {})
+    node[parts[-1]] = val
+    with open(cfg_path, 'w') as fh:
+        yaml.dump(data, fh, default_flow_style=False, allow_unicode=True, sort_keys=False)
+except ImportError:
+    leaf = key.split('.')[-1]
+    text = open(cfg_path).read()
+    if re.search(rf'^\s*{re.escape(leaf)}\s*:', text, re.MULTILINE):
+        text = re.sub(rf'^(\s*{re.escape(leaf)}\s*:).*$', rf'\g<1> {val}', text, flags=re.MULTILINE)
+    else:
+        text += f'\n# written by fix_db.sh\nadmin:\n  fix_db_path: {val}\n'
+    open(cfg_path, 'w').write(text)
+PYEOF
+fi
+
+# =============================================================================
 # STEP 1 — Sync Python / SQL / config files (skip data dirs + venv)
 # =============================================================================
 step "Syncing source files  ${REPO_DIR} → ${INSTALL_DIR}"

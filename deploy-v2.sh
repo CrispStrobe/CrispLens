@@ -221,7 +221,9 @@ create_service() {
         printf 'StandardError=journal\n'
         printf 'SyslogIdentifier=%s\n' "$svc"
         printf '\n# Hardening\n'
-        printf 'NoNewPrivileges=yes\n'
+        # NoNewPrivileges intentionally omitted: the service calls "sudo bash fix_db.sh"
+        # via the admin update endpoint. NoNewPrivileges=yes blocks all setuid binaries
+        # (including sudo), so the update feature would silently fail with exit code 1.
         printf 'PrivateTmp=yes\n'
         printf 'ProtectSystem=full\n'
         printf 'ReadWritePaths=%s\n' "$dir"
@@ -355,6 +357,22 @@ create_apache2_site() {
 
     RequestHeader set X-Real-IP       "%{REMOTE_ADDR}s"
     RequestHeader set X-Forwarded-Proto "http"
+
+    # Disable gzip compression for all API routes.
+    # mod_deflate buffers the entire response body before compressing it, which
+    # causes fetch()/res.json() to hang indefinitely in the browser.
+    <Location /api>
+        SetEnv no-gzip 1
+        SetEnv dont-vary 1
+    </Location>
+
+    # Disable proxy keep-alive for admin endpoints.
+    # Without this Apache holds the response in a keep-alive buffer waiting to
+    # reuse the backend connection — the browser never receives the body.
+    # proxy-nokeepalive forces a flush as soon as uvicorn closes the connection.
+    <Location /api/admin>
+        SetEnv proxy-nokeepalive 1
+    </Location>
 </VirtualHost>
 EOF
 
@@ -570,6 +588,29 @@ if [[ "$IN_CONTAINER" == false ]]; then
 fi
 
 # =============================================================================
+# PHASE 3b — sudoers NOPASSWD entry (VPS only)
+# =============================================================================
+# The admin "Update Server" feature runs:  sudo bash <fix_db.sh>
+# as the service user.  Without NOPASSWD the service account (which has no
+# shell password) can never authenticate, and sudo always returns exit code 1.
+# We write a dedicated drop-in file so the main sudoers is never touched.
+if [[ "$IN_CONTAINER" == false ]]; then
+    step "Sudoers: NOPASSWD entry for ${CRISP_SVC_USER}"
+    SUDOERS_FILE="/etc/sudoers.d/crisp-lens"
+    FIX_DB_ABS="${SCRIPT_DIR}/fix_db.sh"
+    SUDOERS_LINE="${CRISP_SVC_USER} ALL=(ALL) NOPASSWD: /bin/bash ${FIX_DB_ABS}"
+    echo "$SUDOERS_LINE" > "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    if visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
+        info "Sudoers drop-in written: ${SUDOERS_FILE}"
+        info "  → ${SUDOERS_LINE}"
+    else
+        warn "Sudoers syntax check failed — removing ${SUDOERS_FILE}"
+        rm -f "$SUDOERS_FILE"
+    fi
+fi
+
+# =============================================================================
 # PHASE 4 — application files
 # =============================================================================
 step "Installing application files → ${CRISP_INSTALL_DIR}"
@@ -689,6 +730,10 @@ if [[ -f "$CFG" ]]; then
     patch_config_key "$CFG" "face_recognition.insightface.use_coreml" "false"
     # Defer heavy model load until first request (faster startup, especially in containers)
     patch_config_key "$CFG" "face_recognition.lazy_init" "true"
+    # Record the fix_db.sh path so the admin update UI finds it without manual config
+    if [[ "$IN_CONTAINER" == false ]]; then
+        patch_config_key "$CFG" "admin.fix_db_path" "${SCRIPT_DIR}/fix_db.sh"
+    fi
     [[ "$IN_CONTAINER" == false ]] && chown "${CRISP_SVC_USER}:${CRISP_SVC_USER}" "${CFG}"
     info "config.yaml patched for Linux"
 fi
