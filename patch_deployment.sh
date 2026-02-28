@@ -119,13 +119,17 @@ if [[ -n "$APACHE_SITES_DIR" ]]; then
     [[ -z "$_port" ]] && _port=$(grep -oP '127\.0\.0\.1:\K\d+'    "$UNIT_FILE" 2>/dev/null | head -1 || true)
     info "Backend port detected: ${_port:-unknown}"
 
-    # Search by exact port (most reliable)
+    # Use shell glob — NOT grep -r — so symlinked conf files in sites-enabled are read.
+    # grep -rl (lowercase r) recurses directories but skips symlinks to files,
+    # which is exactly what Apache sites-enabled uses.  Glob expands symlinks.
     if [[ -n "$_port" ]]; then
-        APACHE_CONF_LIST=$(grep -rl "127.0.0.1:${_port}" "$APACHE_SITES_DIR" 2>/dev/null || true)
+        APACHE_CONF_LIST=$(grep -l "127.0.0.1:${_port}" \
+            "$APACHE_SITES_DIR"/*.conf 2>/dev/null | grep -v '\.bak\.' || true)
     fi
-    # Fallback: any conf that has ProxyPass to localhost
+    # Fallback: any conf with ProxyPass to a localhost port
     if [[ -z "$APACHE_CONF_LIST" ]]; then
-        APACHE_CONF_LIST=$(grep -rl 'ProxyPass.*127\.0\.0\.1' "$APACHE_SITES_DIR" 2>/dev/null || true)
+        APACHE_CONF_LIST=$(grep -l 'ProxyPass.*127\.0\.0\.1' \
+            "$APACHE_SITES_DIR"/*.conf 2>/dev/null | grep -v '\.bak\.' || true)
     fi
 
     if [[ -n "$APACHE_CONF_LIST" ]]; then
