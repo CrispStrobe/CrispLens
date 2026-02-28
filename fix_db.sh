@@ -59,7 +59,7 @@ echo
 [[ -d "$REPO_DIR"    ]] || die "Repo dir not found: ${REPO_DIR}"
 [[ -d "$INSTALL_DIR" ]] || die "Install dir not found: ${INSTALL_DIR} — run deploy-v2.sh first"
 
-if [[ "${CRISP_YES:-0}" != "1" ]]; then
+if [[ -t 0 && "${CRISP_YES:-0}" != "1" ]]; then
     read -rp "  Proceed? [y/N]: " _go
     [[ "${_go,,}" == "y" ]] || { echo "  Aborted."; exit 0; }
 fi
