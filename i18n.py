@@ -42,6 +42,17 @@ TRANSLATIONS = {
         'tab_export': 'Export',
         'tab_timeline': 'Zeitleiste',
         'tab_folders': 'Ordner',
+        'tab_albums': 'Alben',
+        'tab_events': 'Ereignisse',
+        'tab_identify': 'Identifizieren',
+        'tab_generate': 'Generieren',
+        'tab_faceclusters': 'Gesichtsgruppen',
+        'tab_filesystem': 'Dateisystem',
+        'tab_watchfolders': 'Überwachte Ordner',
+        'tab_duplicates': 'Duplikate',
+        'tab_ingest': 'Import',
+        'sidebar_expand': 'Seitenleiste ausklappen',
+        'sidebar_collapse': 'Seitenleiste einklappen',
         
         # ====================================================================
         # RECOGNIZE TAB
