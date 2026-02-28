@@ -158,10 +158,19 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
             owner_conn.close()
             if owner_row:
                 from permissions import User
+                rd = dict(owner_row)
                 owner_user = User(
-                    id=owner_row['id'],
-                    username=owner_row['username'],
-                    role=owner_row['role'],
+                    id=rd['id'],
+                    username=rd['username'],
+                    password_hash=rd['password_hash'],
+                    role=rd['role'],
+                    allowed_folders=json.loads(rd['allowed_folders'] or '[]'),
+                    created_at=rd['created_at'],
+                    is_active=bool(rd['is_active']),
+                    vlm_enabled=rd.get('vlm_enabled'),
+                    vlm_provider=rd.get('vlm_provider'),
+                    vlm_model=rd.get('vlm_model'),
+                    det_model=rd.get('det_model'),
                 )
                 vlm = get_effective_vlm_provider(owner_user, _state_obj)
             else:
