@@ -148,6 +148,8 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
         album_id = job['album_id']
         visibility = job['visibility'] or 'shared'
         det_params = json.loads(job['det_params']) if job['det_params'] else {}
+        skip_faces = bool(det_params.get('skip_faces', False))
+        skip_vlm   = bool(det_params.get('skip_vlm',   False))
 
         # Resolve VLM per owner
         from fastapi_app import state as _state_obj
@@ -214,12 +216,14 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                     original_filename = os.path.basename(local_path) if local_path else None
                     
                     result = _state_obj.engine.process_image(
-                        filepath, vlm,
+                        filepath, vlm if not skip_vlm else None,
                         det_thresh=det_params.get('det_thresh'),
                         min_face_size=det_params.get('min_face_size'),
                         rec_thresh=det_params.get('rec_thresh'),
                         det_model=det_params.get('det_model', 'auto'),
-                        original_filename=original_filename
+                        skip_faces=skip_faces,
+                        skip_vlm=skip_vlm,
+                        original_filename=original_filename,
                     )
                     if not result.get('success'):
                         raise RuntimeError(result.get('error', 'Processing failed'))

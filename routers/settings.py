@@ -430,6 +430,8 @@ _DE: dict = {
     'pv_browse':                 'Durchsuchen…',
     'pv_subfolders':             'Unterordner',
     'pv_det_settings':           'Erkennungseinstellungen',
+    'pv_skip_faces':             'Gesichtserkennung überspringen',
+    'pv_skip_vlm':               'KI-Beschreibung überspringen (VLM)',
     'pv_max_size_label':         'Verkleinern auf (px)',
     'pv_max_size_hint':          '0 = Original',
     'pv_already_uploaded':       'bereits hochgeladen',

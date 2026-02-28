@@ -148,6 +148,8 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (detParams.rec_thresh    != null) form.append('rec_thresh',    String(detParams.rec_thresh));
   if (detParams.det_model)             form.append('det_model',     detParams.det_model);
   if (detParams.max_size      != null) form.append('max_size',      String(detParams.max_size));
+  if (detParams.skip_faces)            form.append('skip_faces',    'true');
+  if (detParams.skip_vlm)              form.append('skip_vlm',      'true');
   if (tagIds.length)                   form.append('tag_ids',       JSON.stringify(tagIds));
   if (newTagNames.length)              form.append('new_tag_names', JSON.stringify(newTagNames));
   if (albumId != null)                 form.append('album_id',      String(albumId));

@@ -97,6 +97,8 @@ async def upload_local(
     rec_thresh:     Optional[float] = Form(None),
     det_model:      str             = Form('auto'),
     max_size:       int             = Form(0),
+    skip_faces:     bool            = Form(False),
+    skip_vlm:       bool            = Form(False),
     tag_ids:        str             = Form(''),        # JSON array of existing tag IDs
     new_tag_names:  str             = Form(''),        # JSON array of new tag names to create
     album_id:       Optional[int]   = Form(None),
@@ -219,10 +221,11 @@ async def upload_local(
 
     try:
         # Normal VPS processing (filepath stored in DB = perm_path — stays on disk)
-        vlm = get_effective_vlm_provider(user, s)
+        vlm = None if skip_vlm else get_effective_vlm_provider(user, s)
         result = await _run_in_executor(s, perm_path, vlm,
                                         det_thresh=det_thresh, min_face_size=min_face_size,
-                                        rec_thresh=rec_thresh, det_model=det_model, max_size=max_size)
+                                        rec_thresh=rec_thresh, det_model=det_model, max_size=max_size,
+                                        skip_faces=skip_faces, skip_vlm=skip_vlm)
 
         if not result.get('success'):
             try:
@@ -337,7 +340,8 @@ async def upload_local(
 
 async def _run_in_executor(s, path: str, vlm_provider=None,
                            det_thresh=None, min_face_size=None, rec_thresh=None,
-                           det_model='auto', max_size=0):
+                           det_model='auto', max_size=0,
+                           skip_faces=False, skip_vlm=False):
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
@@ -346,6 +350,7 @@ async def _run_in_executor(s, path: str, vlm_provider=None,
             path, vlm_provider,
             det_thresh=det_thresh, min_face_size=min_face_size, rec_thresh=rec_thresh,
             det_model=det_model, max_size=max_size,
+            skip_faces=skip_faces, skip_vlm=skip_vlm,
         ),
     )
 

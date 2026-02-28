@@ -228,6 +228,8 @@
   let recThresh    = 0.4;
   let detModel     = 'auto';
   let maxSize      = 0;
+  let skipFaces    = false;
+  let skipVlm      = false;
   let showDetParams = false;
 
   const DET_MODELS = [
@@ -244,6 +246,8 @@
     rec_thresh:    recThresh,
     det_model:     detModel,
     max_size:      maxSize,
+    skip_faces:    skipFaces,
+    skip_vlm:      skipVlm,
   };
 
   // ── Processing state ───────────────────────────────────────────────────────
@@ -744,25 +748,39 @@
     </button>
     {#if showDetParams}
       <div class="det-params-box">
-        <div class="det-param-row">
-          <label>{$t('detection_threshold')}: <strong>{detThresh}</strong></label>
-          <input type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} />
+        <!-- Skip toggles at the top — affect which pipelines run -->
+        <div class="det-skip-row">
+          <label class="skip-check">
+            <input type="checkbox" bind:checked={skipFaces} />
+            {$t('pv_skip_faces')}
+          </label>
+          <label class="skip-check">
+            <input type="checkbox" bind:checked={skipVlm} />
+            {$t('pv_skip_vlm')}
+          </label>
         </div>
-        <div class="det-param-row">
-          <label>{$t('min_face_size')}: <strong>{minFaceSize}px</strong></label>
-          <input type="range" min="10" max="200" step="5" bind:value={minFaceSize} />
-        </div>
-        <div class="det-param-row">
-          <label>{$t('recognition_certainty')}: <strong>{recThresh}</strong></label>
-          <input type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
-        </div>
-        <div class="det-param-row">
-          <label>{$t('detection_model')}</label>
-          <select bind:value={detModel}>
-            {#each DET_MODELS as m}
-              <option value={m.value}>{m.label}</option>
-            {/each}
-          </select>
+        <!-- Detection tuning params (dimmed when faces are skipped) -->
+        <div class:det-disabled={skipFaces}>
+          <div class="det-param-row">
+            <label>{$t('detection_threshold')}: <strong>{detThresh}</strong></label>
+            <input type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} disabled={skipFaces} />
+          </div>
+          <div class="det-param-row">
+            <label>{$t('min_face_size')}: <strong>{minFaceSize}px</strong></label>
+            <input type="range" min="10" max="200" step="5" bind:value={minFaceSize} disabled={skipFaces} />
+          </div>
+          <div class="det-param-row">
+            <label>{$t('recognition_certainty')}: <strong>{recThresh}</strong></label>
+            <input type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} disabled={skipFaces} />
+          </div>
+          <div class="det-param-row">
+            <label>{$t('detection_model')}</label>
+            <select bind:value={detModel} disabled={skipFaces}>
+              {#each DET_MODELS as m}
+                <option value={m.value}>{m.label}</option>
+              {/each}
+            </select>
+          </div>
         </div>
         <div class="det-param-row">
           <label>{$t('pv_max_size_label')} <span class="hint">{$t('pv_max_size_hint')}</span></label>
@@ -1235,6 +1253,25 @@
   }
   .picker-option:hover { background: #252540; }
   .picker-option.new-item { color: #50a050; border-top: 1px solid #2a2a42; }
+
+  .det-skip-row {
+    display: flex;
+    gap: 16px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2a2a3a;
+    margin-bottom: 4px;
+  }
+  .skip-check {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #90b0d0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .skip-check input[type="checkbox"] { accent-color: #5080c0; cursor: pointer; }
+  .det-disabled { opacity: 0.35; pointer-events: none; }
 
   .batch-job-error {
     font-size: 11px;
