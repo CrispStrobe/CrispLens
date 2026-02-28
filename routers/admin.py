@@ -16,7 +16,7 @@ import subprocess
 import time as _time
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from routers.deps import require_admin
@@ -145,9 +145,11 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     )
 
     def _gen():
-        yield f"data: [admin] Script:       {script}\n\n"
-        yield f"data: [admin] Requested by: {admin.username}\n\n"
-        yield f"data: [admin] Running:      sudo bash {script}\n\n"
+        # Small sleeps between every yield so Apache's flushpackets=on
+        # sees real chunk gaps and flushes each event to the browser.
+        yield f"data: [admin] Script:       {script}\n\n";  _time.sleep(0.05)
+        yield f"data: [admin] Requested by: {admin.username}\n\n"; _time.sleep(0.05)
+        yield f"data: [admin] Running:      sudo bash {script}\n\n"; _time.sleep(0.05)
 
         try:
             logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
@@ -164,6 +166,7 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
                 logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
                 line_count += 1
                 yield f"data: {stripped}\n\n"
+                _time.sleep(0.02)   # flush each line through Apache before the next
 
             proc.wait()
             rc = proc.returncode
@@ -171,7 +174,7 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
                 "admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count
             )
 
-            yield f"data: [exit {rc}]\n\n"
+            yield f"data: [exit {rc}]\n\n";  _time.sleep(0.05)
 
             # -15 = SIGTERM from the service restarting itself mid-run — treat as success
             if rc in (0, -15):
@@ -192,10 +195,11 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
 @router.get("/logs")
 def get_server_logs(lines: int = 200, _=Depends(require_admin)):
     """
-    Stream the last N lines of the Python app log as SSE.
+    Return the last N lines of the Python app log as an SSE-formatted body.
 
-    Uses a sync generator so Starlette runs it in a thread-pool worker via
-    iterate_in_threadpool — identical pattern to the known-good test endpoints.
+    Uses Response (not StreamingResponse) so Apache receives a single
+    Content-Length response it can forward immediately — no generator chunk
+    batching, no flushpackets timing issues.
 
     Protocol:
       data: [PATH]/path/to/logfile     ← first event, log file location
@@ -243,29 +247,37 @@ def get_server_logs(lines: int = 200, _=Depends(require_admin)):
             logger.info("admin.get_server_logs: FOUND %s", log_file)
             break
 
-    def _gen():
+    # ── Build the complete SSE body in memory, then return with Content-Length ─
+    # Returning Response (not StreamingResponse) gives Apache an exact byte count
+    # so it can forward the body immediately without waiting for a buffer threshold.
+    try:
         if not log_file:
             tried = ', '.join(unique[:5])
             logger.warning("admin.get_server_logs: not found; tried: %s", tried)
-            yield f"data: [ERROR]Log file not found. Tried: {tried}\n\n"
-            return
-
-        try:
+            body = f"data: [ERROR]Log file not found. Tried: {tried}\n\n"
+        else:
             logger.info("admin.get_server_logs: reading last %d lines from %s", lines, log_file)
             with open(log_file, 'r', errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
-            logger.info("admin.get_server_logs: streaming %d lines", len(tail))
+            logger.info("admin.get_server_logs: returning %d lines", len(tail))
 
-            yield f"data: [PATH]{log_file}\n\n"
-
+            parts = [f"data: [PATH]{log_file}\n\n"]
             for ln in tail:
-                yield f"data: {ln.rstrip()}\n\n"
+                parts.append(f"data: {ln.rstrip()}\n\n")
+            parts.append("data: [DONE]\n\n")
+            body = ''.join(parts)
 
-            yield "data: [DONE]\n\n"
-            logger.info("admin.get_server_logs: stream complete")
+    except Exception as exc:
+        logger.error("admin.get_server_logs: error building body: %s", exc, exc_info=True)
+        body = f"data: [ERROR]{exc}\n\n"
 
-        except Exception as exc:
-            logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
-            yield f"data: [ERROR]{exc}\n\n"
-
-    return _sse_response(_gen())
+    body_bytes = body.encode('utf-8')
+    return Response(
+        content=body_bytes,
+        media_type="text/event-stream",
+        headers={
+            "Content-Length":    str(len(body_bytes)),
+            "X-Accel-Buffering": "no",
+            "Cache-Control":     "no-cache",
+        },
+    )
