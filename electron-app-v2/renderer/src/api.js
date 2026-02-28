@@ -710,6 +710,10 @@ export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
   return get(`/batch-jobs/${id}/logs?limit=${limit}&offset=${offset}`);
 }
 
+export function addFileToBatchJob(jobId, data) {
+  return post(`/batch-jobs/${jobId}/add-file`, data);
+}
+
 /**
  * Upload a single file for a persistent batch job.
  */

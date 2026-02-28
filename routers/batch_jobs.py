@@ -355,8 +355,8 @@ async def upload_batch_file(
 def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)):
     """Create a new batch job for a server-side folder or explicit file list."""
     s = _state()
-    if not body.folder and not body.filepaths:
-        raise HTTPException(status_code=400, detail='Either folder or filepaths must be provided')
+    if not body.folder and not body.filepaths and not body.batch_files:
+        raise HTTPException(status_code=400, detail='Either folder, filepaths, or batch_files must be provided')
 
     conn = None
     try:
@@ -395,13 +395,14 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
         conn.commit()
 
         # Enumerate or use explicit files
+        all_files = []
         if body.folder:
             logger.info(f"Batch job {job_id}: enumerating files in {body.folder}")
             all_files = [(fp, None) for fp in _enum_image_files(body.folder, body.recursive, body.follow_symlinks)]
         elif body.batch_files:
             logger.info(f"Batch job {job_id}: using {len(body.batch_files)} explicit batch_files")
             all_files = [(f.filepath, f.local_path) for f in body.batch_files]
-        else:
+        elif body.filepaths:
             logger.info(f"Batch job {job_id}: using {len(body.filepaths)} explicit filepaths")
             all_files = [(fp, None) for fp in body.filepaths]
 
@@ -413,19 +414,46 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
         except sqlite3.OperationalError:
             pass # already exists
 
-        batch_size = 1000
-        for i in range(0, total, batch_size):
-            chunk = all_files[i:i + batch_size]
-            conn.executemany(
-                "INSERT INTO batch_job_files(job_id, filepath, local_path, status) VALUES (?, ?, ?, 'pending')",
-                [(job_id, fp, lp) for fp, lp in chunk]
-            )
-        conn.execute("UPDATE batch_jobs SET total_count=? WHERE id=?", (total, job_id))
-        conn.commit()
+        if all_files:
+            batch_size = 1000
+            for i in range(0, total, batch_size):
+                chunk = all_files[i:i + batch_size]
+                conn.executemany(
+                    "INSERT INTO batch_job_files(job_id, filepath, local_path, status) VALUES (?, ?, ?, 'pending')",
+                    [(job_id, fp, lp) for fp, lp in chunk]
+                )
+            conn.execute("UPDATE batch_jobs SET total_count=? WHERE id=?", (total, job_id))
+            conn.commit()
 
         logger.info(f"Batch job {job_id}: created with {total} files")
         return {'job_id': job_id, 'total_count': total, 'name': job_name}
 
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post('/{job_id}/add-file')
+def add_file_to_batch_job(job_id: int, body: BatchFileWithLocalPath, user=Depends(get_current_user)):
+    """Add a single file to an existing batch job record."""
+    s = _state()
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        # Verify ownership
+        row = conn.execute("SELECT owner_id FROM batch_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Batch job not found')
+        if user.role != 'admin' and row['owner_id'] != user.id:
+            raise HTTPException(status_code=403, detail='Access denied')
+
+        conn.execute(
+            "INSERT INTO batch_job_files(job_id, filepath, local_path, status) VALUES (?, ?, ?, 'pending')",
+            (job_id, body.filepath, body.local_path)
+        )
+        conn.execute("UPDATE batch_jobs SET total_count = total_count + 1 WHERE id = ?", (job_id,))
+        conn.commit()
+        return {'ok': True}
     finally:
         if conn:
             conn.close()

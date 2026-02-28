@@ -1,5 +1,5 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile } from '../api.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob } from '../api.js';
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
@@ -470,31 +470,10 @@
     batchJobError = '';
     
     try {
-      const serverFilepaths = [];
-      let uploadIdx = 0;
-      
-      // We must upload the files to the server first, just like "Direct" mode does,
-      // because the server cannot access local paths from a browser.
-      for (const item of pending) {
-        batchJobError = `Uploading ${++uploadIdx} / ${pending.length}...`;
-        
-        const buffer = item.file
-          ? await item.file.arrayBuffer()
-          : await window.electronAPI.readLocalFile(item.path);
-          
-        // Use the same path logic as Direct mode for consistency
-        const base = localBasePath.trim().replace(/\/+$/, '');
-        const pathForServer = (base && item.path && !item.path.includes('/'))
-          ? `${base}/${item.path}`
-          : item.path;
-          
-        const { server_path } = await uploadBatchFile(buffer, pathForServer);
-        serverFilepaths.push({ filepath: server_path, local_path: pathForServer });
-      }
-
-      batchJobError = 'Creating job...';
-      await createBatchJob({
-        batch_files: serverFilepaths,
+      // 1. Create the empty job record first
+      batchJobError = 'Initializing job...';
+      const jobResp = await createBatchJob({
+        batch_files: [], // Start empty
         visibility,
         det_params: detParams,
         tag_ids: existingTagIds,
@@ -502,6 +481,29 @@
         album_id: selectedAlbum?.id ?? null,
         new_album_name: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null,
       });
+      const jobId = jobResp.job_id;
+
+      // 2. Upload and add files piece by piece (similar to "Direct" mode)
+      let uploadIdx = 0;
+      for (const item of pending) {
+        batchJobError = `Uploading ${++uploadIdx} / ${pending.length}...`;
+        
+        const buffer = item.file
+          ? await item.file.arrayBuffer()
+          : await window.electronAPI.readLocalFile(item.path);
+          
+        const base = localBasePath.trim().replace(/\/+$/, '');
+        const pathForServer = (base && item.path && !item.path.includes('/'))
+          ? `${base}/${item.path}`
+          : item.path;
+          
+        // Upload bytes to server
+        const { server_path } = await uploadBatchFile(buffer, pathForServer);
+        
+        // Register this file in the persistent job
+        await addFileToBatchJob(jobId, { filepath: server_path, local_path: pathForServer });
+      }
+
       sidebarView.set('batchjobs');
     } catch (e) {
       batchJobError = e.message;
