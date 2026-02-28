@@ -180,6 +180,9 @@ TRANSLATIONS = {
         'avg_faces': 'Durchschn. Gesichter pro Bild',
         'stop_processing': 'Anhalten',
         'resume_processing': 'Fortsetzen',
+        'bj_retry': 'Fehlgeschlagene erneut versuchen',
+        'bj_persistent_hint': 'Einen dauerhaften serverseitigen Auftrag für diese Dateien erstellen',
+        'bj_source_selection': 'Manuelle Auswahl',
         
         # ====================================================================
         # STATISTICS TAB
@@ -609,6 +612,9 @@ Formatieren Sie als JSON:
         'avg_faces': 'Average faces per image',
         'stop_processing': 'Stop',
         'resume_processing': 'Resume',
+        'bj_retry': 'Retry failed',
+        'bj_persistent_hint': 'Create a persistent server-side job for these files',
+        'bj_source_selection': 'Manual selection',
         
         # ====================================================================
         # STATISTICS TAB

@@ -97,7 +97,7 @@
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  async function startJob(job) {
+  async function startJob(job, retry = false) {
     actionError = '';
     if (activeSSE[job.id]) return;  // already streaming
 
@@ -109,7 +109,7 @@
         activeSSE = { ...activeSSE };
         loadJobs();
       }
-    });
+    }, retry);
     activeSSE = { ...activeSSE, [job.id]: sse };
 
     // Optimistically mark as running in the list
@@ -220,7 +220,9 @@
                 {ej.name || '—'}
                 {#if ej.username}<span class="owner-hint">({ej.username})</span>{/if}
               </td>
-              <td class="col-source" title={ej.source_path}>{ej.source_path?.split('/').pop() ?? '—'}</td>
+              <td class="col-source" title={ej.source_path}>
+                {ej.source_path === 'explicit-file-list' ? $t('bj_source_selection') : (ej.source_path?.split('/').pop() ?? '—')}
+              </td>
               <td>
                 <span class="status-badge {statusClass(ej.status)}">{statusLabel(ej.status)}</span>
               </td>
@@ -246,6 +248,11 @@
                   <button class="act-btn cancel" on:click={() => cancelJob(job)}>{$t('bj_cancel')}</button>
                 {/if}
                 {#if ej.status !== 'running'}
+                  {#if ej.error_count > 0}
+                    <button class="act-btn start" on:click={() => startJob(job, true)} title="Retry failed files">
+                      🔄 {$t('bj_retry')}
+                    </button>
+                  {/if}
                   <button class="act-btn logs" on:click={() => openLogs(job)}>{$t('bj_view_logs')}</button>
                   <button class="act-btn delete" on:click={() => deleteJob(job)}>{$t('bj_delete')}</button>
                 {/if}

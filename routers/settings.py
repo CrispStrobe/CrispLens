@@ -479,6 +479,9 @@ _DE: dict = {
     'bj_album_applied':          'Album',
     'bj_progress':               'Fortschritt',
     'bj_name':                   'Name',
+    'bj_retry':                  'Fehlgeschlagene erneut versuchen',
+    'bj_persistent_hint':        'Einen dauerhaften serverseitigen Auftrag für diese Dateien erstellen',
+    'bj_source_selection':       'Manuelle Auswahl',
 }
 
 _TRANSLATIONS: dict[str, dict] = {'de': _DE}

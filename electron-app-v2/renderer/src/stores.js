@@ -489,6 +489,9 @@ const EN = {
   bj_album_applied:          'Album',
   bj_progress:               'Progress',
   bj_name:                   'Name',
+  bj_retry:                  'Retry failed',
+  bj_persistent_hint:        'Create a persistent server-side job for these files',
+  bj_source_selection:       'Manual selection',
 };
 
 export const TRANSLATIONS = {
@@ -931,6 +934,9 @@ export const TRANSLATIONS = {
     bj_album_applied:          'Album',
     bj_progress:               'Fortschritt',
     bj_name:                   'Name',
+    bj_retry:                  'Fehlgeschlagene erneut versuchen',
+    bj_persistent_hint:        'Einen dauerhaften serverseitigen Auftrag für diese Dateien erstellen',
+    bj_source_selection:       'Manuelle Auswahl',
   },
 };
 

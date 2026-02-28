@@ -286,7 +286,8 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class CreateBatchJobRequest(BaseModel):
-    folder: str
+    folder: Optional[str] = None
+    filepaths: Optional[List[str]] = None
     name: Optional[str] = None
     recursive: bool = True
     follow_symlinks: bool = False
@@ -302,10 +303,10 @@ class CreateBatchJobRequest(BaseModel):
 
 @router.post('')
 def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)):
-    """Create a new batch job for a server-side folder."""
+    """Create a new batch job for a server-side folder or explicit file list."""
     s = _state()
-    if not os.path.isdir(body.folder):
-        raise HTTPException(status_code=400, detail=f'Folder not found: {body.folder}')
+    if not body.folder and not body.filepaths:
+        raise HTTPException(status_code=400, detail='Either folder or filepaths must be provided')
 
     conn = None
     try:
@@ -316,7 +317,14 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
         final_album_id = _resolve_album(conn, body.album_id, body.new_album_name)
         conn.commit()
 
-        job_name = body.name or os.path.basename(body.folder.rstrip('/'))
+        if body.folder:
+            if not os.path.isdir(body.folder):
+                raise HTTPException(status_code=400, detail=f'Folder not found: {body.folder}')
+            job_name = body.name or os.path.basename(body.folder.rstrip('/'))
+            source_path = body.folder
+        else:
+            job_name = body.name or f"Batch {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            source_path = "explicit-file-list"
 
         cur = conn.execute(
             """INSERT INTO batch_jobs
@@ -324,7 +332,7 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
                 det_params, tag_ids, album_id, created_at)
                VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
             (
-                user.id, job_name, body.folder,
+                user.id, job_name, source_path,
                 1 if body.recursive else 0,
                 1 if body.follow_symlinks else 0,
                 body.visibility,
@@ -336,9 +344,14 @@ def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)
         job_id = cur.lastrowid
         conn.commit()
 
-        # Enumerate files (synchronous; executemany in batches of 1000)
-        logger.info(f"Batch job {job_id}: enumerating files in {body.folder}")
-        all_files = _enum_image_files(body.folder, body.recursive, body.follow_symlinks)
+        # Enumerate or use explicit files
+        if body.folder:
+            logger.info(f"Batch job {job_id}: enumerating files in {body.folder}")
+            all_files = _enum_image_files(body.folder, body.recursive, body.follow_symlinks)
+        else:
+            logger.info(f"Batch job {job_id}: using {len(body.filepaths)} explicit files")
+            all_files = body.filepaths
+
         total = len(all_files)
 
         batch_size = 1000
@@ -460,7 +473,7 @@ def cancel_batch_job(job_id: int, user=Depends(get_current_user)):
 
 
 @router.post('/{job_id}/start')
-def start_batch_job(job_id: int, user=Depends(get_current_user)):
+def start_batch_job(job_id: int, retry: bool = Query(False), user=Depends(get_current_user)):
     """Start or resume a batch job; returns an SSE stream with progress events."""
     s = _state()
     conn = None
@@ -471,8 +484,28 @@ def start_batch_job(job_id: int, user=Depends(get_current_user)):
             raise HTTPException(status_code=404, detail='Batch job not found')
         if user.role != 'admin' and row['owner_id'] != user.id:
             raise HTTPException(status_code=403, detail='Access denied')
-        if row['status'] in ('done', 'cancelled', 'error'):
+
+        if retry:
+            # Reset error files to pending and update job error_count
+            cur = conn.execute(
+                "UPDATE batch_job_files SET status='pending', error_msg=NULL, processed_at=NULL "
+                "WHERE job_id=? AND status='error'",
+                (job_id,)
+            )
+            reset_count = cur.rowcount
+            if reset_count > 0:
+                conn.execute(
+                    "UPDATE batch_jobs SET status='pending', error_count=MAX(0, error_count - ?) WHERE id=?",
+                    (reset_count, job_id)
+                )
+                conn.commit()
+                logger.info(f"Batch job {job_id}: reset {reset_count} error files for retry")
+
+        # Refetch job status
+        row = conn.execute("SELECT status FROM batch_jobs WHERE id=?", (job_id,)).fetchone()
+        if row['status'] in ('done', 'cancelled') and not retry:
             raise HTTPException(status_code=409, detail=f"Job is already {row['status']}")
+
     finally:
         if conn:
             conn.close()

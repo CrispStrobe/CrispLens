@@ -714,6 +714,7 @@ export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
  * Start or resume a batch job via SSE.
  * onEvent(jobData) called each poll; returns { close() }.
  */
-export function startBatchJob(id, onEvent) {
-  return _streamSSE(`${BASE}/batch-jobs/${id}/start`, {}, onEvent);
+export function startBatchJob(id, onEvent, retry = false) {
+  const q = retry ? '?retry=true' : '';
+  return _streamSSE(`${BASE}/batch-jobs/${id}/start${q}`, {}, onEvent);
 }

@@ -459,6 +459,38 @@
     }
   }
 
+  async function createBatchJobFromQueue() {
+    const pending = queue.filter(q => q.status === 'pending');
+    if (!pending.length || batchJobCreating) return;
+    batchJobCreating = true;
+    batchJobError = '';
+    try {
+      // In Electron, we have full absolute paths.
+      // In browser mode, we only have names (unless localBasePath is set).
+      const base = localBasePath.trim().replace(/\/+$/, '');
+      const filepaths = pending.map(item => {
+        return (base && item.path && !item.path.includes('/'))
+          ? `${base}/${item.path}`
+          : item.path;
+      });
+
+      await createBatchJob({
+        filepaths,
+        visibility,
+        det_params: detParams,
+        tag_ids: existingTagIds,
+        new_tag_names: newTagNames,
+        album_id: selectedAlbum?.id ?? null,
+        new_album_name: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null,
+      });
+      sidebarView.set('batchjobs');
+    } catch (e) {
+      batchJobError = e.message;
+    } finally {
+      batchJobCreating = false;
+    }
+  }
+
   async function refreshGlobalData() {
     try { stats.set(await fetchStats()); } catch {}
     try { allPeople.set(await fetchPeople()); } catch {}
@@ -553,6 +585,16 @@
         >
           {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')}
         </button>
+        {#if inElectron || localBasePath.trim()}
+          <button
+            class="act-btn start"
+            on:click={createBatchJobFromQueue}
+            disabled={pendingItems.length === 0 || batchJobCreating}
+            title={$t('bj_persistent_hint')}
+          >
+            📡 {$t('pv_submit_batch_job')}
+          </button>
+        {/if}
       {:else}
         <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>
       {/if}
@@ -1042,6 +1084,16 @@
   .primary { background: #2a4a8a; border-color: #3a6aba; color: #c0d8ff; }
   .primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .danger  { background: #3a1818; border-color: #6a2828; color: #e07070; }
+
+  .act-btn {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 4px;
+    border: 1px solid;
+  }
+  .act-btn.start  { background: #1e3a1e; border-color: #3a6a3a; color: #70c070; }
 
   /* ── Tag + Album pickers ── */
   .meta-pickers {
