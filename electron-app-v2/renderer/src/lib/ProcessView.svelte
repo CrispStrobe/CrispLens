@@ -33,15 +33,19 @@
   }
 
   function addFiles(fileList) {
-    // Use f.path when available (Electron exposes it on <input> File objects even with contextIsolation).
-    // Fall back to f.name (browser mode — full path is not accessible).
+    // Use f.path when available (Electron).
+    // Use webkitRelativePath when available (browser picking folder).
+    // Fall back to f.name (browser mode picking files).
     const files = [...fileList].filter(f => isImage(f.name));
-    const newFiles = files.filter(f => !queue.find(q => q.path === (f.path || f.name)));
+    const newFiles = files.filter(f => {
+      const path = f.path || f.webkitRelativePath || f.name;
+      return !queue.find(q => q.path === path);
+    });
     queue = [
       ...queue,
       ...newFiles.map(f => ({
         id: nextId++,
-        path: f.path || f.name,
+        path: f.path || f.webkitRelativePath || f.name,
         name: f.name,
         file: f,
         status: 'pending',
@@ -466,12 +470,18 @@
     batchJobError = '';
     try {
       // In Electron, we have full absolute paths.
-      // In browser mode, we only have names (unless localBasePath is set).
+      // In browser mode, we might have webkitRelativePath or just names.
       const base = localBasePath.trim().replace(/\/+$/, '');
       const filepaths = pending.map(item => {
-        return (base && item.path && !item.path.includes('/'))
-          ? `${base}/${item.path}`
-          : item.path;
+        // If it's already an absolute path (starts with / or C:\ or similar), use it.
+        // Otherwise, if we have a base path, prepend it.
+        const isAbsolute = /^\/|^[a-zA-Z]:\\/.test(item.path);
+        if (isAbsolute) return item.path;
+        
+        if (base) {
+          return `${base}/${item.path}`;
+        }
+        return item.path; // Fallback to whatever we have
       });
 
       await createBatchJob({
@@ -596,6 +606,11 @@
             📡 {$t('pv_process_as_batch')}
           </button>
         </div>
+        {#if !inElectron && !localBasePath.trim() && pendingItems.length > 0}
+          <div class="path-notice">
+            ⚠️ {$t('pv_local_path_notice')}
+          </div>
+        {/if}
       {:else}
         <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>
       {/if}
@@ -924,6 +939,13 @@
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  .path-notice {
+    font-size: 10px;
+    color: #c09040;
+    margin-left: 8px;
+    white-space: nowrap;
   }
 
   /* ── Controls bar ── */
