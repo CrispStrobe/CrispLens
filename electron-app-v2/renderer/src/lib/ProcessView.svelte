@@ -582,21 +582,19 @@
           <button
             class="primary"
             on:click={startProcessing}
-            disabled={pendingItems.length === 0}
-            title={$t('pv_process_direct_hint') || 'Process immediately in this window'}
+            disabled={pendingItems.length === 0 || running}
+            title={$t('pv_process_direct_hint')}
           >
             {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')} ({$t('pv_process_direct')})
           </button>
-          {#if inElectron || localBasePath.trim()}
-            <button
-              class="act-btn start"
-              on:click={createBatchJobFromQueue}
-              disabled={pendingItems.length === 0 || batchJobCreating}
-              title={$t('bj_persistent_hint')}
-            >
-              📡 {$t('pv_process_as_batch')}
-            </button>
-          {/if}
+          <button
+            class="act-btn start"
+            on:click={createBatchJobFromQueue}
+            disabled={pendingItems.length === 0 || batchJobCreating}
+            title={$t('bj_persistent_hint')}
+          >
+            📡 {$t('pv_process_as_batch')}
+          </button>
         </div>
       {:else}
         <button class="danger" on:click={cancelProcessing}>{$t('stop_processing')}</button>

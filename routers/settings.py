@@ -419,6 +419,8 @@ _DE: dict = {
     'pv_items':                  'Elemente',
     'pv_pending':                'ausstehend',
     'pv_process_btn':            '▶ Verarbeiten',
+    'pv_process_direct':         'Direkt',
+    'pv_process_as_batch':       'Als Stapel',
     'pv_image':                  'Bild',
     'pv_images':                 'Bilder',
     'pv_server_folder_label':    'Oder Server-Ordner direkt verarbeiten',
