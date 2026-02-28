@@ -1,6 +1,6 @@
 <script>
   import { t } from '../stores.js';
-  import { fetchServerLogs } from '../api.js';
+  import { fetchServerLogs, fetchServerLogsJson } from '../api.js';
   import { createEventDispatcher, onMount, tick } from 'svelte';
 
   export let show = false;
@@ -14,6 +14,7 @@
   let lineCount = 50;
   let followLog = true;
   let logEl;
+  let transport = 'sse'; // 'sse' or 'json'
 
   $: if (lines && followLog && logEl) tick().then(() => {
     logEl.scrollTop = logEl.scrollHeight;
@@ -22,14 +23,37 @@
   async function load() {
     loading = true;
     error   = '';
-    lines   = []; 
+    lines   = [];
     try {
-      const data = await fetchServerLogs(lineCount, (update) => {
-        if (update.path) logPath = update.path;
-        if (update.line) lines = [...lines, update.line];
-      });
-      if (!lines.length && data.lines) lines = data.lines;
-      if (!logPath && data.path) logPath = data.path;
+      if (transport === 'sse') {
+        const resp = await fetchServerLogs(lineCount);
+        if (!resp.ok) { error = `HTTP ${resp.status}`; return; }
+        const reader = resp.body.getReader();
+        const dec    = new TextDecoder();
+        let   buf    = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          for (const p of parts) {
+            if (!p.startsWith('data: ')) continue;
+            const data = p.slice(6);
+            if (data.startsWith('[PATH]')) logPath = data.slice(6).trim();
+            else if (data === '[DONE]') { /* nothing */ }
+            else if (data.startsWith('[ERROR]')) error = data.slice(7);
+            else lines = [...lines, data];
+          }
+        }
+      } else {
+        const data = await fetchServerLogsJson(lineCount);
+        if (data.error) error = data.error;
+        else {
+          lines = data.lines || [];
+          logPath = data.path || '';
+        }
+      }
     } catch (e) {
       error = e.message || String(e);
     } finally {
@@ -62,6 +86,12 @@
           {#if logPath}<div class="log-path" title={logPath}>{logPath}</div>{/if}
         </div>
         <div class="header-right">
+          <label class="follow-toggle" style="margin-right:8px;">
+            <select bind:value={transport} on:change={load} style="margin:0;padding:2px 4px;font-size:10px;">
+              <option value="sse">Method 1 (SSE)</option>
+              <option value="json">Method 2 (JSON)</option>
+            </select>
+          </label>
           <label class="follow-toggle">
             <input type="checkbox" bind:checked={followLog} />
             {$t('logs_follow')}

@@ -274,52 +274,18 @@ export function streamServerUpdate(fix_db_path = '') {
  *   data: [DONE]                   ← end marker
  *   data: [ERROR]<message>         ← on failure
  */
-export async function fetchServerLogs(lines = 50, onLine = null) {
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 120000);
-  try {
-    const res = await fetch(`${BASE}/admin/logs?lines=${lines}`, {
-      credentials: 'include',
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      clearTimeout(tid);
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`[HTTP ${res.status}] ${text}`);
-    }
-    const reader = res.body.getReader();
-    const dec    = new TextDecoder();
-    let   buf    = '';
-    const outLines = [];
+/**
+ * Return last N lines of the server application log via SSE.
+ * Returns the raw fetch Promise (resolving to Response) so the UI can 
+ * read the stream directly, exactly like the SSE test buttons.
+ */
+export function fetchServerLogs(lines = 50) {
+  return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include' });
+}
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop();
-      for (const p of parts) {
-        if (!p.startsWith('data: ')) continue;
-        const data = p.slice(6);
-        if (data.startsWith('[PATH]')) {
-          if (onLine) onLine({ path: data.slice(7).trim() });
-        } else if (data === '[DONE]') {
-          if (onLine) onLine({ done: true });
-        } else if (data.startsWith('[ERROR]')) {
-          throw new Error(data.slice(7));
-        } else {
-          outLines.push(data);
-          if (onLine) onLine({ line: data });
-        }
-      }
-    }
-    clearTimeout(tid);
-    return { lines: outLines };
-  } catch (e) {
-    clearTimeout(tid);
-    if (e.name === 'AbortError') throw new Error('Timed out after 120 s');
-    throw e;
-  }
+/** Fallback: Get logs as a single JSON object (non-streaming). */
+export function fetchServerLogsJson(lines = 50) {
+  return fetch(`${BASE}/admin/logs-json?lines=${lines}`, { credentials: 'include' }).then(r => r.json());
 }
 
 export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }

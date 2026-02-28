@@ -163,26 +163,24 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
 
 @router.get("/logs")
 def get_server_logs(lines: int = 50, admin=Depends(require_admin)):
+# ... (rest of get_server_logs)
+
+@router.get("/logs-json")
+def get_server_logs_json(lines: int = 50, _=Depends(require_admin)):
     """
-    Stream app logs. Matches test-stream 0.4s pattern.
+    Method 2: Non-streaming JSON response for log retrieval.
+    If SSE hangs, this static method should still work through any proxy.
     """
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
-    def _gen():
-        h_path = next((h.baseFilename for h in _logging_mod.root.handlers if hasattr(h, 'baseFilename') and h.baseFilename), '')
-        c_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
-        log_file = next((c for c in [h_path, c_path, _app_log_file, '/opt/crisp-lens/face_recognition.log'] if c and os.path.isfile(c)), None)
-        if not log_file:
-            yield "data: [ERROR] Log file not found\n\n"; return
-        yield f"data: [PATH] {log_file}\n\n"; _time.sleep(0.4)
-        try:
-            with open(log_file, 'r', errors='replace') as fh:
-                tail = list(collections.deque(fh, maxlen=lines))
-            for ln in tail:
-                yield f"data: {ln.rstrip()}\n\n"
-                _time.sleep(0.4)
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: [ERROR] {e}\n\n"
-
-    return _sse_response(_gen())
+    h_path = next((h.baseFilename for h in _logging_mod.root.handlers if hasattr(h, 'baseFilename') and h.baseFilename), '')
+    c_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
+    log_file = next((c for c in [h_path, c_path, _app_log_file, '/opt/crisp-lens/face_recognition.log'] if c and os.path.isfile(c)), None)
+    if not log_file:
+        return JSONResponse({"error": "Log file not found"}, status_code=404)
+    try:
+        with open(log_file, 'r', errors='replace') as fh:
+            tail = list(collections.deque(fh, maxlen=lines))
+        return {"lines": [ln.rstrip() for ln in tail], "path": log_file}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

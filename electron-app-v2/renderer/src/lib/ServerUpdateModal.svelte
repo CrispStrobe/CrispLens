@@ -62,7 +62,9 @@
         buf = parts.pop();
         for (const part of parts) {
           if (part.startsWith('data: ')) {
-            lines = [...lines, part.slice(6)];
+            const data = part.slice(6);
+            if (data.startsWith('[exit ')) { /* handle exit code if needed */ }
+            lines = [...lines, data];
           }
         }
       }
