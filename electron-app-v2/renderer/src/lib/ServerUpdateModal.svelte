@@ -15,9 +15,31 @@
   let logEl;
   let followLog = true;
 
+  let pending = [];
+  let batchTimer = null;
+
   $: if (lines && followLog && logEl) tick().then(() => { logEl.scrollTop = logEl.scrollHeight; });
 
-  function reset() { lines = []; running = false; done = false; error = ''; }
+  function addLine(line) {
+    pending.push(line);
+    if (!batchTimer) {
+      batchTimer = setTimeout(() => {
+        lines = [...lines, ...pending];
+        pending = [];
+        batchTimer = null;
+      }, 100);
+    }
+  }
+
+  function reset() { 
+    lines = []; 
+    pending = [];
+    if (batchTimer) clearTimeout(batchTimer);
+    batchTimer = null;
+    running = false; 
+    done = false; 
+    error = ''; 
+  }
 
   function close() {
     if (running) return;
@@ -31,6 +53,7 @@
     console.log('[UpdateModal] doUpdate starting...');
     running = true;
     lines   = [];
+    pending = [];
     done    = false;
     error   = '';
 
@@ -53,13 +76,13 @@
       const reader = resp.body.getReader();
       const dec    = new TextDecoder();
       let   buf    = '';
-      let   lineCount = 0;
+      let   receivedCount = 0;
 
       console.log('[UpdateModal] Starting to read from response body reader...');
       while (true) {
         const { done: d, value } = await reader.read();
         if (d) {
-          console.log(`[UpdateModal] Reader done. Total lines received: ${lineCount}`);
+          console.log(`[UpdateModal] Reader done. Total lines received: ${receivedCount}`);
           break;
         }
         buf += dec.decode(value, { stream: true });
@@ -68,9 +91,8 @@
         for (const part of parts) {
           if (part.startsWith('data: ')) {
             const lineContent = part.slice(6);
-            lines = [...lines, lineContent];
-            lineCount++;
-            if (lineCount % 20 === 0) console.log(`[UpdateModal] Received ${lineCount} lines...`);
+            addLine(lineContent);
+            receivedCount++;
           } else {
             console.warn(`[UpdateModal] Received non-SSE part: ${part.slice(0, 50)}...`);
           }
@@ -80,7 +102,7 @@
       console.error('[UpdateModal] Exception in doUpdate:', e);
       if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
-        lines = [...lines, '— Connection closed (server restarted) —'];
+        addLine('— Connection closed (server restarted) —');
       } else {
         error = e.message || String(e);
       }

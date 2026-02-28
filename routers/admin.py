@@ -164,11 +164,11 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     def _gen():
         logger.info("admin.server_update: starting SSE stream for script: %s", script)
         
-        # Small sleeps between every yield so Apache's flushpackets=on
-        # sees real chunk gaps and flushes each event to the browser.
-        yield f"data: [admin] Script:       {script}\n\n";  _time.sleep(0.05)
-        yield f"data: [admin] Requested by: {admin.username}\n\n"; _time.sleep(0.05)
-        yield f"data: [admin] Running:      sudo bash {script}\n\n"; _time.sleep(0.05)
+        # Increased sleeps between every yield to ensure Apache flushpackets=on
+        # sees real chunk gaps and flushes each event to the browser UI.
+        yield f"data: [admin] Script:       {script}\n\n";  _time.sleep(0.2)
+        yield f"data: [admin] Requested by: {admin.username}\n\n"; _time.sleep(0.2)
+        yield f"data: [admin] Running:      sudo bash {script}\n\n"; _time.sleep(0.2)
 
         try:
             logger.info("admin.server_update: launching subprocess: sudo bash %s", script)
@@ -182,15 +182,14 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
             line_count = 0
             for raw in iter(proc.stdout.readline, b''):
                 stripped = raw.decode('utf-8', errors='replace').rstrip()
-                # Log to server console for visibility
+                # Server-side logging for visibility
                 if line_count % 20 == 0:
                     logger.info("admin.server_update: streaming line %d: %s", line_count, stripped[:80])
-                else:
-                    logger.debug("admin.server_update stdout[%d]: %s", line_count, stripped)
                 
                 line_count += 1
                 yield f"data: {stripped}\n\n"
-                _time.sleep(0.02)   # flush each line through Apache before the next
+                # Use a larger sleep per line (0.05s) to guarantee a proxy flush.
+                _time.sleep(0.05)
 
             proc.wait()
             rc = proc.returncode
@@ -198,7 +197,7 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
                 "admin.server_update: DONE  exit_code=%d  lines_streamed=%d", rc, line_count
             )
 
-            yield f"data: [exit {rc}]\n\n";  _time.sleep(0.05)
+            yield f"data: [exit {rc}]\n\n";  _time.sleep(0.2)
 
             # -15 = SIGTERM from the service restarting itself mid-run — treat as success
             if rc in (0, -15):
@@ -221,16 +220,16 @@ def server_update(body: UpdateRequest, admin=Depends(require_admin)):
 
 
 @router.get("/logs")
-def get_server_logs(lines: int = 300, _=Depends(require_admin)):
+def get_server_logs(lines: int = 200, admin=Depends(require_admin)):
     """
     Return the last N lines of the Python app log as an SSE stream.
-    Now uses StreamingResponse with small sleeps to ensure Apache flushpackets=on
-    works reliably, matching the 'test-stream' baseline.
+    Uses significant sleeps to ensure Apache flushpackets=on works and 
+    to prevent overwhelming the browser UI with too many rapid updates.
     """
     import logging as _logging_mod
     from fastapi_app import _log_file as _app_log_file, state as _s
 
-    logger.info("admin.get_server_logs: request for %d lines", lines)
+    logger.info("admin.get_server_logs: request for %d lines from %s", lines, admin.username)
 
     def _gen():
         # ── Locate log file ───────────────────────────────────────────────────
@@ -241,38 +240,19 @@ def get_server_logs(lines: int = 300, _=Depends(require_admin)):
                 break
 
         config_path = (_s.config or {}).get('logging', {}).get('file', '').strip()
-        candidates = []
-        for c in [handler_path, config_path, _app_log_file]:
-            if c and c not in candidates:
-                candidates.append(c)
-        candidates += [
-            '/opt/crisp-lens/face_recognition.log',
-            'face_recognition.log',
-            '/var/log/face_recognition.log',
-            '/var/log/face-rec/face_recognition.log',
-            os.path.expanduser('~/face_recognition.log'),
-        ]
+        candidates = [handler_path, config_path, _app_log_file, 
+                      '/opt/crisp-lens/face_recognition.log', 'face_recognition.log',
+                      '/var/log/face_recognition.log']
         
-        seen, unique = set(), []
-        for c in candidates:
-            if c and c not in seen:
-                seen.add(c)
-                unique.append(c)
-
-        log_file = None
-        for candidate in unique:
-            if os.path.isfile(candidate):
-                log_file = candidate
-                break
+        log_file = next((c for c in candidates if c and os.path.isfile(c)), None)
 
         if not log_file:
-            tried = ', '.join(unique[:5])
-            logger.warning("admin.get_server_logs: not found; tried: %s", tried)
-            yield f"data: [ERROR]Log file not found. Tried: {tried}\n\n"
+            yield f"data: [ERROR] Log file not found. Checked: {candidates[:3]}\n\n"
             return
 
-        yield f"data: [PATH]{log_file}\n\n"
-        _time.sleep(0.05)
+        # First yield with significant sleep to break proxy buffering
+        yield f"data: [PATH] {log_file}\n\n"
+        _time.sleep(0.2)
 
         try:
             logger.info("admin.get_server_logs: reading %d lines from %s", lines, log_file)
@@ -281,19 +261,17 @@ def get_server_logs(lines: int = 300, _=Depends(require_admin)):
             
             logger.info("admin.get_server_logs: streaming %d lines", len(tail))
             for i, ln in enumerate(tail):
-                # High verbosity: log every 50 lines to server console
-                if i % 50 == 0:
-                    logger.debug("admin.get_server_logs: streaming line %d/%d", i, len(tail))
-                
+                # Echo each line as SSE
                 yield f"data: {ln.rstrip()}\n\n"
-                # Crucial for Apache: tiny sleep between lines to force a flush
-                _time.sleep(0.01)
+                # 0.05s sleep = 20 lines per second. 200 lines = 10 seconds total.
+                # This is slow enough for any proxy to flush and for the UI to stay responsive.
+                _time.sleep(0.05)
 
             yield "data: [DONE]\n\n"
             logger.info("admin.get_server_logs: stream complete")
 
         except Exception as exc:
             logger.error("admin.get_server_logs: error: %s", exc, exc_info=True)
-            yield f"data: [ERROR]{exc}\n\n"
+            yield f"data: [ERROR] {exc}\n\n"
 
     return _sse_response(_gen())
