@@ -15,9 +15,12 @@
   let logEl;
   let followLog = true;
 
+  let controller = null;
+
   $: if (lines && followLog && logEl) tick().then(() => { logEl.scrollTop = logEl.scrollHeight; });
 
   function reset() { 
+    if (controller) controller.abort();
     lines = []; 
     running = false; 
     done = false; 
@@ -26,6 +29,7 @@
 
   function close() {
     if (running) return;
+    if (controller) controller.abort();
     show = false;
     reset();
     dispatch('close');
@@ -38,8 +42,14 @@
     done    = false;
     error   = '';
 
+    if (controller) controller.abort();
+    controller = new AbortController();
+
+    // Delay to let UI render first
+    await new Promise(r => setTimeout(r, 150));
+
     try {
-      const resp = await streamServerUpdate(fixDbPath.trim());
+      const resp = await streamServerUpdate(fixDbPath.trim(), { signal: controller.signal });
       if (!resp.ok) {
         try {
           const json = await resp.json();
@@ -63,13 +73,15 @@
         for (const part of parts) {
           if (part.startsWith('data: ')) {
             const data = part.slice(6);
-            if (data.startsWith('[exit ')) { /* handle exit code if needed */ }
+            if (data.startsWith('[exit ')) { /* handle exit code */ }
             lines = [...lines, data];
           }
         }
       }
     } catch (e) {
-      if (e.name === 'TypeError' &&
+      if (e.name === 'AbortError') {
+        /* ignore */
+      } else if (e.name === 'TypeError' &&
           (e.message.includes('network') || e.message.includes('fetch') || e.message.includes('Failed'))) {
         lines = [...lines, '— Connection closed (server restarted) —'];
       } else {

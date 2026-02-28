@@ -255,13 +255,14 @@ export function testAdminStreamPost() { return fetch(`${BASE}/admin/test-stream-
 /** GET plain JSONResponse (does Apache ever deliver JSON body?). */
 export function testAdminJson()       { return fetch(`${BASE}/admin/test-json`,         { credentials: 'include' }); }
 
-export function streamServerUpdate(fix_db_path = '') {
+export function streamServerUpdate(fix_db_path = '', opts = {}) {
   // root_password removed — sudoers NOPASSWD handles auth, UI login is the gate.
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({ fix_db_path }),
+    ...opts,
   });
 }
 
@@ -279,8 +280,8 @@ export function streamServerUpdate(fix_db_path = '') {
  * Returns the raw fetch Promise (resolving to Response) so the UI can 
  * read the stream directly, exactly like the SSE test buttons.
  */
-export function fetchServerLogs(lines = 50) {
-  return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include' });
+export function fetchServerLogs(lines = 50, opts = {}) {
+  return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include', ...opts });
 }
 
 /** Fallback: Get logs as a single JSON object (non-streaming). */

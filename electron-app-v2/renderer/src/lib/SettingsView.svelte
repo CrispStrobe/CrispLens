@@ -11,7 +11,7 @@
     changePassword, fetchTranslations,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
-  import { fetchStats, fetchPeople, fetchTags, fetchAlbums,
+  import { fetchStats, fetchPeople, fetchTags, fetchAlbums, fetchServerLogs,
            testAdminStream, testAdminStreamFast, testAdminStreamPost, testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';

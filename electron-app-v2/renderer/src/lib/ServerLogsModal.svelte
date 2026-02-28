@@ -15,18 +15,28 @@
   let followLog = true;
   let logEl;
   let transport = 'sse'; // 'sse' or 'json'
+  let controller = null;
 
   $: if (lines && followLog && logEl) tick().then(() => {
     logEl.scrollTop = logEl.scrollHeight;
   });
 
   async function load() {
+    if (loading) return;
     loading = true;
     error   = '';
     lines   = [];
+    
+    // Cancel any existing controller
+    if (controller) controller.abort();
+    controller = new AbortController();
+
+    // Small delay to let the modal UI render fully before we start potentially heavy processing
+    await new Promise(r => setTimeout(r, 100));
+
     try {
       if (transport === 'sse') {
-        const resp = await fetchServerLogs(lineCount);
+        const resp = await fetchServerLogs(lineCount, { signal: controller.signal });
         if (!resp.ok) { error = `HTTP ${resp.status}`; return; }
         const reader = resp.body.getReader();
         const dec    = new TextDecoder();
@@ -55,13 +65,14 @@
         }
       }
     } catch (e) {
-      error = e.message || String(e);
+      if (e.name !== 'AbortError') error = e.message || String(e);
     } finally {
       loading = false;
     }
   }
 
   function close() {
+    if (controller) controller.abort();
     show = false;
     dispatch('close');
   }
