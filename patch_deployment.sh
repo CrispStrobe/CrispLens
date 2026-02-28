@@ -15,15 +15,16 @@
 #            setuid binaries including sudo.  The admin "Update Server" feature
 #            silently fails with exit code 1 when this is set.
 #
-#   FIX 3 — Apache ProxyHTTPVersion 1.1 + <Location> blocks
-#            Without these fixes Apache buffers API and SSE responses so that
-#            the browser's fetch/ReadableStream hangs indefinitely:
-#              ProxyHTTPVersion 1.1  — force HTTP/1.1 to uvicorn so that
-#                                      chunked transfer encoding is used and
-#                                      flushpackets=on works per-chunk (HTTP/1.0
-#                                      causes full buffering until conn closes)
-#              <Location /api>     SetEnv no-gzip 1  (disables deflate buffer)
-#              <Location /api/admin>  SetEnv proxy-nokeepalive 1 (force flush)
+#   FIX 3 — Apache <Location> blocks inside VirtualHost
+#            The existing VirtualHost already has proxy-initial-not-buffered,
+#            proxy-sendchunked, and flushpackets=on — those are correct.
+#            The missing piece: <Location /api> with SetEnv no-gzip 1 MUST be
+#            inside the VirtualHost.  When placed outside </IfModule> (as a
+#            previous buggy run did) Apache silently ignores it, mod_deflate
+#            keeps buffering the SSE response, and the browser hangs.
+#            Adds/moves (idempotent):
+#              <Location /api>      SetEnv no-gzip 1    (disable deflate buffer)
+#              <Location /api/admin> SetEnv proxy-nokeepalive 1 (force flush)
 #
 #   FIX 4 — config.yaml  admin.fix_db_path
 #            Records the path to fix_db.sh in config.yaml so the admin UI
@@ -217,20 +218,16 @@ fi
 # =============================================================================
 # FIX 3 — Apache ProxyHTTPVersion 1.1 + <Location> blocks inside VirtualHost
 # =============================================================================
-step "FIX 3: Apache ProxyHTTPVersion 1.1 + Location blocks"
+step "FIX 3: Apache Location blocks inside VirtualHost"
 
 if [[ -z "$APACHE_CONF_LIST" ]]; then
     warn "Apache config not found — skipping this fix."
-    warn "Apply manually: add these directives inside every VirtualHost that proxies CrispLens:"
+    warn "Apply manually: add these blocks INSIDE the VirtualHost that proxies CrispLens:"
     cat <<'APACHEHELP'
 
-    # Inside your <VirtualHost *:443> (or :80) block:
+    # Inside your <VirtualHost *:443> (or :80) block, before </VirtualHost>:
 
-    ProxyHTTPVersion 1.1         # <-- add before ProxyPass
-    ProxyPass        / http://127.0.0.1:PORT/ flushpackets=on
-    ProxyPassReverse / http://127.0.0.1:PORT/
-
-    <Location /api>              # <-- add before </VirtualHost>
+    <Location /api>
         SetEnv no-gzip 1
         SetEnv dont-vary 1
     </Location>
@@ -243,12 +240,16 @@ APACHEHELP
 else
     # Patch every detected conf file.
     # The Python script:
-    #   1. Removes any <Location /api*> blocks that landed OUTSIDE a VirtualHost
+    #   1. Removes any ProxyHTTPVersion lines — NOT a valid Apache 2.4 directive;
+    #      a previous buggy run of this script may have inserted one.
+    #   2. Removes any <Location /api*> blocks that landed OUTSIDE a VirtualHost
     #      (a previous buggy run could place them after </VirtualHost></IfModule>)
-    #   2. Adds ProxyHTTPVersion 1.1 before the first ProxyPass inside each
-    #      VirtualHost that proxies to localhost (idempotent)
     #   3. Adds <Location /api> and <Location /api/admin> before </VirtualHost>
     #      inside each proxying VirtualHost (idempotent)
+    # The existing VirtualHost already has proxy-initial-not-buffered=1,
+    # proxy-sendchunked=1, and flushpackets=on — those handle streaming correctly.
+    # The only missing piece was no-gzip 1 being incorrectly placed outside the
+    # VirtualHost so Apache silently ignored it.
     while IFS= read -r _conf; do
         info "Patching: ${_conf}"
         python3 - "$_conf" <<'PYEOF3'
@@ -262,11 +263,14 @@ API_LOC   = '    <Location /api>\n        SetEnv no-gzip 1\n        SetEnv dont-
 ADMIN_LOC = '    <Location /api/admin>\n        SetEnv proxy-nokeepalive 1\n    </Location>\n'
 
 vhost_re = re.compile(r'(<VirtualHost[^>]*>.*?</VirtualHost>)', re.DOTALL | re.IGNORECASE)
-
-# ── Step 1: remove orphaned Location /api* blocks outside all VirtualHost ──
-# Find end-of-last-VirtualHost; everything after that is "outside".
-last_end = max((m.end() for m in vhost_re.finditer(original)), default=0)
 text = original
+
+# ── Step 1: remove any ProxyHTTPVersion lines (not valid in Apache 2.4) ─────
+text = re.sub(r'\n[ \t]*ProxyHTTPVersion\s+\S+[ \t]*', '', text, flags=re.IGNORECASE)
+
+# ── Step 2: remove orphaned Location /api* blocks outside all VirtualHost ───
+# Find end-of-last-VirtualHost; everything after that is "outside".
+last_end = max((m.end() for m in vhost_re.finditer(text)), default=0)
 if last_end > 0:
     suffix = text[last_end:]
     suffix_clean = re.sub(
@@ -276,7 +280,7 @@ if last_end > 0:
         text = text[:last_end] + suffix_clean
         text = re.sub(r'\n{3,}', '\n\n', text)   # collapse blank lines
 
-# ── Step 2: patch each proxying VirtualHost ──────────────────────────────────
+# ── Step 3: add Location blocks inside each proxying VirtualHost ─────────────
 def already_has(block, tag):
     return bool(re.search(rf'<Location\s+{re.escape(tag)}\s*>', block, re.IGNORECASE))
 
@@ -284,19 +288,15 @@ def patch_vhost(m):
     block = m.group(1)
     if not re.search(r'ProxyPass', block, re.IGNORECASE):
         return block
-    patched = block
     insert = ''
     if not already_has(block, '/api'):
         insert += '\n' + API_LOC
     if not already_has(block, '/api/admin'):
         insert += '\n' + ADMIN_LOC
-    if insert:
-        patched = re.sub(r'([ \t]*</VirtualHost>)', '\n' + insert + r'\1',
-                         patched, count=1, flags=re.IGNORECASE)
-    if not re.search(r'ProxyHTTPVersion\s+1\.1', block, re.IGNORECASE):
-        patched = re.sub(r'(\n[ \t]*ProxyPass\b)', r'\n    ProxyHTTPVersion 1.1\1',
-                         patched, count=1, flags=re.IGNORECASE)
-    return patched
+    if not insert:
+        return block
+    return re.sub(r'([ \t]*</VirtualHost>)', '\n' + insert + r'\1',
+                  block, count=1, flags=re.IGNORECASE)
 
 new_text = vhost_re.sub(patch_vhost, text)
 
@@ -306,7 +306,7 @@ else:
     shutil.copy2(conf_path, conf_path + '.bak.' + str(int(time.time())))
     with open(conf_path, 'w') as fh:
         fh.write(new_text)
-    print("  patched: ProxyHTTPVersion 1.1 + Location blocks added/moved inside VirtualHost")
+    print("  patched: Location blocks added/moved inside VirtualHost")
 PYEOF3
     done <<< "$APACHE_CONF_LIST"
 
