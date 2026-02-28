@@ -24,6 +24,32 @@ class UpdateRequest(BaseModel):
     fix_db_path:   str = ''  # optional override; falls back to config then default
 
 
+@router.get("/test-stream")
+def test_stream(admin=Depends(require_admin)):
+    """
+    Pure-Python SSE stream — no subprocess, no sudo.
+    Yields 6 lines with 0.4 s gaps so we can confirm whether
+    SSE chunks arrive in the browser incrementally or all at once.
+    """
+    import time as _time
+
+    def _stream():
+        for i in range(1, 6):
+            yield f"data: line {i} — {_time.strftime('%H:%M:%S')} (admin={admin.username})\n\n"
+            _time.sleep(0.4)
+        yield "data: ✓ stream complete\n\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/update")
 def server_update(body: UpdateRequest, admin=Depends(require_admin)):
     """

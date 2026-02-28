@@ -11,7 +11,7 @@
     changePassword, fetchTranslations,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
-  import { fetchStats, fetchPeople, fetchTags, fetchAlbums } from '../api.js';
+  import { fetchStats, fetchPeople, fetchTags, fetchAlbums, testAdminStream } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
 
@@ -37,6 +37,8 @@
   // Admin — server management
   let showUpdateModal = false;
   let showLogsModal   = false;
+  let testStreamLines   = [];
+  let testStreamRunning = false;
   let exemptPaths     = ['/mnt'];
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
@@ -575,6 +577,36 @@
     }
   }
 
+  // ── SSE test stream ───────────────────────────────────────────────────────
+  async function doTestStream() {
+    testStreamLines   = [];
+    testStreamRunning = true;
+    try {
+      const resp = await testAdminStream();
+      if (!resp.ok) {
+        testStreamLines = [`✗ HTTP ${resp.status}`];
+        return;
+      }
+      const reader = resp.body.getReader();
+      const dec    = new TextDecoder();
+      let   buf    = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const p of parts) {
+          if (p.startsWith('data: ')) testStreamLines = [...testStreamLines, p.slice(6)];
+        }
+      }
+    } catch (e) {
+      testStreamLines = [...testStreamLines, '✗ Error: ' + e.message];
+    } finally {
+      testStreamRunning = false;
+    }
+  }
+
   // ── DB credential health check ────────────────────────────────────────────
   async function doCheckCredentials() {
     if (!credCheckUser.trim() || !credCheckPass.trim()) return;
@@ -1033,7 +1065,19 @@
       <button class="small" on:click={() => showLogsModal = true}>
         📋 {$t('admin_view_logs')}
       </button>
+      <button class="small" on:click={doTestStream} disabled={testStreamRunning}
+              title="Stream 5 lines via SSE — confirms Apache delivers chunked responses to the browser">
+        🧪 {testStreamRunning ? '…' : 'Test SSE'}
+      </button>
     </div>
+
+    {#if testStreamLines.length || testStreamRunning}
+      <div style="margin-top:8px;background:#0e0e18;border:1px solid #2a2a3a;border-radius:5px;
+                  padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#90b890;">
+        {#each testStreamLines as l}<div>{l}</div>{/each}
+        {#if testStreamRunning}<div style="opacity:0.5;">▌</div>{/if}
+      </div>
+    {/if}
 
     <div class="form-grid" style="margin-top:14px;">
       <label>{$t('fix_db_path_label')}</label>
@@ -1248,7 +1292,7 @@
   </section>
 </div>
 
-<ServerUpdateModal bind:show={showUpdateModal} />
+<ServerUpdateModal bind:show={showUpdateModal} {fixDbPath} />
 <ServerLogsModal   bind:show={showLogsModal} />
 
 <style>

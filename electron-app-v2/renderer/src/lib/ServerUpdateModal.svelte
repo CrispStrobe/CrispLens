@@ -3,7 +3,8 @@
   import { streamServerUpdate } from '../api.js';
   import { createEventDispatcher, tick } from 'svelte';
 
-  export let show = false;
+  export let show      = false;
+  export let fixDbPath = '';   // passed from SettingsView so the user-configured path is used
 
   const dispatch = createEventDispatcher();
 
@@ -50,7 +51,7 @@
     let preStreamError = '';
 
     try {
-      const resp = await streamServerUpdate(pw);
+      const resp = await streamServerUpdate(pw, fixDbPath.trim());
 
       if (!resp.ok) {
         // HTTP error before streaming — parse FastAPI detail JSON

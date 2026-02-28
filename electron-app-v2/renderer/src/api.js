@@ -244,6 +244,11 @@ export function fetchUserVlmPrefs()                 { return get('/settings/user
  * Returns a native Response whose body is an SSE stream.
  * The caller reads from response.body (ReadableStream).
  */
+/** Raw fetch for the SSE test endpoint — no body needed. */
+export function testAdminStream() {
+  return fetch(`${BASE}/admin/test-stream`, { credentials: 'include' });
+}
+
 export function streamServerUpdate(root_password, fix_db_path = '') {
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
