@@ -104,26 +104,16 @@
     try { currentUser.set(await fetchMe()); } catch { /* not logged in */ }
     sessionChecked = true;   // show login screen now if still null
 
-    // Load i18n — cache in sessionStorage so a page reload skips the fetch
+    // Load i18n — FORCED REFRESH for debugging
     try {
-      console.log('[i18n-trace] START tab_identify value (EN default):', $translations['tab_identify']);
-      const cached = sessionStorage.getItem('i18n_cache');
-      if (cached) {
-        const data = JSON.parse(cached);
-        console.log('[i18n-trace] CACHE FOUND. lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
-        lang.set(data.lang);
-        if (data.translations && Object.keys(data.translations).length > 0)
-          translations.update(cur => ({ ...cur, ...data.translations }));
-      } else {
-        console.log('[i18n-trace] NO CACHE. Fetching from backend...');
-        const data = await fetchTranslations();
-        console.log('[i18n-trace] BACKEND RESPONSE. lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
-        lang.set(data.lang);
-        if (data.translations && Object.keys(data.translations).length > 0)
-          translations.update(cur => ({ ...cur, ...data.translations }));
-        sessionStorage.setItem('i18n_cache', JSON.stringify(data));
-      }
-      console.log('[i18n-trace] FINAL tab_identify value in store:', $translations['tab_identify']);
+      console.log('[i18n-trace] loadAll() START. Current tab_identify:', $translations['tab_identify']);
+      const data = await fetchTranslations(true); // true = nocache
+      console.log('[i18n-trace] loadAll() BACKEND RECEIVED. lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
+      lang.set(data.lang);
+      if (data.translations && Object.keys(data.translations).length > 0)
+        translations.update(cur => ({ ...cur, ...data.translations }));
+      sessionStorage.setItem('i18n_cache', JSON.stringify(data));
+      console.log('[i18n-trace] loadAll() FINAL store value:', $translations['tab_identify']);
     } catch (e) { console.error('i18n load error:', e); }
 
     // Load initial data
@@ -162,8 +152,10 @@
     // Restore i18n from session cache immediately (don't wait for backend)
     try {
       const cached = sessionStorage.getItem('i18n_cache');
+      console.log('[i18n-trace] onMount() SessionStorage cache:', cached ? 'YES' : 'NONE');
       if (cached) {
         const data = JSON.parse(cached);
+        console.log('[i18n-trace] onMount() cache data: lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
         lang.set(data.lang);
         if (data.translations && Object.keys(data.translations).length > 0)
           translations.update(cur => ({ ...cur, ...data.translations }));

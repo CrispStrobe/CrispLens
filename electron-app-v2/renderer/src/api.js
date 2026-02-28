@@ -230,7 +230,10 @@ export function setImageVisibility(imageId, visibility) {
 
 export function fetchSettings()                     { return get('/settings'); }
 export function saveSettings(body)                  { return put('/settings', body); }
-export function fetchTranslations()                 { return get('/settings/i18n'); }
+export function fetchTranslations(nocache = false) { 
+  const q = nocache ? `?t=${Date.now()}` : '';
+  return get(`/settings/i18n${q}`); 
+}
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { return get('/settings/db-status'); }
 export function fetchEngineStatus()                 { return get('/settings/engine-status'); }
