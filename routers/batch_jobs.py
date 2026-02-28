@@ -355,7 +355,8 @@ async def upload_batch_file(
 def create_batch_job(body: CreateBatchJobRequest, user=Depends(get_current_user)):
     """Create a new batch job for a server-side folder or explicit file list."""
     s = _state()
-    if not body.folder and not body.filepaths and not body.batch_files:
+    # Explicitly check for None so that empty lists [] (used for incremental jobs) are allowed.
+    if body.folder is None and body.filepaths is None and body.batch_files is None:
         raise HTTPException(status_code=400, detail='Either folder, filepaths, or batch_files must be provided')
 
     conn = None
