@@ -58,14 +58,25 @@ function lookupUser(username, password) {
 
   if (db) {
     try {
+      // Add password_salt column if this is a fresh v4 DB (v2 DBs won't have it)
+      try {
+        db.prepare('ALTER TABLE users ADD COLUMN password_salt TEXT').run();
+      } catch { /* column already exists */ }
+
       const user = db.prepare(
         'SELECT id, username, password_hash, password_salt, role FROM users WHERE username = ?'
       ).get(username);
 
       if (user) {
-        const ok = verifyPassword(password, user.password_hash, user.password_salt);
-        if (!ok) return null;
-        return { username: user.username, role: user.role || 'user', userId: user.id };
+        if (!user.password_salt) {
+          // v2 Werkzeug-format hash (pbkdf2:sha256:N$salt$hash) — can't verify with our
+          // PBKDF2 implementation. Fall through to the env-var default below so the user
+          // can log in with DEFAULT_ADMIN_USER / DEFAULT_ADMIN_PASS (admin/admin by default).
+        } else {
+          const ok = verifyPassword(password, user.password_hash, user.password_salt);
+          if (!ok) return null;
+          return { username: user.username, role: user.role || 'user', userId: user.id };
+        }
       }
     } catch {
       // users table may not exist — fall through to default

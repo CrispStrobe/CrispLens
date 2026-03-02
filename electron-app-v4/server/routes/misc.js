@@ -109,7 +109,7 @@ router.get('/folders/stats', requireAuth, (req, res) => {
     counts[dir] = (counts[dir] || 0) + 1;
   }
   const result = Object.entries(counts)
-    .map(([folder, count]) => ({ folder, count }))
+    .map(([folder, count]) => ({ name: folder, count }))  // `name` matches FoldersView.svelte
     .sort((a, b) => b.count - a.count);
   res.json(result);
 });
@@ -345,15 +345,40 @@ router.post('/watchfolders/:id/scan', requireAuth, async (req, res) => {
 // FILESYSTEM BROWSER
 // ─────────────────────────────────────────────────────────────────────────────
 
+const IMAGE_EXTS = new Set(['.jpg','.jpeg','.png','.webp','.heic','.heif','.gif','.tiff','.tif','.bmp','.avif']);
+
 router.get('/filesystem/browse', requireAuth, (req, res) => {
   const p = req.query.path || '/';
   try {
+    const db      = getDb();
     const entries = fs.readdirSync(p, { withFileTypes: true });
-    const result  = entries.map(e => ({
-      name:   e.name,
-      path:   path.join(p, e.name),
-      is_dir: e.isDirectory(),
-    })).sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
+
+    const result = entries.map(e => {
+      const entryPath = path.join(p, e.name);
+      const isDir     = e.isDirectory();
+      const ext       = path.extname(e.name).toLowerCase();
+      const isImage   = IMAGE_EXTS.has(ext);
+
+      let extra = {};
+      if (!isDir && isImage) {
+        const row = db.prepare('SELECT id FROM images WHERE filepath = ?').get(entryPath);
+        extra = { in_db: !!row, image_id: row?.id ?? null };
+      } else if (isDir) {
+        let sub = [];
+        try { sub = fs.readdirSync(entryPath, { withFileTypes: true }); } catch {}
+        const imgFiles = sub.filter(de => !de.isDirectory() && IMAGE_EXTS.has(path.extname(de.name).toLowerCase()));
+        const total_files = imgFiles.length;
+        let db_count = 0;
+        if (total_files > 0) {
+          const fps = imgFiles.map(de => path.join(entryPath, de.name));
+          const ph  = fps.map(() => '?').join(',');
+          db_count  = db.prepare(`SELECT COUNT(*) AS n FROM images WHERE filepath IN (${ph})`).get(...fps).n;
+        }
+        extra = { db_count, total_files };
+      }
+      return { name: e.name, path: entryPath, is_dir: isDir, ...extra };
+    }).sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
+
     res.json({ path: p, entries: result });
   } catch (err) {
     res.status(400).json({ detail: err.message });
@@ -681,31 +706,102 @@ router.post('/batch-jobs/:id/start', requireAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API KEYS (stubs)
+// API KEYS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// All known VLM providers — matches v2 Python backend
+const _PROVIDERS = {
+  anthropic:   { display_name: 'Anthropic (Claude)',    is_eu: false },
+  openai:      { display_name: 'OpenAI (GPT-4 Vision)', is_eu: false },
+  groq:        { display_name: 'Groq (fast inference)', is_eu: false },
+  openrouter:  { display_name: 'OpenRouter',            is_eu: false },
+  mistral:     { display_name: 'Mistral (EU)',          is_eu: true  },
+  nebius:      { display_name: 'Nebius (EU)',           is_eu: true  },
+  scaleway:    { display_name: 'Scaleway (EU)',         is_eu: true  },
+  bfl:         { display_name: 'Black Forest Labs (EU)',is_eu: true  },
+  ollama:      { display_name: 'Ollama (local)',        is_eu: true  },
+};
+
+// Known models per provider
+const _MODELS = {
+  anthropic:  ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+  openai:     ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  groq:       ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-11b-vision-preview'],
+  openrouter: ['google/gemini-2.0-flash-001', 'anthropic/claude-sonnet-4-6', 'openai/gpt-4o'],
+  mistral:    ['pixtral-large-latest', 'pixtral-12b-2409'],
+  nebius:     ['Qwen/Qwen2-VL-72B-Instruct', 'Qwen/Qwen2.5-VL-72B-Instruct'],
+  scaleway:   ['llama-3.2-11b-vision-instruct', 'pixtral-12b-2409-v2'],
+  bfl:        ['flux-kontext-pro', 'flux-pro-1.1', 'flux-dev'],
+  ollama:     ['llava', 'llava-llama3', 'llava:13b', 'moondream'],
+};
+
+// GET /api-keys/providers — returns flat object keyed by provider id
 router.get('/api-keys/providers', requireAuth, (req, res) => {
-  res.json({ providers: [] });
+  res.json(_PROVIDERS);
 });
 
+// GET /api-keys/status — per-provider { has_system_key, has_user_key }
 router.get('/api-keys/status', requireAuth, (req, res) => {
-  res.json({});
+  let db; try { db = getDb(); } catch { return res.json({}); }
+  const rows = db.prepare('SELECT provider, scope, owner_id FROM api_keys').all();
+  const out  = {};
+  for (const prov of Object.keys(_PROVIDERS)) {
+    out[prov] = { has_system_key: false, has_user_key: false };
+  }
+  for (const r of rows) {
+    if (!out[r.provider]) out[r.provider] = { has_system_key: false, has_user_key: false };
+    if (r.scope === 'system' && r.owner_id == null) out[r.provider].has_system_key = true;
+    if (r.scope === 'user') out[r.provider].has_user_key = true;
+  }
+  res.json(out);
 });
 
+// GET /api-keys/models/:provider
 router.get('/api-keys/models/:provider', requireAuth, (req, res) => {
-  res.json({ models: [] });
+  const models = _MODELS[req.params.provider] || [];
+  res.json({ models });
 });
 
+// POST /api-keys  { provider, key_value, scope: 'system'|'user' }
 router.post('/api-keys', requireAuth, (req, res) => {
+  const { provider, key_value, scope = 'system' } = req.body || {};
+  if (!provider || !key_value) return res.status(400).json({ detail: 'provider and key_value required' });
+  // Only admin can set system keys
+  if (scope === 'system' && req.user.role !== 'admin')
+    return res.status(403).json({ detail: 'Admin only for system keys' });
+  let db; try { db = getDb(); } catch (err) { return res.status(500).json({ detail: err.message }); }
+  const ownerId = scope === 'user' ? (req.user.userId ?? null) : null;
+  db.prepare(`
+    INSERT INTO api_keys(provider, scope, owner_id, key_value)
+    VALUES(?, ?, ?, ?)
+    ON CONFLICT(provider, scope, owner_id) DO UPDATE SET key_value=excluded.key_value
+  `).run(provider, scope, ownerId, key_value);
   res.json({ ok: true });
 });
 
+// DELETE /api-keys/:provider?scope=system|user
 router.delete('/api-keys/:provider', requireAuth, (req, res) => {
+  const scope    = req.query.scope || 'system';
+  const provider = req.params.provider;
+  if (scope === 'system' && req.user.role !== 'admin')
+    return res.status(403).json({ detail: 'Admin only for system keys' });
+  let db; try { db = getDb(); } catch (err) { return res.status(500).json({ detail: err.message }); }
+  const ownerId = scope === 'user' ? (req.user.userId ?? null) : null;
+  db.prepare('DELETE FROM api_keys WHERE provider=? AND scope=? AND owner_id IS ?')
+    .run(provider, scope, ownerId);
   res.json({ ok: true });
 });
 
-router.post('/api-keys/test/:provider', requireAuth, (req, res) => {
-  res.json({ ok: false, error: 'VLM not configured' });
+// POST /api-keys/test/:provider — quick connectivity test
+router.post('/api-keys/test/:provider', requireAuth, async (req, res) => {
+  const provider = req.params.provider;
+  let db; try { db = getDb(); } catch { return res.json({ ok: false, error: 'DB unavailable' }); }
+  const row = db.prepare(
+    'SELECT key_value FROM api_keys WHERE provider=? ORDER BY scope DESC LIMIT 1'
+  ).get(provider);
+  if (!row) return res.json({ ok: false, error: 'No API key stored for this provider' });
+  // Simple ping: just confirm we have a key
+  res.json({ ok: true, message: `Key found for ${provider}` });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

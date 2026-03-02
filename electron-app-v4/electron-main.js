@@ -85,8 +85,9 @@ function resolveDbPath() {
 
 function startServer(dbPath) {
   return new Promise((resolve, reject) => {
-    process.env.DB_PATH = dbPath;
-    process.env.PORT    = String(PORT);
+    process.env.DB_PATH    = dbPath;
+    process.env.PORT       = String(PORT);
+    process.env.UPLOAD_DIR = path.join(path.dirname(dbPath), 'uploads');
 
     // Load the Express app (server.js returns the app instance)
     let serverModule;
@@ -108,7 +109,7 @@ function startServer(dbPath) {
 
 // ── Create main window ────────────────────────────────────────────────────────
 
-function createWindow() {
+function createWindow(urlOverride) {
   mainWindow = new BrowserWindow({
     width:          1280,
     height:         820,
@@ -127,7 +128,7 @@ function createWindow() {
     show: false,  // show after content loads
   });
 
-  const url = IS_DEV ? VITE_URL : `http://127.0.0.1:${PORT}`;
+  const url = urlOverride || (IS_DEV ? VITE_URL : `http://127.0.0.1:${PORT}`);
   mainWindow.loadURL(url);
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
@@ -191,7 +192,16 @@ function registerIpc() {
 
   ipcMain.handle('switch-db', (_e, dbPath) => {
     const s = readSettings();
-    writeSettings({ ...s, dbPath });
+    writeSettings({ ...s, dbPath, remoteUrl: '' });  // clear remote when switching to local DB
+    app.relaunch();
+    app.quit();
+  });
+
+  // Set or clear the remote VPS URL and relaunch.
+  // Pass '' or null to go back to local mode.
+  ipcMain.handle('set-remote-url', (_e, url) => {
+    const s = readSettings();
+    writeSettings({ ...s, remoteUrl: url || '' });
     app.relaunch();
     app.quit();
   });
@@ -245,22 +255,34 @@ function registerIpc() {
 app.whenReady().then(async () => {
   registerLocalFileProtocol();
   registerIpc();
-  createTray();
 
-  const dbPath = resolveDbPath();
-  console.log(`[main] Starting Express server, DB: ${dbPath}`);
+  const settings = readSettings();
+  const remoteUrl = settings.remoteUrl || '';
 
-  try {
-    await startServer(dbPath);
-    console.log(`[main] Server ready on port ${PORT}`);
-  } catch (err) {
-    console.error('[main] Server failed to start:', err);
-    dialog.showErrorBox('CrispLens', `Failed to start server:\n${err.message}`);
-    app.quit();
-    return;
+  if (remoteUrl) {
+    // ── Remote mode: connect to an existing v2/v4 server ─────────────────────
+    console.log(`[main] Remote mode — connecting to: ${remoteUrl}`);
+    serverReady = true;  // no local server; skip health check
+    createTray();
+    createWindow(remoteUrl);
+  } else {
+    // ── Local mode: start Express in-process ─────────────────────────────────
+    createTray();
+    const dbPath = resolveDbPath();
+    console.log(`[main] Starting Express server, DB: ${dbPath}`);
+
+    try {
+      await startServer(dbPath);
+      console.log(`[main] Server ready on port ${PORT}`);
+    } catch (err) {
+      console.error('[main] Server failed to start:', err);
+      dialog.showErrorBox('CrispLens', `Failed to start server:\n${err.message}`);
+      app.quit();
+      return;
+    }
+
+    createWindow();
   }
-
-  createWindow();
 });
 
 app.on('window-all-closed', () => {
@@ -268,7 +290,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (mainWindow === null) createWindow();
+  // On macOS, 'activate' can fire before 'ready' completes (e.g. first launch).
+  // Only create a window once the app is fully ready and the server is up.
+  if (app.isReady() && serverReady && mainWindow === null) createWindow();
 });
 
 app.on('quit', () => {

@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady } from './stores.js';
+  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS } from './stores.js';
   import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase } from './api.js';
 
   import Sidebar     from './lib/Sidebar.svelte';
@@ -105,16 +105,19 @@
     try { currentUser.set(await fetchMe()); } catch { /* not logged in */ }
     sessionChecked = true;   // show login screen now if still null
 
-    // Load i18n — FORCED REFRESH for debugging
+    // Load i18n — apply language from backend settings
     try {
-      console.log('[i18n-trace] loadAll() START. Current tab_identify:', $translations['tab_identify']);
-      const data = await fetchTranslations(true); // true = nocache
-      console.log('[i18n-trace] loadAll() BACKEND RECEIVED. lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
-      lang.set(data.lang);
-      if (data.translations && Object.keys(data.translations).length > 0)
-        translations.update(cur => ({ ...cur, ...data.translations }));
-      sessionStorage.setItem('i18n_cache', JSON.stringify(data));
-      console.log('[i18n-trace] loadAll() FINAL store value:', $translations['tab_identify']);
+      const data = await fetchTranslations(true);
+      const language = data.language ?? data.lang ?? 'en';
+      lang.set(language);
+      // Apply translations: prefer local TRANSLATIONS bundle for non-EN languages
+      // (the backend sends an empty translations object for EN since it's baked in)
+      const localStrings = language !== 'en' ? (TRANSLATIONS[language] ?? {}) : {};
+      const backendStrings = (data.translations && Object.keys(data.translations).length > 0) ? data.translations : {};
+      const merged = { ...backendStrings, ...localStrings };  // local wins over backend
+      if (Object.keys(merged).length > 0)
+        translations.update(cur => ({ ...cur, ...merged }));
+      sessionStorage.setItem('i18n_cache', JSON.stringify({ ...data, language, lang: language }));
     } catch (e) { console.error('i18n load error:', e); }
 
     // Load initial data
@@ -153,13 +156,13 @@
     // Restore i18n from session cache immediately (don't wait for backend)
     try {
       const cached = sessionStorage.getItem('i18n_cache');
-      console.log('[i18n-trace] onMount() SessionStorage cache:', cached ? 'YES' : 'NONE');
       if (cached) {
         const data = JSON.parse(cached);
-        console.log('[i18n-trace] onMount() cache data: lang=', data.lang, 'tab_identify=', data.translations?.['tab_identify']);
-        lang.set(data.lang);
-        if (data.translations && Object.keys(data.translations).length > 0)
-          translations.update(cur => ({ ...cur, ...data.translations }));
+        const language = data.language ?? data.lang ?? 'en';
+        lang.set(language);
+        const localStrings = language !== 'en' ? (TRANSLATIONS[language] ?? {}) : {};
+        if (Object.keys(localStrings).length > 0)
+          translations.update(cur => ({ ...cur, ...localStrings }));
       }
     } catch { /* ignore */ }
 

@@ -37,9 +37,11 @@ const del  = (path)        => _fetch('DELETE', path);
 
 // ── Images ────────────────────────────────────────────────────────────────────
 
-export function fetchImages({ person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='', sort='newest', limit=200, offset=0, unidentified=false, album=0 } = {}) {
+export async function fetchImages({ person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='', sort='newest', limit=200, offset=0, unidentified=false, album=0 } = {}) {
   const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom, date_to: dateTo, sort, limit, offset, unidentified, album });
-  return get(`/images?${q}`);
+  const data = await get(`/images?${q}`);
+  // Backend returns {images:[...], total:N} — unwrap to plain array
+  return Array.isArray(data) ? data : (data.images ?? []);
 }
 
 export function fetchImage(id) { return get(`/images/${id}`); }

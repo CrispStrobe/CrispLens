@@ -16,8 +16,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (data) => ipcRenderer.invoke('save-settings', data),
 
   // ── App lifecycle ────────────────────────────────────────────────────────────
-  relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
-  switchDb:    (dbPath) => ipcRenderer.invoke('switch-db', dbPath),
+  relaunchApp:   () => ipcRenderer.invoke('relaunch-app'),
+  switchDb:      (dbPath) => ipcRenderer.invoke('switch-db', dbPath),
+  setRemoteUrl:  (url)    => ipcRenderer.invoke('set-remote-url', url),
 
   // ── Native dialogs ───────────────────────────────────────────────────────────
   openFileDialog:   (opts) => ipcRenderer.invoke('open-file-dialog', opts),
