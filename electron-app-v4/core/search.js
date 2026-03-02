@@ -3,25 +3,43 @@
 /**
  * search.js
  *
- * Loads face embeddings from the existing SQLite database and performs
- * cosine similarity search — compatible with the Python FAISS IndexFlatIP
- * (inner product on L2-normalized vectors = cosine similarity).
+ * Face embedding search backed by one of three implementations, chosen by
+ * what's available at runtime:
  *
- * For large databases (>100K faces) the optional `faiss-napi` package is
- * used if available.  Falls back to pure-JS brute force automatically.
+ *   1. usearch  (WASM HNSW, ~300 KB) — universal: works in Node.js AND browser.
+ *              Approximate nearest-neighbour, inner-product metric.
+ *              Best default for all platforms including PWA / Capacitor mobile.
+ *
+ *   2. faiss-node (C++ FAISS, desktop/Electron only) — exact IndexFlatIP search.
+ *              Faster than usearch for very large indexes (>500K vectors).
+ *              Not available in browser.
+ *
+ *   3. Brute-force cosine (pure JS) — always available, zero deps.
+ *              Plenty fast for <100K faces (~30 ms on V8 at 100K × 512D).
+ *
+ * Embeddings stored in SQLite as float32 blobs.
+ * The Python app uses IndexFlatIP with L2-normalised vectors = cosine similarity.
+ * Inner product of L2-normalised vectors = cosine similarity, so all three
+ * backends are numerically equivalent.
  */
 
 const Database = require('better-sqlite3');
 
-// Try to load faiss-napi; fall back gracefully
-let FaissIndex = null;
-try {
-  FaissIndex = require('faiss-napi').IndexFlatIP;
-} catch (_) {
-  // faiss-napi not installed — brute-force cosine will be used
+// ── Backend auto-detection ────────────────────────────────────────────────────
+
+let USearchIndex = null;
+let FaissIndex   = null;
+
+try { USearchIndex = require('usearch').Index;   } catch (_) {}
+try { FaissIndex   = require('faiss-node').IndexFlatIP; } catch (_) {}
+
+function backendName() {
+  if (FaissIndex)   return 'faiss-node (C++ exact)';
+  if (USearchIndex) return 'usearch (WASM HNSW approx.)';
+  return 'brute-force cosine (pure JS)';
 }
 
-// ── Dot product (= cosine similarity for L2-normalized vectors) ───────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function dotProduct(a, b) {
   let s = 0;
@@ -36,16 +54,17 @@ class VectorStore {
    * @param {string} dbPath  Path to face_recognition.db
    */
   constructor(dbPath) {
-    this.dbPath   = dbPath;
-    this.db       = null;
-    this.vectors  = [];   // Float32Array[512] per entry
-    this.meta     = [];   // { embId, personId, personName, faceId, imageId, filepath }
-    this.faissIdx = null; // optional faiss-napi index
+    this.dbPath      = dbPath;
+    this.db          = null;
+    this.vectors     = [];   // Float32Array[512] per entry (kept for brute-force)
+    this.meta        = [];   // parallel array of metadata objects
+    this._usearch    = null; // usearch.Index
+    this._faiss      = null; // faiss-node index
+    this._dim        = 0;
   }
 
   /**
-   * Load all identified face embeddings from the database.
-   * Only includes rows with a non-null person_id (trained faces).
+   * Load all identified face embeddings from the database and build index.
    */
   load() {
     this.db = new Database(this.dbPath, { readonly: true });
@@ -75,7 +94,6 @@ class VectorStore {
     for (const row of rows) {
       const blob = row.embedding_vector;
       const dim  = row.embedding_dimension;
-
       if (!blob || blob.length < dim * 4) continue;
 
       const vec = new Float32Array(blob.buffer, blob.byteOffset, dim);
@@ -90,70 +108,79 @@ class VectorStore {
       });
     }
 
-    console.log(
-      `[VectorStore] Loaded ${this.vectors.length} embeddings ` +
-      `from ${new Set(this.meta.map(m => m.personId)).size} people.`
-    );
-
-    // Build FAISS index if available (faster for >10K vectors)
-    // faiss-napi requires plain JS Array (not Float32Array) for add/search
-    if (FaissIndex && this.vectors.length > 0) {
-      const dim  = this.vectors[0].length;
-      this.faissIdx = new FaissIndex(dim);
-      const flat = [];
-      for (const v of this.vectors) for (let i = 0; i < v.length; i++) flat.push(v[i]);
-      this.faissIdx.add(flat);
-      console.log(`[VectorStore] FAISS index built (${this.vectors.length} vectors, dim=${dim}).`);
+    const n = this.vectors.length;
+    if (n === 0) {
+      console.log('[VectorStore] No embeddings loaded (train some faces first).');
+      return;
     }
+
+    this._dim = this.vectors[0].length;
+
+    // ── Build index ────────────────────────────────────────────────────────────
+    if (FaissIndex) {
+      // faiss-node: exact IndexFlatIP, C++ native
+      this._faiss = new FaissIndex(this._dim);
+      const flat = new Float32Array(n * this._dim);
+      for (let i = 0; i < n; i++) flat.set(this.vectors[i], i * this._dim);
+      this._faiss.add(flat);
+
+    } else if (USearchIndex) {
+      // usearch: WASM HNSW, approximate, inner-product metric
+      // distance stored = 1 - inner_product (lower = better)
+      this._usearch = new USearchIndex({ metric: 'ip', dimensions: this._dim });
+      for (let i = 0; i < n; i++) {
+        this._usearch.add(BigInt(i), this.vectors[i]);
+      }
+    }
+    // else: brute-force (no index to build)
+
+    const peopleCount = new Set(this.meta.map(m => m.personId)).size;
+    console.log(
+      `[VectorStore] Loaded ${n} embeddings from ${peopleCount} people.` +
+      `  Backend: ${backendName()}`
+    );
   }
 
   /**
-   * Find the top-k most similar stored faces for a query embedding.
+   * Find top-k most similar stored faces for a 512D L2-normalised query vector.
    *
-   * @param {Float32Array} queryVec  512D L2-normalized embedding
-   * @param {number}       k         number of results
    * @returns Array of { personName, personId, similarity, filepath, embId }
    */
   search(queryVec, k = 5) {
     if (this.vectors.length === 0) return [];
+    k = Math.min(k, this.vectors.length);
 
-    if (this.faissIdx) {
-      return this._searchFaiss(queryVec, k);
-    }
+    if (this._faiss)   return this._searchFaiss(queryVec, k);
+    if (this._usearch) return this._searchUsearch(queryVec, k);
     return this._searchBruteForce(queryVec, k);
   }
 
-  _searchBruteForce(queryVec, k) {
-    const scores = this.vectors.map((v, i) => ({
-      i,
-      similarity: dotProduct(queryVec, v),
-    }));
-    scores.sort((a, b) => b.similarity - a.similarity);
-
-    return scores.slice(0, k).map(({ i, similarity }) => ({
-      ...this.meta[i],
-      similarity,
-    }));
-  }
-
   _searchFaiss(queryVec, k) {
-    // faiss-napi: requires plain Array, returns BigInt labels
-    const query = Array.from(queryVec);
-    const { labels, distances } = this.faissIdx.search(query, k);
-    const results = [];
-    for (let i = 0; i < labels.length; i++) {
-      const idx = Number(labels[i]);   // BigInt → Number
-      if (idx < 0) continue;
-      results.push({ ...this.meta[idx], similarity: distances[i] });
-    }
-    return results;
+    // faiss-node: returns { distances, labels } where labels are 0-based ints
+    const { distances, labels } = this._faiss.search(queryVec, k);
+    return labels
+      .map((idx, i) => idx >= 0 ? { ...this.meta[idx], similarity: distances[i] } : null)
+      .filter(Boolean);
   }
 
-  /**
-   * Return all stored embeddings and metadata (for debugging / export).
-   */
-  allEmbeddings() {
-    return this.meta.map((m, i) => ({ ...m, vector: this.vectors[i] }));
+  _searchUsearch(queryVec, k) {
+    // usearch ip metric: distance = 1 - inner_product
+    const result = this._usearch.search(queryVec, k);
+    const out = [];
+    for (let i = 0; i < result.keys.length; i++) {
+      const idx  = Number(result.keys[i]);
+      const dist = result.distances[i];   // 1 - cosine_sim
+      out.push({ ...this.meta[idx], similarity: 1 - dist });
+    }
+    return out.sort((a, b) => b.similarity - a.similarity);
+  }
+
+  _searchBruteForce(queryVec, k) {
+    return this.vectors
+      .map((v, i) => ({ i, similarity: dotProduct(queryVec, v) }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, k)
+      .map(({ i, similarity }) => ({ ...this.meta[i], similarity }));
   }
 
   close() {
@@ -161,4 +188,4 @@ class VectorStore {
   }
 }
 
-module.exports = { VectorStore };
+module.exports = { VectorStore, backendName };

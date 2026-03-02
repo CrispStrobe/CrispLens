@@ -1,0 +1,18 @@
+{
+  "name": "face-rec-renderer",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "gen-icons": "python3 scripts/gen-pwa-icons.py"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "svelte": "^4.0.0",
+    "vite": "^5.0.0",
+    "vite-plugin-pwa": "^0.20.0"
+  }
+}

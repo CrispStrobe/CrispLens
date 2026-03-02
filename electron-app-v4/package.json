@@ -2,9 +2,13 @@
   "name": "crisplens-v4",
   "version": "0.1.0",
   "description": "CrispLens v4 – pure Node.js, Python-free, cross-platform",
-  "main": "proto-test.js",
+  "main": "server.js",
   "type": "commonjs",
   "scripts": {
+    "start": "node server.js",
+    "dev:server": "node server.js",
+    "dev:ui": "cd renderer && npm run dev",
+    "build": "cd renderer && npm run build",
     "proto": "node proto-test.js",
     "self-test": "node proto-selfcontained.js",
     "self-test:db": "node proto-selfcontained.js ../face_recognition.db",
@@ -13,10 +17,25 @@
   "dependencies": {
     "adm-zip": "^0.5.10",
     "better-sqlite3": "^11.4.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "express": "^4.22.1",
+    "multer": "^1.4.5-lts.1",
     "onnxruntime-node": "^1.20.1",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "usearch": "^2.21.4",
+    "uuid": "^11.1.0"
   },
   "optionalDependencies": {
-    "faiss-napi": "^0.10.3"
+    "faiss-node": "^0.5.1"
+  },
+  "_platform_notes": {
+    "browser_pwa": {
+      "onnxruntime-node": "→ onnxruntime-web  (same models, WASM/WebGL/WebGPU backends)",
+      "sharp": "→ OffscreenCanvas  (built-in; face-align.js math is unchanged)",
+      "better-sqlite3": "→ sql.js or @capacitor-community/sqlite  (WASM SQLite)",
+      "detection_fallback": "@vladmandic/face-api  (TinyFaceDetector, 190KB, needs tfjs backend)"
+    },
+    "mobile_capacitor": "wrap PWA build; same JS stack"
   }
 }
