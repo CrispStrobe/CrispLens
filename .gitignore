@@ -41,6 +41,14 @@ wheels/
 MANIFEST
 electron-app-v4/test-data/
 
+# ============================================================================
+# electron-app-v4 build output
+# ============================================================================
+# Electron installer/app bundle output (DMG, NSIS, AppImage, .app, blockmaps)
+electron-app-v4/dist-electron/
+# Svelte built frontend for v4 (unlike v2 we don't track this in git)
+electron-app-v4/renderer/dist/
+
 # PyInstaller
 *.manifest
 *.spec
