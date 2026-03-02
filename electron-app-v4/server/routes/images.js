@@ -164,9 +164,11 @@ router.get('/:id/faces', requireAuth, (req, res) => {
   `).all(Number(req.params.id));
 
   res.json(faces.map(f => ({
+    face_id:            f.id,
     id:                 f.id,
     image_id:           f.image_id,
-    bbox:               [f.bbox_left, f.bbox_top, f.bbox_right, f.bbox_bottom],
+    // v2-compatible bbox object (normalized 0-1)
+    bbox: { top: f.bbox_top, right: f.bbox_right, bottom: f.bbox_bottom, left: f.bbox_left },
     bbox_top:           f.bbox_top,
     bbox_right:         f.bbox_right,
     bbox_bottom:        f.bbox_bottom,
@@ -303,9 +305,10 @@ router.delete('/:id', requireAuth, (req, res) => {
 });
 
 // ── POST /images/:id/re-detect ────────────────────────────────────────────────
-// Asynchronously re-runs face detection on a single image.
+// Responds immediately (200) then runs ONNX inference in background.
+// The caller should poll GET /images/:id/faces after a short delay.
 
-router.post('/:id/re-detect', requireAuth, async (req, res) => {
+router.post('/:id/re-detect', requireAuth, (req, res) => {
   const db  = getDb();
   const id  = Number(req.params.id);
   const row = db.prepare('SELECT * FROM images WHERE id = ?').get(id);
@@ -314,13 +317,61 @@ router.post('/:id/re-detect', requireAuth, async (req, res) => {
   const p = resolveImagePath(row.filepath);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
 
-  try {
-    const { processImageIntoDb } = require('../processor');
-    const result = await processImageIntoDb(p, id, req.body || {});
-    res.json({ ok: true, faces_found: result.facesFound });
-  } catch (err) {
-    res.status(500).json({ detail: err.message });
+  // Respond immediately — ONNX inference can take several seconds on CPU
+  res.json({ ok: true, pending: true, message: 'reprocessing started' });
+
+  // Run processing in background (off the response cycle)
+  setImmediate(async () => {
+    try {
+      const { processImageIntoDb } = require('../processor');
+      // Clear old faces so re-detect starts fresh
+      db.prepare('DELETE FROM faces WHERE image_id=?').run(id);
+      await processImageIntoDb(p, id, { ...(req.body || {}), force: false });
+      console.log(`[re-detect] done: image ${id}`);
+    } catch (err) {
+      console.error(`[re-detect] image ${id}:`, err.message);
+    }
+  });
+});
+
+// ── POST /images/:id/faces/manual ────────────────────────────────────────────
+// Add a manual face bbox (no embedding) for user-drawn annotations.
+
+router.post('/:id/faces/manual', requireAuth, (req, res) => {
+  const db  = getDb();
+  const id  = Number(req.params.id);
+  const row = db.prepare('SELECT id FROM images WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ detail: 'Not found' });
+
+  const { bbox } = req.body || {};
+  if (!bbox) return res.status(400).json({ detail: 'bbox required' });
+
+  // bbox can be {top,right,bottom,left} or [left,top,right,bottom]
+  let top, right, bottom, left;
+  if (Array.isArray(bbox)) {
+    [left, top, right, bottom] = bbox;
+  } else {
+    ({ top, right, bottom, left } = bbox);
   }
+
+  const result = db.prepare(`
+    INSERT INTO faces (image_id, bbox_top, bbox_right, bbox_bottom, bbox_left, detection_confidence)
+    VALUES (?,?,?,?,?,?)
+  `).run(id, top, right, bottom, left, 1.0);
+
+  db.prepare('UPDATE images SET face_count = (SELECT COUNT(*) FROM faces WHERE image_id=?) WHERE id=?').run(id, id);
+
+  res.json({
+    ok: true,
+    face: {
+      face_id: result.lastInsertRowid,
+      id:      result.lastInsertRowid,
+      image_id: id,
+      bbox:    { top, right, bottom, left },
+      detection_confidence: 1.0,
+      person_id: null, person_name: null, verified: false,
+    },
+  });
 });
 
 // ── POST /images/:id/clear-identifications ────────────────────────────────────

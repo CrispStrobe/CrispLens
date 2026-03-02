@@ -46,7 +46,7 @@ router.post('/batch', requireAuth, async (req, res) => {
   sseHeaders(res);
 
   const files = collectImages(folder, recursive);
-  sseSend(res, { type: 'start', total: files.length });
+  sseSend(res, { total: files.length, started: true });
 
   let done = 0, errors = 0;
   for (const fp of files) {
@@ -54,17 +54,19 @@ router.post('/batch', requireAuth, async (req, res) => {
       const result = await processImageIntoDb(fp, null, { force, rec_thresh });
       done++;
       sseSend(res, {
-        type: 'progress', file: fp,
-        image_id: result.imageId, faces_found: result.facesFound,
-        done, total: files.length,
+        index:    done,
+        total:    files.length,
+        path:     fp,
+        image_id: result.imageId,
+        result:   { faces_detected: result.facesFound, people: [], scene_type: null, vlm: null },
       });
     } catch (err) {
       errors++;
-      sseSend(res, { type: 'error', file: fp, error: err.message, done, total: files.length });
+      sseSend(res, { index: done, total: files.length, path: fp, error: err.message });
     }
   }
 
-  sseSend(res, { type: 'done', done, errors, total: files.length });
+  sseSend(res, { done: true, total: files.length, errors });
   res.end();
 });
 
@@ -77,7 +79,7 @@ router.post('/batch-files', requireAuth, async (req, res) => {
   sseHeaders(res);
 
   const files = paths.filter(p => fs.existsSync(p));
-  sseSend(res, { type: 'start', total: files.length });
+  sseSend(res, { total: files.length, started: true });
 
   let done = 0, errors = 0;
   for (const fp of files) {
@@ -85,17 +87,19 @@ router.post('/batch-files', requireAuth, async (req, res) => {
       const result = await processImageIntoDb(fp, null, { force, rec_thresh });
       done++;
       sseSend(res, {
-        type: 'progress', file: fp,
-        image_id: result.imageId, faces_found: result.facesFound,
-        done, total: files.length,
+        index:    done,
+        total:    files.length,
+        path:     fp,
+        image_id: result.imageId,
+        result:   { faces_detected: result.facesFound, people: [], scene_type: null, vlm: null },
       });
     } catch (err) {
       errors++;
-      sseSend(res, { type: 'error', file: fp, error: err.message, done, total: files.length });
+      sseSend(res, { index: done, total: files.length, path: fp, error: err.message });
     }
   }
 
-  sseSend(res, { type: 'done', done, errors, total: files.length });
+  sseSend(res, { done: true, total: files.length, errors });
   res.end();
 });
 

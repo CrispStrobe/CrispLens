@@ -34,7 +34,7 @@ function getDb() {
   _db.pragma('journal_mode = WAL');
   _db.pragma('foreign_keys = ON');
 
-  // Ensure api_keys table exists (v4-native, may not be in v2 schema)
+  // ── Create v4-native tables if missing ──────────────────────────────────────
   _db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
       provider  TEXT NOT NULL,
@@ -48,7 +48,60 @@ function getDb() {
       value      TEXT,
       value_type TEXT DEFAULT 'string'
     );
+    CREATE TABLE IF NOT EXISTS watch_folders (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      path           TEXT NOT NULL UNIQUE,
+      recursive      INTEGER DEFAULT 1,
+      auto_scan      INTEGER DEFAULT 0,
+      scan_interval  INTEGER DEFAULT 3600,
+      last_scanned   TIMESTAMP,
+      enabled        INTEGER DEFAULT 1,
+      created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS batch_jobs (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id       INTEGER,
+      name           TEXT,
+      status         TEXT DEFAULT 'pending',
+      source_path    TEXT,
+      recursive      INTEGER DEFAULT 1,
+      follow_symlinks INTEGER DEFAULT 0,
+      visibility     TEXT DEFAULT 'shared',
+      det_params     TEXT,
+      tag_ids        TEXT,
+      new_tag_names  TEXT,
+      album_id       INTEGER,
+      new_album_name TEXT,
+      total_count    INTEGER DEFAULT 0,
+      done_count     INTEGER DEFAULT 0,
+      error_count    INTEGER DEFAULT 0,
+      created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      started_at     TIMESTAMP,
+      completed_at   TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS batch_job_files (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id      INTEGER NOT NULL,
+      filepath    TEXT NOT NULL,
+      status      TEXT DEFAULT 'pending',
+      error_msg   TEXT,
+      image_id    INTEGER,
+      processed_at TIMESTAMP
+    );
   `);
+
+  // ── Migrate v2 images table — add columns v4 code expects ────────────────
+  const imgCols = new Set(_db.pragma('table_info(images)').map(c => c.name));
+  const imgMigrations = [
+    ['owner_id',    'ALTER TABLE images ADD COLUMN owner_id INTEGER'],
+    ['visibility',  "ALTER TABLE images ADD COLUMN visibility TEXT DEFAULT 'shared'"],
+    ['rating',      'ALTER TABLE images ADD COLUMN rating INTEGER DEFAULT 0'],
+    ['flag',        'ALTER TABLE images ADD COLUMN flag TEXT'],
+    ['description', 'ALTER TABLE images ADD COLUMN description TEXT'],
+  ];
+  for (const [col, sql] of imgMigrations) {
+    if (!imgCols.has(col)) _db.exec(sql);
+  }
 
   console.log(`[db] Opened: ${_path}`);
   return _db;

@@ -253,7 +253,13 @@
         max_size:      maxSize,
       });
       anyChanged = true;
-      await loadFaces();
+      // Server responds immediately (fire-and-forget); poll until face count changes (max ~30s)
+      const prevCount = faces.length;
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        await loadFaces();
+        if (faces.length !== prevCount) break;
+      }
       showParams = false;
     } catch (e) {
       alert(`${$t('run_detection')} failed: ${e.message}`);

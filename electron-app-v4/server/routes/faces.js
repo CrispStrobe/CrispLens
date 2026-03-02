@@ -30,7 +30,11 @@ router.get('/unidentified', requireAuth, (req, res) => {
     LIMIT ?
   `).all(limit);
 
-  res.json(rows);
+  // Add v2-compatible bbox object to each row
+  res.json(rows.map(f => ({
+    ...f,
+    bbox: { top: f.bbox_top, right: f.bbox_right, bottom: f.bbox_bottom, left: f.bbox_left },
+  })));
 });
 
 // ── GET /faces/clusters ───────────────────────────────────────────────────────
@@ -105,7 +109,19 @@ router.get('/clusters', requireAuth, (req, res) => {
     .sort((a, b) => b.length - a.length)
     .slice(0, 200);
 
-  res.json(result);
+  // Return v2-compatible format: [{cluster_id, size, faces:[...]}]
+  res.json(result.map((faces, i) => ({
+    cluster_id: i,
+    size:       faces.length,
+    faces:      faces.map(f => ({
+      face_id:             f.face_id,
+      image_id:            f.image_id,
+      bbox:                { top: f.bbox_top, right: f.bbox_right, bottom: f.bbox_bottom, left: f.bbox_left },
+      face_quality:        f.face_quality ?? 1.0,
+      detection_confidence: f.detection_confidence,
+      person_name:         f.person_name || null,
+    })),
+  })));
 });
 
 // ── GET /faces/face-crop ──────────────────────────────────────────────────────

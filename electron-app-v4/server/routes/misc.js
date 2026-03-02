@@ -28,12 +28,15 @@ router.get('/health', (req, res) => {
 
 router.get('/stats', requireAuth, (req, res) => {
   const db = getDb();
+  const images  = db.prepare('SELECT COUNT(*) AS n FROM images').get().n;
+  const faces   = db.prepare('SELECT COUNT(*) AS n FROM faces').get().n;
+  const people  = db.prepare('SELECT COUNT(*) AS n FROM people').get().n;
+  let albums = 0;
+  try { albums = db.prepare('SELECT COUNT(*) AS n FROM albums').get().n; } catch {}
   res.json({
-    images:  db.prepare('SELECT COUNT(*) AS n FROM images').get().n,
-    faces:   db.prepare('SELECT COUNT(*) AS n FROM faces').get().n,
-    people:  db.prepare('SELECT COUNT(*) AS n FROM people').get().n,
-    albums:  db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='albums'").get().n
-             ? db.prepare('SELECT COUNT(*) AS n FROM albums').get().n : 0,
+    images, faces, people, albums,
+    // v2-compatible aliases that StatusBar reads
+    total_images: images, total_faces: faces, total_people: people, total_albums: albums,
   });
 });
 
@@ -322,22 +325,23 @@ router.post('/watchfolders/:id/scan', requireAuth, async (req, res) => {
 
   const { collectImages, processImageIntoDb } = require('../processor');
   const files = collectImages(wf.path, !!wf.recursive);
-  send({ type: 'start', total: files.length });
+  send({ started: true, total: files.length, all_found: files.length });
 
   let done = 0, errors = 0;
   for (const fp of files) {
     try {
       const r = await processImageIntoDb(fp, null, {});
       done++;
-      send({ type: 'progress', file: fp, image_id: r.imageId, done, total: files.length });
+      send({ index: done, total: files.length, path: fp, image_id: r.imageId,
+             result: { faces_detected: r.facesFound } });
     } catch (err) {
       errors++;
-      send({ type: 'error', file: fp, error: err.message, done, total: files.length });
+      send({ index: done, total: files.length, path: fp, error: err.message });
     }
   }
 
   db.prepare('UPDATE watch_folders SET last_scanned=CURRENT_TIMESTAMP WHERE id=?').run(wf.id);
-  send({ type: 'done', done, errors, total: files.length });
+  send({ done: true, added: done, errors, total: files.length });
   res.end();
 });
 
@@ -399,21 +403,22 @@ router.post('/filesystem/add', requireAuth, async (req, res) => {
   for (const p of paths) {
     if (fs.existsSync(p)) files.push(...collectImages(p, recursive));
   }
-  send({ type: 'start', total: files.length });
+  send({ started: true, total: files.length });
 
   let done = 0, errors = 0;
   for (const fp of files) {
     try {
       const r = await processImageIntoDb(fp, null, { visibility });
       done++;
-      send({ type: 'progress', file: fp, image_id: r.imageId, done, total: files.length });
+      send({ index: done, total: files.length, path: fp, image_id: r.imageId,
+             result: { faces_detected: r.facesFound } });
     } catch (err) {
       errors++;
-      send({ type: 'error', file: fp, error: err.message, done, total: files.length });
+      send({ index: done, total: files.length, path: fp, error: err.message });
     }
   }
 
-  send({ type: 'done', done, errors, total: files.length });
+  send({ done: true, total: files.length, errors });
   res.end();
 });
 
@@ -866,27 +871,166 @@ router.get('/admin/logs-json', requireAdmin, (req, res) => {
 router.get('/cloud-drives', requireAuth, (req, res) => res.json([]));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EDITING (stubs)
+// EDITING
 // ─────────────────────────────────────────────────────────────────────────────
+
+const sharp = require('sharp');
+
+// Resolve a DB filepath to an actual path on disk
+function resolveImgPath(filepath) {
+  if (!filepath) return null;
+  if (fs.existsSync(filepath)) return filepath;
+  const dbDir = path.dirname(process.env.DB_PATH || path.join(__dirname, '..', '..', '..', 'face_recognition.db'));
+  const rel = path.join(dbDir, filepath);
+  if (fs.existsSync(rel)) return rel;
+  return null;
+}
 
 router.get('/edit/formats', requireAuth, (req, res) => {
   res.json({ formats: ['jpeg', 'png', 'webp'] });
 });
 
 router.post('/edit/crop', requireAuth, async (req, res) => {
-  const sharp = require('sharp');
-  const { image_id, x, y, width, height } = req.body || {};
+  const { image_id, x, y, width, height, save_as = 'replace' } = req.body || {};
   const db  = getDb();
-  const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(image_id));
+  const row = db.prepare('SELECT * FROM images WHERE id=?').get(Number(image_id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
 
+  const src = resolveImgPath(row.filepath);
+  if (!src) return res.status(404).json({ detail: 'Image file not found' });
+
+  const cw = Math.max(1, Math.round(width));
+  const ch = Math.max(1, Math.round(height));
+  const cx = Math.max(0, Math.round(x));
+  const cy = Math.max(0, Math.round(y));
+
   try {
-    const buf = await sharp(row.filepath).extract({
-      left: Math.round(x), top: Math.round(y),
-      width: Math.round(width), height: Math.round(height),
-    }).toBuffer();
-    db.prepare('UPDATE images SET image_blob=? WHERE id=?').run(buf, Number(image_id));
-    res.json({ ok: true });
+    const meta = await sharp(src).metadata();
+    const safeW = Math.min(cw, (meta.width  || 9999) - cx);
+    const safeH = Math.min(ch, (meta.height || 9999) - cy);
+    if (safeW < 1 || safeH < 1) return res.status(400).json({ detail: 'Crop area out of bounds' });
+
+    const buf = await sharp(src).rotate().extract({ left: cx, top: cy, width: safeW, height: safeH }).toBuffer();
+
+    if (save_as === 'replace') {
+      await sharp(buf).toFile(src);
+      db.prepare('UPDATE images SET width=?,height=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(safeW, safeH, Number(image_id));
+      res.json({ ok: true, image_id: Number(image_id), width: safeW, height: safeH });
+    } else {
+      // new_file: save alongside original
+      const ext  = path.extname(src);
+      const base = src.slice(0, -ext.length);
+      const dest = `${base}_crop${ext}`;
+      await sharp(buf).toFile(dest);
+      const fname = path.basename(dest);
+      const ins = db.prepare(`INSERT INTO images (filepath,filename,file_size,width,height,format,local_path,visibility)
+        VALUES (?,?,?,?,?,?,?,?)`);
+      const fsize = fs.statSync(dest).size;
+      const r = ins.run(dest, fname, fsize, safeW, safeH, row.format || 'jpeg', dest, row.visibility || 'shared');
+      res.json({ ok: true, image_id: r.lastInsertRowid, width: safeW, height: safeH });
+    }
+  } catch (err) {
+    res.status(500).json({ detail: err.message });
+  }
+});
+
+// ── POST /edit/rotate ─────────────────────────────────────────────────────────
+
+router.patch('/images/:id/rotate', requireAuth, async (req, res) => {
+  const db  = getDb();
+  const id  = Number(req.params.id);
+  const { direction = 'cw90' } = req.body || {};
+  const row = db.prepare('SELECT * FROM images WHERE id=?').get(id);
+  if (!row) return res.status(404).json({ detail: 'Not found' });
+
+  const src = resolveImgPath(row.filepath);
+  if (!src) return res.status(404).json({ detail: 'Image file not found' });
+
+  try {
+    const rotMap = { cw90: 90, ccw90: 270, '180': 180, flip_h: 0, flip_v: 0 };
+    const deg = rotMap[direction] ?? 0;
+    let pipeline = sharp(src).rotate();  // auto EXIF first
+
+    if (direction === 'flip_h') pipeline = pipeline.flop();
+    else if (direction === 'flip_v') pipeline = pipeline.flip();
+    else pipeline = pipeline.rotate(deg);
+
+    const buf  = await pipeline.toBuffer();
+    const meta = await sharp(buf).metadata();
+    await sharp(buf).toFile(src);
+    db.prepare('UPDATE images SET width=?,height=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .run(meta.width, meta.height, id);
+    res.json({ ok: true, width: meta.width, height: meta.height });
+  } catch (err) {
+    res.status(500).json({ detail: err.message });
+  }
+});
+
+// ── POST /edit/adjust ─────────────────────────────────────────────────────────
+
+router.post('/edit/adjust', requireAuth, async (req, res) => {
+  const db = getDb();
+  const {
+    image_id, brightness = 1, contrast = 1, saturation = 1, sharpness = 1,
+    warmth = 0, save_as = 'replace', suffix = '_adjusted',
+    black_in = 0, white_in = 255, gamma_mid = 1, black_out = 0, white_out = 255,
+  } = req.body || {};
+
+  const row = db.prepare('SELECT * FROM images WHERE id=?').get(Number(image_id));
+  if (!row) return res.status(404).json({ detail: 'Not found' });
+  const src = resolveImgPath(row.filepath);
+  if (!src) return res.status(404).json({ detail: 'Image file not found' });
+
+  try {
+    let pipeline = sharp(src).rotate();
+
+    // Levels: map [black_in..white_in] → [black_out..white_out]
+    if (black_in !== 0 || white_in !== 255 || black_out !== 0 || white_out !== 255) {
+      const inScale  = 255 / Math.max(1, white_in  - black_in);
+      const outScale = (white_out - black_out) / 255;
+      // Normalize → gamma → scale output
+      pipeline = pipeline.linear(inScale * outScale, -(black_in * inScale * outScale) + black_out);
+    }
+
+    // Brightness / contrast via linear: pixel * a + b
+    if (brightness !== 1 || contrast !== 1) {
+      const a = contrast * brightness;
+      const b = 127 * (1 - contrast);
+      pipeline = pipeline.linear(a, b);
+    }
+
+    // Saturation via modulate
+    if (saturation !== 1 || warmth !== 0) {
+      pipeline = pipeline.modulate({ saturation });
+      if (warmth !== 0) {
+        // warmth: tint R up / B down (or vice versa)
+        const wFactor = 1 + Math.abs(warmth) * 0.3;
+        if (warmth > 0) pipeline = pipeline.tint({ r: 255, g: 220, b: 180 });
+        else            pipeline = pipeline.tint({ r: 180, g: 220, b: 255 });
+      }
+    }
+
+    if (sharpness !== 1 && sharpness > 1) {
+      pipeline = pipeline.sharpen({ sigma: (sharpness - 1) * 2 });
+    }
+
+    const buf = await pipeline.toBuffer();
+
+    if (save_as === 'replace') {
+      await sharp(buf).toFile(src);
+      res.json({ ok: true, image_id: Number(image_id) });
+    } else {
+      const ext  = path.extname(src);
+      const base = src.slice(0, -ext.length);
+      const dest = `${base}${suffix || '_adjusted'}${ext}`;
+      await sharp(buf).toFile(dest);
+      const fname = path.basename(dest);
+      const fsize = fs.statSync(dest).size;
+      const meta  = await sharp(dest).metadata();
+      const r = db.prepare(`INSERT OR IGNORE INTO images (filepath,filename,file_size,width,height,format,local_path,visibility)
+        VALUES (?,?,?,?,?,?,?,?)`).run(dest, fname, fsize, meta.width, meta.height, row.format||'jpeg', dest, row.visibility||'shared');
+      res.json({ ok: true, image_id: r.lastInsertRowid || Number(image_id) });
+    }
   } catch (err) {
     res.status(500).json({ detail: err.message });
   }

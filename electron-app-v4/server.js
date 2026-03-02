@@ -116,6 +116,20 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ detail: 'Internal server error' });
 });
 
+// ── Pre-warm face engine ──────────────────────────────────────────────────────
+// Load ONNX models in background at startup so re-detect / processing requests
+// don't stall on first use.
+
+setImmediate(() => {
+  const { findModelDir } = require('./core/face-engine');
+  if (findModelDir()) {
+    require('./server/processor'); // triggers module load
+    // Warm up engine (model loading is async; errors are non-fatal)
+    const proc = require('./server/processor');
+    if (proc.warmEngine) proc.warmEngine().catch(() => {});
+  }
+});
+
 // ── Start (only when run directly, not when require()'d by Electron) ─────────
 
 let _httpServer = null;

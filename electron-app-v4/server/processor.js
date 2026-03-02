@@ -68,12 +68,22 @@ function upsertImage(db, filepath, meta, opts = {}) {
     return existing.id;
   }
 
-  const result = db.prepare(`
-    INSERT INTO images (filepath, filename, file_hash, file_size, width, height, format,
-      local_path, owner_id, visibility)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-  `).run(filepath, filename, hash, file_size, width, height, format,
-         local_path, owner_id, visibility);
+  let result;
+  try {
+    result = db.prepare(`
+      INSERT INTO images (filepath, filename, file_hash, file_size, width, height, format,
+        local_path, owner_id, visibility)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(filepath, filename, hash, file_size, width, height, format,
+           local_path, owner_id, visibility);
+  } catch (err) {
+    if (err.message && err.message.includes('UNIQUE constraint failed: images.file_hash')) {
+      // Duplicate file content — return existing image id
+      const dup = db.prepare('SELECT id FROM images WHERE file_hash=?').get(hash);
+      if (dup) return dup.id;
+    }
+    throw err;
+  }
   return result.lastInsertRowid;
 }
 
@@ -181,4 +191,14 @@ function collectImages(dirOrFile, recursive = true, followSymlinks = false) {
   return results;
 }
 
-module.exports = { processImageIntoDb, upsertImage, readImageMeta, collectImages };
+// Pre-warm: load ONNX models into memory so first real request is fast.
+async function warmEngine() {
+  try {
+    await getEngine();
+    console.log('[processor] Engine pre-warmed.');
+  } catch (err) {
+    console.warn('[processor] Engine pre-warm skipped:', err.message);
+  }
+}
+
+module.exports = { processImageIntoDb, upsertImage, readImageMeta, collectImages, warmEngine };
