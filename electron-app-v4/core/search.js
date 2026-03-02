@@ -118,10 +118,12 @@ class VectorStore {
 
     // ── Build index ────────────────────────────────────────────────────────────
     if (FaissIndex) {
-      // faiss-node: exact IndexFlatIP, C++ native
+      // faiss-node: exact IndexFlatIP, C++ native.
+      // add() and search() require plain Array, not TypedArray.
       this._faiss = new FaissIndex(this._dim);
-      const flat = new Float32Array(n * this._dim);
-      for (let i = 0; i < n; i++) flat.set(this.vectors[i], i * this._dim);
+      const flat = [];
+      for (let i = 0; i < n; i++)
+        for (let d = 0; d < this._dim; d++) flat.push(this.vectors[i][d]);
       this._faiss.add(flat);
 
     } else if (USearchIndex) {
@@ -156,10 +158,12 @@ class VectorStore {
   }
 
   _searchFaiss(queryVec, k) {
-    // faiss-node: returns { distances, labels } where labels are 0-based ints
-    const { distances, labels } = this._faiss.search(queryVec, k);
+    // faiss-node: search() also requires plain Array; labels are numbers (not BigInt)
+    const q = Array.from(queryVec);
+    const { distances, labels } = this._faiss.search(q, k);
     return labels
-      .map((idx, i) => idx >= 0 ? { ...this.meta[idx], similarity: distances[i] } : null)
+      .map((idx, i) => (idx >= 0 && idx < this.meta.length)
+        ? { ...this.meta[idx], similarity: distances[i] } : null)
       .filter(Boolean);
   }
 

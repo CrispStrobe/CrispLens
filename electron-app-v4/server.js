@@ -100,18 +100,29 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ detail: 'Internal server error' });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+// ── Start (only when run directly, not when require()'d by Electron) ─────────
 
-app.listen(PORT, () => {
-  console.log('');
-  console.log('┌─────────────────────────────────────────────┐');
-  console.log('│  CrispLens v4 — Node.js backend             │');
-  console.log('├─────────────────────────────────────────────┤');
-  console.log(`│  API:  http://localhost:${PORT}/api           │`);
-  console.log(`│  UI:   http://localhost:${PORT}/              │`);
-  console.log(`│  DB:   ${path.basename(DB_PATH)}${' '.repeat(Math.max(0, 36 - path.basename(DB_PATH).length))}│`);
-  console.log('└─────────────────────────────────────────────┘');
-  console.log('');
-});
+let _httpServer = null;
+
+if (require.main === module) {
+  // Direct: node server.js
+  _httpServer = app.listen(PORT, () => {
+    console.log('');
+    console.log('┌─────────────────────────────────────────────┐');
+    console.log('│  CrispLens v4 — Node.js backend             │');
+    console.log('├─────────────────────────────────────────────┤');
+    console.log(`│  API:  http://localhost:${PORT}/api           │`);
+    console.log(`│  UI:   http://localhost:${PORT}/              │`);
+    console.log(`│  DB:   ${path.basename(DB_PATH)}${' '.repeat(Math.max(0, 36 - path.basename(DB_PATH).length))}│`);
+    console.log('└─────────────────────────────────────────────┘');
+    console.log('');
+  });
+} else {
+  // Required by electron-main.js — start listening on the configured PORT
+  _httpServer = app.listen(PORT, '127.0.0.1', () => {
+    // Quiet start for Electron mode
+  });
+}
 
 module.exports = app;
+module.exports.httpServer = _httpServer;

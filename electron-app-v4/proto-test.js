@@ -123,9 +123,12 @@ async function main() {
       '\nTo run the compatibility test, make the training images accessible ' +
       '(or pass the project root as the first argument).'
     );
-    console.log('\nAlternative: run with a known face image to prove the engine works:');
-    console.log('  node proto-test.js <db> <image.jpg>');
-    process.exit(0);
+    if (!queryImage) {
+      console.log('\nAlternative: run with a known face image to prove the engine works:');
+      console.log('  node proto-test.js <db> <image.jpg>');
+      process.exit(0);
+    }
+    // Fall through to query-image-only mode below
   }
 
   const toTest = accessible.slice(0, 5);
@@ -142,7 +145,10 @@ async function main() {
   const store = new VectorStore(dbPath);
   store.load();
 
-  // ── Run comparison ───────────────────────────────────────────────────────────
+  // ── Run comparison (skip if no accessible training images) ────────────────────
+  if (toTest.length === 0) {
+    console.log('Skipping embedding comparison — no accessible training images.');
+  }
   heading(`Processing ${toTest.length} test sample(s)`);
 
   const results = [];
@@ -193,31 +199,40 @@ async function main() {
   // ── Summary ──────────────────────────────────────────────────────────────────
   heading('Summary');
 
-  if (results.length === 0) {
+  if (results.length === 0 && !queryImage) {
     console.log('No results — no accessible images could be processed.');
     process.exit(0);
+  } else if (results.length === 0) {
+    console.log('No training image results — proceeding to query image test.');
   }
 
-  const avgSim = results.reduce((s, r) => s + r.sim, 0) / results.length;
   const nCorrect = results.filter(r => r.correct).length;
 
-  console.log(`Samples processed:    ${results.length} / ${toTest.length}`);
-  console.log(`Avg embedding sim:    ${(avgSim * 100).toFixed(2)}%`);
-  console.log(`Search accuracy:      ${nCorrect} / ${results.length}`);
-  console.log('');
+  if (results.length > 0) {
+    const avgSim = results.reduce((s, r) => s + r.sim, 0) / results.length;
 
-  if (avgSim >= 0.97) {
-    console.log('✅  COMPATIBLE — JS vectors match Python ArcFace embeddings.');
-    console.log('    The FAISS database can be queried directly from Node.js.');
-  } else if (avgSim >= 0.90) {
-    console.log('⚠   MOSTLY COMPATIBLE — small alignment drift detected.');
-    console.log('    Check face-align.js and ensure models are buffalo_l (not buffalo_sc).');
+    console.log(`Samples processed:    ${results.length} / ${toTest.length}`);
+    console.log(`Avg embedding sim:    ${(avgSim * 100).toFixed(2)}%`);
+    console.log(`Search accuracy:      ${nCorrect} / ${results.length}`);
+    console.log('');
+
+    if (avgSim >= 0.97) {
+      console.log('✅  COMPATIBLE — JS vectors match Python ArcFace embeddings.');
+      console.log('    The FAISS database can be queried directly from Node.js.');
+    } else if (avgSim >= 0.90) {
+      console.log('⚠   MOSTLY COMPATIBLE — small alignment drift detected.');
+      console.log('    Check face-align.js and ensure models are buffalo_l (not buffalo_sc).');
+    } else {
+      console.log('❌  INCOMPATIBLE — large embedding drift.');
+      console.log('    Possible causes:');
+      console.log('    • Wrong model (ensure w600k_r50.onnx from buffalo_l)');
+      console.log('    • Model output names differ from expected order');
+      console.log('    • Image preprocessing mismatch');
+    }
   } else {
-    console.log('❌  INCOMPATIBLE — large embedding drift.');
-    console.log('    Possible causes:');
-    console.log('    • Wrong model (ensure w600k_r50.onnx from buffalo_l)');
-    console.log('    • Model output names differ from expected order');
-    console.log('    • Image preprocessing mismatch');
+    console.log('Samples processed:    0 / 0  (no accessible training images — skipped)');
+    console.log('');
+    console.log('ℹ️   Run with accessible training images to check embedding compatibility.');
   }
 
   store.close();
