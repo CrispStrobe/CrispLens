@@ -1,17 +1,22 @@
 # CrispLens
 
-A self-hosted face recognition and photo management system. Ships as a standalone Python/FastAPI server, a Gradio web UI (v1), and a next-generation Svelte-based desktop application (V2 — recommended).
+A self-hosted face recognition and photo management system. Ships as a standalone Python/FastAPI server, a Gradio web UI (v1), a full-featured Svelte desktop app (v2), and a Python-free pure Node.js edition (v4).
 
 ## Which Version to Use?
 
-| | Gradio Web UI (v1) | Electron v1 | **Desktop App V2** |
-|---|---|---|---|
-| Interface | Browser-based | Native wrapper (Gradio) | Svelte SPA |
-| Backend | face_rec_ui.py | face_rec_ui.py | fastapi_app.py |
-| Default port | 7860 | 7860 | 7865 |
-| Hybrid ingest | — | — | ✓ (B/C + server folder) |
-| First-run wizard | — | — | ✓ |
-| Recommended | — | — | ✓ |
+| | Gradio Web UI (v1) | Electron v1 | **Desktop App V2** | **v4 — Pure Node.js** |
+|---|---|---|---|---|
+| Interface | Browser-based | Native wrapper (Gradio) | Svelte SPA | Svelte SPA |
+| Backend | face_rec_ui.py | face_rec_ui.py | fastapi_app.py | Node.js / Express |
+| Default port | 7860 | 7860 | 7865 | 7861 |
+| Requires Python | ✓ | ✓ | ✓ | — |
+| Hybrid ingest | — | — | ✓ (B/C + server folder) | — |
+| First-run wizard | — | — | ✓ | — |
+| PWA / Capacitor mobile | — | — | — | ✓ |
+| Recommended | — | — | existing deployments | new / Python-free |
+
+> **v4** lives in `electron-app-v4/` — zero Python dependency, same 512D ArcFace vectors, same SQLite DB.
+> Run with `cd electron-app-v4 && npm install && node server.js`.
 
 ---
 

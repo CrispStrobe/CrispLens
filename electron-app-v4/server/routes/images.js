@@ -207,7 +207,7 @@ router.get('/:id/thumbnail', requireAuth, async (req, res) => {
       if (!p) return res.status(404).json({ detail: 'Image file not found' });
       src = p;
     }
-    const buf = await sharp(src).resize(size, size, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer();
+    const buf = await sharp(src).rotate().resize(size, size, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer();
     _cacheSet(cKey, buf);
     res.set('Content-Type', 'image/jpeg');
     res.set('Cache-Control', 'public, max-age=3600');
@@ -237,7 +237,7 @@ router.get('/:id/preview', requireAuth, async (req, res) => {
   const p = resolveImagePath(row.filepath);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
   try {
-    const buf = await sharp(p).resize(1200, 1200, { fit: 'inside' }).jpeg({ quality: 90 }).toBuffer();
+    const buf = await sharp(p).rotate().resize(1200, 1200, { fit: 'inside' }).jpeg({ quality: 90 }).toBuffer();
     res.set('Content-Type', 'image/jpeg');
     res.send(buf);
   } catch {

@@ -312,9 +312,9 @@ export function changePassword(current_password, new_password) {
 
 export function fetchProviders()              { return get('/api-keys/providers'); }
 export function fetchKeyStatus()              { return get('/api-keys/status'); }
-export function fetchVlmModels(provider)      { return get(`/api-keys/models/${provider}`); }
+export async function fetchVlmModels(provider) { const d = await get(`/api-keys/models/${provider}`); return d.models ?? d; }
 export function saveApiKey(provider, api_key, scope = 'system') {
-  return post('/api-keys', { provider, api_key, scope });
+  return post('/api-keys', { provider, key_value: api_key, scope });
 }
 export function deleteApiKey(provider, scope = 'system') {
   return del(`/api-keys/${provider}?scope=${scope}`);

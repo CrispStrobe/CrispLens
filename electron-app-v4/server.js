@@ -37,6 +37,18 @@ app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const color = res.statusCode >= 500 ? '\x1b[31m' : res.statusCode >= 400 ? '\x1b[33m' : '\x1b[32m';
+    console.log(`${color}${req.method}\x1b[0m ${req.path} → ${res.statusCode} (${ms}ms)`);
+  });
+  next();
+});
+
 // ── Auth & session ────────────────────────────────────────────────────────────
 
 const { sessionMiddleware } = require('./server/auth');
@@ -54,8 +66,12 @@ const processRouter = require('./server/routes/process');
 const ingestRouter  = require('./server/routes/ingest');
 const settingsRouter = require('./server/routes/settings');
 
-// Health (no auth required)
-app.get('/api/health', (req, res) => res.json({ ok: true, version: '4.0.0', backend: 'node-js' }));
+// Health (no auth required) — model_ready checked lazily
+app.get('/api/health', (req, res) => {
+  const { findModelDir } = require('./core/face-engine');
+  const modelReady = !!findModelDir();
+  res.json({ ok: true, version: '4.0.0', backend: 'node-js', model_ready: modelReady });
+});
 
 app.use('/api/auth',       authRouter);
 app.use('/api/images',     imagesRouter);

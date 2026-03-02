@@ -741,18 +741,29 @@ router.get('/api-keys/providers', requireAuth, (req, res) => {
 });
 
 // GET /api-keys/status — per-provider { has_system_key, has_user_key }
+// Reads from both v4 api_keys table and v2 provider_api_keys table.
 router.get('/api-keys/status', requireAuth, (req, res) => {
   let db; try { db = getDb(); } catch { return res.json({}); }
-  const rows = db.prepare('SELECT provider, scope, owner_id FROM api_keys').all();
-  const out  = {};
-  for (const prov of Object.keys(_PROVIDERS)) {
+  const out = {};
+  for (const prov of Object.keys(_PROVIDERS))
     out[prov] = { has_system_key: false, has_user_key: false };
-  }
-  for (const r of rows) {
+
+  // v4 table
+  for (const r of db.prepare('SELECT provider, scope, owner_id FROM api_keys').all()) {
     if (!out[r.provider]) out[r.provider] = { has_system_key: false, has_user_key: false };
     if (r.scope === 'system' && r.owner_id == null) out[r.provider].has_system_key = true;
     if (r.scope === 'user') out[r.provider].has_user_key = true;
   }
+
+  // v2 table (provider_api_keys) — mark keys that exist there too
+  try {
+    for (const r of db.prepare('SELECT provider, scope FROM provider_api_keys').all()) {
+      if (!out[r.provider]) out[r.provider] = { has_system_key: false, has_user_key: false };
+      if (r.scope === 'system') out[r.provider].has_system_key = true;
+      if (r.scope === 'user')   out[r.provider].has_user_key   = true;
+    }
+  } catch { /* table may not exist in fresh v4 DBs */ }
+
   res.json(out);
 });
 
