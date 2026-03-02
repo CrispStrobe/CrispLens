@@ -39,6 +39,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+electron-app-v4/test-data/
 
 # PyInstaller
 *.manifest
