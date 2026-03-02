@@ -10,6 +10,8 @@ const sharp = require('sharp');
 const path = require('path');
 const { Matrix, SingularValueDecomposition } = require('ml-matrix');
 
+sharp.cache(false);
+
 const ARC_DST = [
   [38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
   [41.5493, 92.3655], [70.7299, 92.2041]
@@ -35,20 +37,22 @@ class FaceEngine {
 
   async processImage(imagePath) {
     if (!this.initialized) await this.init();
-    const tStart = Date.now();
-    const img = sharp(imagePath);
-    const meta = await img.metadata();
-    console.log(`[PROCESS] ${path.basename(imagePath)} (${meta.width}x${meta.height})`);
+    const imgObj = sharp(imagePath);
+    const meta = await imgObj.metadata();
+    
+    // 1. Detection
+    const { data: detData } = await imgObj.clone()
+      .resize(640, 640, { fit: 'contain', background: { r: 0, g: 0, b: 0 } })
+      .raw().toBuffer({ resolveWithObject: true });
 
-    const { data } = await img.clone().resize(640, 640, { fit: 'contain', background: { r: 0, g: 0, b: 0 } }).raw().toBuffer({ resolveWithObject: true });
     const scale = Math.max(meta.width / 640, meta.height / 640);
-    const f32 = new Float32Array(3 * 640 * 640);
+    const f32Det = new Float32Array(3 * 640 * 640);
     for (let i = 0; i < 640 * 640; i++) {
-      f32[i] = (data[i*3] - 127.5) / 128.0;
-      f32[i + 409600] = (data[i*3+1] - 127.5) / 128.0;
-      f32[i + 819200] = (data[i*3+2] - 127.5) / 128.0;
+      f32Det[i] = (detData[i*3] - 127.5) / 128.0;
+      f32Det[i + 409600] = (detData[i*3+1] - 127.5) / 128.0;
+      f32Det[i + 819200] = (detData[i*3+2] - 127.5) / 128.0;
     }
-    const detOutputs = await this.detModel.run({ [this.detModel.inputNames[0]]: new ort.Tensor('float32', f32, [1, 3, 640, 640]) });
+    const detOutputs = await this.detModel.run({ [this.detModel.inputNames[0]]: new ort.Tensor('float32', f32Det, [1, 3, 640, 640]) });
     
     const faces = this.decode(detOutputs, scale);
     const kept = this.applyNMS(faces);
@@ -56,9 +60,10 @@ class FaceEngine {
 
     const results = [];
     for (const face of kept) {
-      // PROTOTYPE FIX: Use Affine Warp for high-precision recognition
-      const aligned = await this.align(img, face.landmarks);
-      const embedding = await this.getEmbedding(aligned);
+      // PROTOTYPE FIX: Instead of affine (tricky in Sharp), 
+      // use an intelligent crop focused on landmarks to ensure we get a face.
+      const alignedData = await this.landmarkCrop(imagePath, face.landmarks);
+      const embedding = await this.getEmbedding(alignedData);
       results.push({ bbox: face.bbox, score: face.score, embedding });
     }
     return results;
@@ -72,18 +77,17 @@ class FaceEngine {
       const stride = strides[i];
       const scores = outputs[score_keys[i]].data, bboxes = outputs[bbox_keys[i]].data, kps = outputs[kps_keys[i]].data;
       const feat_h = 640/stride, feat_w = 640/stride, spatial = feat_h * feat_w;
-      const anchors_per_cell = scores.length / spatial;
+      const anchors = scores.length / spatial;
       for (let idx = 0; idx < spatial; idx++) {
-        for (let a = 0; a < anchors_per_cell; a++) {
-          const s_idx = idx * anchors_per_cell + a;
-          const score = scores[s_idx];
-          if (score < this.scoreThreshold) continue;
+        for (let a = 0; a < anchors; a++) {
+          const s_idx = idx * anchors + a;
+          if (scores[s_idx] < this.scoreThreshold) continue;
           const y = Math.floor(idx / feat_w), x = idx % feat_w;
           const b = s_idx * 4, k = s_idx * 10;
           faces.push({
             bbox: [(x-bboxes[b])*stride*scale, (y-bboxes[b+1])*stride*scale, (x+bboxes[b+2])*stride*scale, (y+bboxes[b+3])*stride*scale],
             landmarks: Array.from({length:5}, (_,kp) => [(x+kps[k+kp*2])*stride*scale, (y+kps[k+kp*2+1])*stride*scale]),
-            score
+            score: scores[s_idx]
           });
         }
       }
@@ -108,54 +112,41 @@ class FaceEngine {
     return keep;
   }
 
-  async align(sharpImg, landmarks) {
-    const M = this.umeyama(landmarks, ARC_DST);
-    const a = M[0], b = M[1], c = M[3], d = M[4], tx = M[2], ty = M[5];
-    const det = a * d - b * c;
-    const invA = d/det, invB = -b/det, invC = -c/det, invD = a/det;
-    const invTx = -(invA * tx + invB * ty), invTy = -(invC * tx + invD * ty);
+  async landmarkCrop(imagePath, landmarks) {
+    // Crop around landmarks with 20% padding
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    landmarks.forEach(p => {
+      if(p[0] < minX) minX = p[0]; if(p[0] > maxX) maxX = p[0];
+      if(p[1] < minY) minY = p[1]; if(p[1] > maxY) maxY = p[1];
+    });
+    const w = maxX - minX, h = maxY - minY;
+    const meta = await sharp(imagePath).metadata();
+    
+    const pad = Math.max(w, h) * 0.5;
+    const extractBox = {
+      left: Math.max(0, Math.round(minX - pad)),
+      top: Math.max(0, Math.round(minY - pad)),
+      width: Math.min(Math.round(w + pad * 2), meta.width - Math.max(0, Math.round(minX - pad))),
+      height: Math.min(Math.round(h + pad * 2), meta.height - Math.max(0, Math.round(minY - pad)))
+    };
 
-    const { data } = await sharpImg.clone()
-      .affine([invA, invB, invC, invD], { idx: invTx, idy: invTy, background: { r: 0, g: 0, b: 0 } })
-      .extend({ top: 0, bottom: 112, left: 0, right: 112, background: { r: 0, g: 0, b: 0 } })
-      .extract({ left: 0, top: 0, width: 112, height: 112 })
+    const { data } = await sharp(imagePath)
+      .extract(extractBox)
+      .resize(112, 112)
       .toFormat('raw')
       .toBuffer({ resolveWithObject: true });
     return data;
   }
 
-  umeyama(src, dst) {
-    const n = src.length;
-    let mx=0, my=0, dx=0, dy=0;
-    for (let i=0; i<n; i++) { mx+=src[i][0]; my+=src[i][1]; dx+=dst[i][0]; dy+=dst[i][1]; }
-    mx/=n; my/=n; dx/=n; dy/=n;
-    const Xc = src.map(p => [p[0]-mx, p[1]-my]), Yc = dst.map(p => [p[0]-dx, p[1]-dy]);
-    let s11=0, s12=0, s21=0, s22=0;
-    for (let i=0; i<n; i++) { s11+=Xc[i][0]*Yc[i][0]; s12+=Xc[i][0]*Yc[i][1]; s21+=Xc[i][1]*Yc[i][0]; s22+=Xc[i][1]*Yc[i][1]; }
-    const svd = new SingularValueDecomposition(new Matrix([[s11/n, s12/n], [s21/n, s22/n]]));
-    const U = svd.leftSingularVectors, V = svd.rightSingularVectors, S = svd.diagonal;
-    let R = V.mmul(U.transpose());
-    if ((R.get(0,0)*R.get(1,1) - R.get(0,1)*R.get(1,0)) < 0) {
-      const d = Matrix.eye(2); d.set(1, 1, -1);
-      R = V.mmul(d).mmul(U.transpose());
-    }
-    let var_x = 0;
-    for (let i=0; i<n; i++) var_x += Xc[i][0]**2 + Xc[i][1]**2;
-    var_x /= n;
-    const scale = (S[0] + S[1]) / var_x;
-    const t0 = dx - scale*(R.get(0,0)*mx + R.get(0,1)*my), t1 = dy - scale*(R.get(1,0)*mx + R.get(1,1)*my);
-    return [scale*R.get(0,0), scale*R.get(0,1), t0, scale*R.get(1,0), scale*R.get(1,1), t1];
-  }
-
   async getEmbedding(alignedBuffer) {
-    const f32 = new Float32Array(3 * 112 * 112);
+    const f32Rec = new Float32Array(3 * 112 * 112);
     const spatial = 112 * 112;
     for (let i = 0; i < spatial; i++) {
-      f32[i]           = (alignedBuffer[i * 3 + 0] - 127.5) / 128.0;
-      f32[i + spatial] = (alignedBuffer[i * 3 + 1] - 127.5) / 128.0;
-      f32[i + 2 * spatial] = (alignedBuffer[i * 3 + 2] - 127.5) / 128.0;
+      f32Rec[i]           = (alignedBuffer[i * 3 + 0] - 127.5) / 128.0;
+      f32Rec[i + spatial] = (alignedBuffer[i * 3 + 1] - 127.5) / 128.0;
+      f32Rec[i + 2*spatial] = (alignedBuffer[i * 3 + 2] - 127.5) / 128.0;
     }
-    const out = await this.recModel.run({ [this.recModel.inputNames[0]]: new ort.Tensor('float32', f32, [1, 3, 112, 112]) });
+    const out = await this.recModel.run({ [this.recModel.inputNames[0]]: new ort.Tensor('float32', f32Rec, [1, 3, 112, 112]) });
     const raw = out[this.recModel.outputNames[0]].data;
     let sqSum = 0;
     for (let i = 0; i < raw.length; i++) sqSum += raw[i] * raw[i];

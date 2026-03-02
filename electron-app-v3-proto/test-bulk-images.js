@@ -10,10 +10,10 @@ const path = require('path');
 const fs = require('fs');
 
 const IMAGES = [
-  "C:\Users\stc\Downloads\pic\Muslimfeindlichkeit -2209.jpg",
-  "C:\Users\stc\Downloads\pic\Ströbele2025foto01.jpg",
-  "C:\Users\stc\Downloads\pic\26215_Islamiserung in DE_251113_MH-FB_5515.jpg",
-  "C:\Users\stc\Downloads\pic\Ströbele_Bild.jpg"
+  "C:\\Users\\stc\\Downloads\\pic\\Muslimfeindlichkeit -2209.jpg",
+  "C:\\Users\\stc\\Downloads\\pic\\Ströbele2025foto01.jpg",
+  "C:\\Users\\stc\\Downloads\\pic\\26215_Islamiserung in DE_251113_MH-FB_5515.jpg",
+  "C:\\Users\\stc\\Downloads\\pic\\Ströbele_Bild.jpg"
 ];
 
 async function main() {
@@ -26,13 +26,11 @@ async function main() {
   const results = [];
 
   for (const imgPath of IMAGES) {
-    console.log(`
-Processing: ${path.basename(imgPath)}`);
+    console.log(`\nProcessing: ${path.basename(imgPath)}`);
     const faces = await engine.processImage(imgPath);
     
     if (faces.length > 0) {
       console.log(`   Found ${faces.length} face(s). Primary Score: ${faces[0].score.toFixed(3)}`);
-      // Log fingerprint (first 5 vals)
       const fp = Array.from(faces[0].embedding.slice(0, 5)).map(v => v.toFixed(4)).join(', ');
       console.log(`   Embedding Fingerprint: [${fp}...]`);
       results.push({ name: path.basename(imgPath), embedding: faces[0].embedding });
@@ -42,8 +40,7 @@ Processing: ${path.basename(imgPath)}`);
   }
 
   if (results.length > 1) {
-    console.log('
---- CROSS-COMPARISON MATRIX ---');
+    console.log('\n--- CROSS-COMPARISON MATRIX ---');
     for (let i = 0; i < results.length; i++) {
       for (let j = i + 1; j < results.length; j++) {
         const sim = cosineSimilarity(results[i].embedding, results[j].embedding);
@@ -66,5 +63,4 @@ function cosineSimilarity(a, b) {
   return denom === 0 ? 0 : dot / denom;
 }
 
-main().catch(err => console.error('
-Bulk test failed:', err));
+main().catch(err => console.error('\nBulk test failed:', err));
