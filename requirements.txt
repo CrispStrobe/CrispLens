@@ -33,4 +33,4 @@ anthropic
 mnemonic
 
 # Optional: visual duplicate detection
-# imagehash
+imagehash

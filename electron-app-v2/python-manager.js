@@ -24,7 +24,7 @@ const { app } = require('electron');
 const APP_NAME      = 'CrispLens';
 const MAIN_SCRIPT   = 'fastapi_app.py';   // ← only change vs electron-app/
 const START_PORT    = parseInt(process.env.FACE_REC_PORT || '7865', 10);
-const READY_TIMEOUT = 300_000;
+const READY_TIMEOUT = 300_000; // 5 minutes of inactivity
 const POLL_INTERVAL = 2_000;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -75,23 +75,46 @@ function findFreePort(start = START_PORT) {
   });
 }
 
-function waitForServer(port, timeout = READY_TIMEOUT) {
+/**
+ * Wait for the server to become ready.
+ * @param {number} port 
+ * @param {number} baseTimeout Max time to wait without ANY activity/progress
+ * @param {Function} getActivity Optional function returning timestamp of last activity
+ */
+function waitForServer(port, baseTimeout = READY_TIMEOUT, getActivity = null) {
   return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeout;
+    let lastActivity = getActivity ? getActivity() : Date.now();
+
     function poll() {
-      if (Date.now() > deadline) return reject(new Error('Timed out waiting for Python server'));
+      if (getActivity) {
+        const currentActivity = getActivity();
+        if (currentActivity > lastActivity) {
+          lastActivity = currentActivity;
+        }
+      }
+
+      if (Date.now() - lastActivity > baseTimeout) {
+        return reject(new Error(
+          `Backend startup timed out after ${Math.round(baseTimeout/1000)}s of inactivity.\n` +
+          'Check the logs for errors during model download or initialization.'
+        ));
+      }
+
       // Poll /api/health — always returns 200 JSON, never intercepted by static files
-      http.get(`http://127.0.0.1:${port}/api/health`, res => {
+      const req = http.get(`http://127.0.0.1:${port}/api/health`, res => {
         res.resume();
         if (res.statusCode === 200) resolve();
         else setTimeout(poll, POLL_INTERVAL);
-      }).on('error', () => setTimeout(poll, POLL_INTERVAL));
+      });
+      
+      req.on('error', () => setTimeout(poll, POLL_INTERVAL));
+      req.setTimeout(POLL_INTERVAL); // Don't let the request itself hang
     }
     poll();
   });
 }
 
-// ─── Python detection (unchanged) ────────────────────────────────────────────
+// ─── Python detection ────────────────────────────────────────────────────────
 
 const WINDOWS_PYTHON_PATHS = [
   'py', 'python', 'python3',
@@ -99,6 +122,11 @@ const WINDOWS_PYTHON_PATHS = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', `Python${v}`, 'python.exe')
   ),
   ...['3.10', '3.11', '3.12', '3.13'].map(v => `C:\\Python${v.replace('.', '')}\\python.exe`),
+];
+
+const UNIX_PYTHON_PATHS = [
+  'python3', 'python3.12', 'python3.11', 'python3.10', 'python',
+  '/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3'
 ];
 
 async function tryPythonExe(exe) {
@@ -112,6 +140,8 @@ async function tryPythonExe(exe) {
 }
 
 async function findPython() {
+  const candidates = process.platform === 'win32' ? WINDOWS_PYTHON_PATHS : UNIX_PYTHON_PATHS;
+  
   if (process.platform === 'win32') {
     try {
       const { stdout, stderr } = await runCommand('py', ['--version'], { timeout: 5000 });
@@ -120,7 +150,8 @@ async function findPython() {
       if (m && (+m[1] > 3 || (+m[1] === 3 && +m[2] >= 10))) return { exe: 'py', major: +m[1], minor: +m[2] };
     } catch { /* not installed */ }
   }
-  for (const candidate of WINDOWS_PYTHON_PATHS) {
+
+  for (const candidate of candidates) {
     if (candidate === 'py') continue;
     const result = await tryPythonExe(candidate);
     if (result && (result.major > 3 || (result.major === 3 && result.minor >= 10))) return result;
@@ -162,10 +193,17 @@ class PythonManager {
 
     this._process = null;
     this._port    = null;
+    this.lastActivity = Date.now();
   }
 
-  log(msg)   { this.onLog(msg); }
-  error(msg) { this.onError(msg); }
+  log(msg)   { 
+    this.lastActivity = Date.now();
+    this.onLog(msg); 
+  }
+  error(msg) { 
+    this.lastActivity = Date.now();
+    this.onError(msg); 
+  }
 
   ensureDataDir() {
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -206,8 +244,35 @@ class PythonManager {
     }
     this.log(`Found Python ${py.major}.${py.minor} at: ${py.exe}`);
     this.log('Creating virtual environment…');
-    await spawnStreaming(py.exe, ['-m', 'venv', this.venvDir], {}, line => this.log(line));
-    this.log('Virtual environment created.');
+    try {
+      // --without-pip can be faster if we use ensurepip later, but default is usually fine.
+      // We use the basic command and diagnose failures.
+      await spawnStreaming(py.exe, ['-m', 'venv', this.venvDir], {}, line => this.log(line));
+      this.log('Virtual environment created.');
+    } catch (err) {
+      this.error(`Failed to create virtual environment: ${err.message}`);
+      if (process.platform !== 'win32') {
+        this.log('Hint: On Linux, you might need to install the venv module: sudo apt install python3-venv');
+      }
+      throw err;
+    }
+  }
+
+  async ensurePip() {
+    this.log('Ensuring pip is available in virtual environment…');
+    try {
+      // Check if pip is already there
+      await runCommand(this.pythonExe, ['-m', 'pip', '--version'], { timeout: 10000 });
+    } catch (err) {
+      this.log('pip not found in venv, attempting to bootstrap with ensurepip…');
+      try {
+        await spawnStreaming(this.pythonExe, ['-m', 'ensurepip', '--upgrade'], {}, line => this.log(line));
+      } catch (e2) {
+        this.error(`Failed to bootstrap pip: ${e2.message}`);
+        this.log('Hint: Try installing pip manually in the system Python first.');
+        throw e2;
+      }
+    }
   }
 
   async installDeps() {
@@ -223,10 +288,25 @@ class PythonManager {
       if (stamp >= reqMtime) { this.log('Dependencies already installed.'); return; }
     }
 
-    this.log('Installing Python dependencies (this may take several minutes)…');
-    await spawnStreaming(pipExe, ['install', '--upgrade', '-r', reqFile], {}, line => this.log(line));
-    fs.writeFileSync(stampFile, Date.now().toString());
-    this.log('Dependencies installed successfully.');
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.log(`Installing Python dependencies (attempt ${attempt}/${maxRetries}, this may take several minutes)…`);
+        // Using --prefer-binary to avoid slow/failing local compilations on systems without build tools
+        await spawnStreaming(pipExe, ['install', '--upgrade', '--prefer-binary', '-r', reqFile], {}, line => this.log(line));
+        fs.writeFileSync(stampFile, Date.now().toString());
+        this.log('Dependencies installed successfully.');
+        return;
+      } catch (err) {
+        this.error(`Dependency installation failed (attempt ${attempt}): ${err.message}`);
+        if (attempt === maxRetries) {
+          this.log('Installation failed after multiple attempts. Please check your internet connection.');
+          throw err;
+        }
+        this.log('Retrying in 5 seconds...');
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
   }
 
   async ensureDatabase() {
@@ -305,6 +385,7 @@ print("Database initialised.")
     this.ensureDataDir();
     this.ensureConfig();
     await this.ensureVenv();
+    await this.ensurePip();
     await this.installDeps();
     await this.ensureDatabase();
     const port = await this.pickPort();
@@ -312,7 +393,10 @@ print("Database initialised.")
 
     this.log('Waiting for the API server to become ready…');
     this.log('(First launch may take a few minutes while models download.)');
-    await waitForServer(port, READY_TIMEOUT);
+    
+    // Use dynamic timeout based on activity (logs)
+    await waitForServer(port, READY_TIMEOUT, () => this.lastActivity);
+    
     this.log('Ready!');
     return port;
   }

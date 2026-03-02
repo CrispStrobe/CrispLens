@@ -97,10 +97,19 @@ ipcMain.handle('get-default-data-dir', () =>
 );
 
 ipcMain.handle('detect-python', async () => {
-  // Use the same findPython helper from PythonManager's module context
   const candidates = process.platform === 'win32'
-    ? ['py', 'python', 'python3']
-    : ['python3', 'python'];
+    ? [
+        'py', 'python', 'python3',
+        ...['313', '312', '311', '310'].map(v =>
+          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', `Python${v}`, 'python.exe')
+        ),
+        ...['313', '312', '311', '310'].map(v => `C:\\Python${v}\\python.exe`),
+      ]
+    : [
+        'python3', 'python3.12', 'python3.11', 'python3.10', 'python',
+        '/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3'
+      ];
+
   const { execFile } = require('child_process');
   for (const exe of candidates) {
     try {
