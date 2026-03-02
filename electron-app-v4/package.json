@@ -1,0 +1,22 @@
+{
+  "name": "crisplens-v4",
+  "version": "0.1.0",
+  "description": "CrispLens v4 – pure Node.js, Python-free, cross-platform",
+  "main": "proto-test.js",
+  "type": "commonjs",
+  "scripts": {
+    "proto": "node proto-test.js",
+    "self-test": "node proto-selfcontained.js",
+    "self-test:db": "node proto-selfcontained.js ../face_recognition.db",
+    "download-models": "node core/model-downloader.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "better-sqlite3": "^11.4.0",
+    "onnxruntime-node": "^1.20.1",
+    "sharp": "^0.33.5"
+  },
+  "optionalDependencies": {
+    "faiss-napi": "^0.10.3"
+  }
+}
