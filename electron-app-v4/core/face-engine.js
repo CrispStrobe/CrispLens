@@ -62,10 +62,14 @@ const NUM_ANCHORS     = 2;  // buffalo_l det_10g uses 2 anchors per feature map 
  *   stride-32 → [scores, bboxes, kps]
  *
  * Scores  shape: [n_anchors, 1]    → flat length = feat*feat*2
- * Bboxes  shape: [n_anchors, 4]    → flat length = feat*feat*2*4
- * Kps     shape: [n_anchors, 10]   → flat length = feat*feat*2*10
+ * Bboxes  shape: [n_anchors, 4]    → flat length = feat*feat*2*4  (in stride units)
+ * Kps     shape: [n_anchors, 10]   → flat length = feat*feat*2*10 (in stride units)
  *
- * All distances are in the 640×640 input coordinate space.
+ * IMPORTANT: bbox/kps values are in STRIDE UNITS (not pixels).
+ * Must multiply by stride to get 640-space pixel distances — same as InsightFace Python:
+ *   bbox_preds = net_outs[idx+fmc] * stride
+ *   kps_preds  = net_outs[idx+fmc*2] * stride
+ *
  * `invScale = max(origW, origH) / 640` converts back to original pixels.
  */
 function decodeOutputs(detOutputs, outputNames, invScale) {
@@ -84,8 +88,8 @@ function decodeOutputs(detOutputs, outputNames, invScale) {
     const nTotal  = spatial * NUM_ANCHORS;  // total anchors for this stride
 
     const scores = detOutputs[outputNames[si    ]].data;  // length: nTotal
-    const bboxes = detOutputs[outputNames[si + 3]].data;  // length: nTotal*4
-    const kps    = detOutputs[outputNames[si + 6]].data;  // length: nTotal*10
+    const bboxes = detOutputs[outputNames[si + 3]].data;  // length: nTotal*4 (stride units)
+    const kps    = detOutputs[outputNames[si + 6]].data;  // length: nTotal*10 (stride units)
 
     for (let idx = 0; idx < spatial; idx++) {
       const row = Math.floor(idx / feat);
@@ -96,24 +100,26 @@ function decodeOutputs(detOutputs, outputNames, invScale) {
         const score = scores[ai];
         if (score < SCORE_THRESHOLD) continue;
 
-        // Anchor center in 640-space
+        // Anchor center in 640-space pixels
         const cx = col * stride;
         const cy = row * stride;
 
-        // BBox distances (in 640-space pixels)
+        // BBox distances: raw values are in stride units → multiply by stride → 640-space pixels
+        // This matches InsightFace Python: bbox_preds = net_outs[idx+fmc] * stride
         const bi = ai * 4;
-        const x1 = (cx - bboxes[bi    ]) * invScale;
-        const y1 = (cy - bboxes[bi + 1]) * invScale;
-        const x2 = (cx + bboxes[bi + 2]) * invScale;
-        const y2 = (cy + bboxes[bi + 3]) * invScale;
+        const x1 = (cx - bboxes[bi    ] * stride) * invScale;
+        const y1 = (cy - bboxes[bi + 1] * stride) * invScale;
+        const x2 = (cx + bboxes[bi + 2] * stride) * invScale;
+        const y2 = (cy + bboxes[bi + 3] * stride) * invScale;
 
-        // 5-point keypoints (in 640-space pixels)
+        // 5-point keypoints: also in stride units → multiply by stride
+        // This matches InsightFace Python: kps_preds = net_outs[idx+fmc*2] * stride
         const ki = ai * 10;
         const landmarks = [];
         for (let kp = 0; kp < 5; kp++) {
           landmarks.push([
-            (cx + kps[ki + kp * 2    ]) * invScale,
-            (cy + kps[ki + kp * 2 + 1]) * invScale,
+            (cx + kps[ki + kp * 2    ] * stride) * invScale,
+            (cy + kps[ki + kp * 2 + 1] * stride) * invScale,
           ]);
         }
 
@@ -220,8 +226,8 @@ class FaceEngine {
       path.join(this.modelDir, 'w600k_r50.onnx'), opts
     );
 
-    // Cache output names — expected order for buffalo_l:
-    // [scores_8, bboxes_8, kps_8, scores_16, bboxes_16, kps_16, scores_32, bboxes_32, kps_32]
+    // Cache output names — expected order for buffalo_l det_10g.onnx:
+    // [score_8, score_16, score_32, bbox_8, bbox_16, bbox_32, kps_8, kps_16, kps_32]
     this._outputNames = this.detModel.outputNames;
     if (this._outputNames.length !== 9) {
       throw new Error(`Expected 9 detection outputs, got ${this._outputNames.length}`);
@@ -229,23 +235,30 @@ class FaceEngine {
 
     this.initialized = true;
     console.log('[FaceEngine] Models ready.');
+    console.log('[FaceEngine] Detection output names:', this._outputNames.join(', '));
   }
 
   /**
    * Detect all faces in `imagePath`.
    *
    * Returns array of { bbox:[x1,y1,x2,y2], score, landmarks:[[x,y]*5] }
-   * in original image pixel coordinates.
+   * in original image pixel coordinates (display-space, after EXIF rotation).
    */
   async detectFaces(imagePath) {
     await this.init();
 
     const img  = sharp(imagePath);
     const meta = await img.metadata();
-    const W = meta.width, H = meta.height;
 
+    // Use display-space dimensions (swap for EXIF orientations 5-8 which rotate 90°/270°)
+    let W = meta.width, H = meta.height;
+    if (meta.orientation && meta.orientation >= 5) { [W, H] = [H, W]; }
+
+    // Apply EXIF rotation before letterboxing so detection runs in display coordinate space.
+    // This ensures bboxes align with how the image is displayed in the browser.
     // Letterbox to 640×640 (top-left placement, matching InsightFace)
     const { data: detBuf } = await img.clone()
+      .rotate()   // apply EXIF auto-rotation (no-op if already upright)
       .resize(640, 640, {
         fit:        'contain',
         background: { r: 0, g: 0, b: 0 },
@@ -273,6 +286,14 @@ class FaceEngine {
     const raw   = decodeOutputs(detOutputs, this._outputNames, invScale);
     const faces = applyNMS(raw);
 
+    if (process.env.DEBUG) {
+      console.log(`[FaceEngine] detect: ${faces.length} face(s) after NMS (${raw.length} raw proposals), image ${W}x${H}`);
+      for (const f of faces) {
+        const [x1, y1, x2, y2] = f.bbox;
+        console.log(`  score=${f.score.toFixed(3)}  bbox=[${Math.round(x1)},${Math.round(y1)},${Math.round(x2)},${Math.round(y2)}]  size=${Math.round(x2-x1)}x${Math.round(y2-y1)}px`);
+      }
+    }
+
     return { faces, imageWidth: W, imageHeight: H };
   }
 
@@ -288,8 +309,9 @@ class FaceEngine {
   async embedFace(imagePath, landmarks, imageWidth, imageHeight) {
     await this.init();
 
-    // Read the source image as raw RGB
+    // Read the source image as raw RGB (apply EXIF rotation so landmarks align)
     const srcBuf = await sharp(imagePath)
+      .rotate()           // apply EXIF auto-rotation
       .ensureAlpha(0)     // strip alpha if present (keeps RGB order)
       .removeAlpha()      // ensure 3-channel
       .raw()

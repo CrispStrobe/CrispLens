@@ -39,9 +39,12 @@ function fileHash(p) {
 async function readImageMeta(p) {
   const meta = await sharp(p).metadata();
   const stat = fs.statSync(p);
+  // Use display-space dimensions (swap for EXIF orientations 5-8 which rotate 90°/270°)
+  let width  = meta.width  || 0;
+  let height = meta.height || 0;
+  if (meta.orientation && meta.orientation >= 5) { [width, height] = [height, width]; }
   return {
-    width:     meta.width  || 0,
-    height:    meta.height || 0,
+    width, height,
     format:    meta.format || path.extname(p).slice(1),
     file_size: stat.size,
   };
@@ -101,7 +104,11 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
     db.prepare('DELETE FROM faces WHERE image_id=?').run(imageId);
   }
 
+  const t0 = Date.now();
   const faces = await engine.processImage(imagePath);
+  const elapsed = Date.now() - t0;
+  console.log(`[processor] ${path.basename(imagePath)}: ${faces.length} face(s) in ${elapsed}ms  (${meta.width}×${meta.height})`);
+
   const recThresh = parseFloat(opts.rec_thresh) || 0.40;
 
   // Load recognition store for person matching
@@ -151,6 +158,9 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
       VALUES (?,?,?,?,?,?)
     `).run(faceId, personId, embBuf, 512, 'w600k_r50', recConf);
 
+    if (process.env.DEBUG) {
+      console.log(`  face ${faceId}: score=${face.score.toFixed(3)}  bbox=[${[x1,y1,x2,y2].map(v=>Math.round(v)).join(',')}]  person=${personId||'?'}  conf=${recConf?.toFixed(2)||'n/a'}`);
+    }
     facesStored++;
   }
 

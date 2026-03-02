@@ -89,13 +89,11 @@
   let showParams = false;
   let reDetecting = false;
 
+  // v4 Node.js backend only supports SCRFD (buffalo_l det_10g.onnx).
+  // 'auto' maps to SCRFD; 'none' skips detection and runs VLM only.
   const DET_MODELS = [
-    { value: 'auto',       label: 'det_model_auto' },
-    { value: 'retinaface', label: 'det_model_retinaface' },
-    { value: 'scrfd',      label: 'det_model_scrfd' },
-    { value: 'yunet',      label: 'det_model_yunet' },
-    { value: 'mediapipe',  label: 'det_model_mediapipe' },
-    { value: 'none',       label: 'det_model_none' },
+    { value: 'auto', label: 'det_model_auto' },
+    { value: 'none', label: 'det_model_none' },
   ];
 
   // When "none (VLM only)" is selected, VLM must run — force the toggle on

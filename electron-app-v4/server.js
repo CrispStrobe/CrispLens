@@ -41,6 +41,10 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();
+  if (process.env.DEBUG && ['POST', 'PUT', 'PATCH'].includes(req.method) && req.body) {
+    const bodyStr = JSON.stringify(req.body);
+    if (bodyStr.length < 512) console.log(`  body: ${bodyStr}`);
+  }
   res.on('finish', () => {
     const ms = Date.now() - start;
     const color = res.statusCode >= 500 ? '\x1b[31m' : res.statusCode >= 400 ? '\x1b[33m' : '\x1b[32m';
@@ -144,7 +148,11 @@ if (require.main === module) {
     console.log(`│  API:  http://localhost:${PORT}/api           │`);
     console.log(`│  UI:   http://localhost:${PORT}/              │`);
     console.log(`│  DB:   ${path.basename(DB_PATH)}${' '.repeat(Math.max(0, 36 - path.basename(DB_PATH).length))}│`);
+    if (process.env.DEBUG) {
+      console.log('│  DEBUG mode: verbose logging enabled        │');
+    }
     console.log('└─────────────────────────────────────────────┘');
+    console.log('  Tip: set DEBUG=1 for verbose request/detection logs');
     console.log('');
   });
 } else {
