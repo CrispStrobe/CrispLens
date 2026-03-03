@@ -11,6 +11,7 @@
     changePassword, fetchTranslations,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
+  import syncManager, { loadSyncSettings, saveSyncSettings } from './SyncManager.js';
   import { fetchStats, fetchPeople, fetchTags, fetchAlbums, fetchServerLogs,
            testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
@@ -215,6 +216,79 @@
     localStorage.setItem(_PRESETS_KEY, JSON.stringify(serverPresets));
   }
 
+  // ── Offline cache / sync ──────────────────────────────────────────────────
+  const _syncCfg        = typeof window !== 'undefined' ? loadSyncSettings() : {};
+  let syncMaxItems      = _syncCfg.maxItems  ?? 500;
+  let syncMaxSizeMb     = _syncCfg.maxSizeMb ?? 500;
+  let syncThumbSize     = _syncCfg.thumbSize ?? 200;
+  let pendingPushCount  = 0;
+  let pushing           = false;
+  let pushMsg           = '';
+  let syncing           = false;
+  let syncProgress      = '';
+  let syncMsg           = '';
+  let syncStats         = null;
+
+  async function loadSyncStats() {
+    syncStats = await syncManager.getStats().catch(() => null);
+    pendingPushCount = syncStats?.pendingPush ?? 0;
+  }
+
+  async function doPush() {
+    if (pushing) return;
+    pushing = true; pushMsg = '';
+    const apiBase = typeof window !== 'undefined'
+      ? (localStorage.getItem('remote_url') || window.location.origin)
+      : '';
+    try {
+      const { pushed, failed } = await syncManager.pushPending(apiBase,
+        ({ done, total }) => { syncProgress = `${$t('offline_pushing')} ${done}/${total}…`; }
+      );
+      pushMsg = `✓ Pushed ${pushed}${failed ? `, ${failed} failed` : ''}`;
+      await loadSyncStats();
+    } catch (e) {
+      pushMsg = '✗ ' + (e.message || String(e));
+    } finally {
+      pushing = false; syncProgress = '';
+    }
+  }
+
+  async function doSync() {
+    if (syncing) return;
+    syncing = true; syncMsg = ''; syncProgress = '';
+    saveSyncSettings({ maxItems: syncMaxItems, maxSizeMb: syncMaxSizeMb, thumbSize: syncThumbSize });
+    const apiBase = typeof window !== 'undefined'
+      ? (localStorage.getItem('remote_url') || window.location.origin)
+      : '';
+    try {
+      await syncManager.sync({
+        apiBase,
+        maxItems: syncMaxItems,
+        maxSizeMb: syncMaxSizeMb,
+        thumbSize: syncThumbSize,
+        onProgress({ phase, done, total, cancelled }) {
+          if (cancelled) { syncProgress = ''; return; }
+          if (phase === 'metadata')   syncProgress = `${$t('offline_phase_metadata')} (${total})`;
+          else if (phase === 'thumbnails') syncProgress = `${$t('offline_phase_thumbnails')} ${done}/${total}`;
+          else if (phase === 'done')  syncProgress = $t('offline_phase_done');
+        },
+      });
+      syncMsg = '✓ ' + $t('offline_phase_done');
+      await loadSyncStats();
+    } catch (e) {
+      syncMsg = '✗ ' + (e.message || String(e));
+    } finally {
+      syncing = false;
+      syncProgress = '';
+    }
+  }
+
+  async function doClearCache() {
+    await syncManager.clear();
+    syncMsg = '✓ ' + $t('offline_cleared');
+    syncStats = null;
+  }
+
   // ── Electron / ingest mode state ──────────────────────────────────────────
   let isElectron = false;
   let processingModeLocal = 'upload_full';   // 'upload_full' | 'local_process'
@@ -280,6 +354,9 @@
     if (isElectron) {
       try { localModelStatus = await window.electronAPI.checkLocalModels(); } catch { /* ignore */ }
     }
+
+    // Load offline cache stats (works regardless of backend state)
+    if (typeof window !== 'undefined') loadSyncStats();
 
     if ($backendReady) {
       try {
@@ -894,6 +971,71 @@
     </div>
     {#if presetMsg}
       <div class="save-msg" class:error-msg={presetMsg.startsWith('✗')}>{presetMsg}</div>
+    {/if}
+  </section>
+
+  <!-- Offline / Local Cache (browser/PWA only) -->
+  <section class="card">
+    <h3>{$t('offline_cache_section')}</h3>
+    <p class="hint" style="margin-bottom:12px;">{$t('offline_cache_hint')}</p>
+
+    <div class="form-grid">
+      <label>{$t('offline_max_images')}</label>
+      <div class="field-row" style="gap:10px;">
+        <input type="range" min="50" max="2000" step="50" bind:value={syncMaxItems} style="flex:1;" />
+        <span style="width:50px;text-align:right;font-variant-numeric:tabular-nums;">{syncMaxItems}</span>
+      </div>
+
+      <label>{$t('offline_max_size_mb')}</label>
+      <div class="field-row" style="gap:10px;">
+        <input type="range" min="50" max="2000" step="50" bind:value={syncMaxSizeMb} style="flex:1;" />
+        <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncMaxSizeMb} MB</span>
+      </div>
+
+      <label>{$t('offline_thumb_size')}</label>
+      <div class="field-row" style="gap:10px;">
+        <input type="range" min="150" max="800" step="50" bind:value={syncThumbSize} style="flex:1;" />
+        <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncThumbSize}px</span>
+      </div>
+    </div>
+
+    {#if syncStats}
+    <div class="sync-stats">
+      <span>{syncStats.count} {$t('offline_stats_images')}</span>
+      <span>{syncStats.sizeMb} {$t('offline_stats_size')}</span>
+      {#if syncStats.embCount > 0}<span>{syncStats.embCount} embeddings</span>{/if}
+      {#if syncStats.lastSync}
+        <span>{$t('offline_last_sync')} {new Date(syncStats.lastSync).toLocaleString()}</span>
+      {:else}
+        <span class="muted">{$t('offline_never_synced')}</span>
+      {/if}
+    </div>
+    {/if}
+
+    {#if syncProgress}
+      <div class="sync-progress">{syncProgress}</div>
+    {/if}
+
+    {#if pendingPushCount > 0}
+      <div class="pending-badge">⬆ {pendingPushCount} {$t('offline_pending_push')}</div>
+    {/if}
+
+    <div class="field-row" style="margin-top:12px;gap:8px;">
+      <button class="primary" on:click={doSync} disabled={syncing||pushing}>
+        {syncing ? $t('offline_syncing') : '↕ ' + $t('offline_sync_btn')}
+      </button>
+      <button on:click={doPush} disabled={syncing||pushing||pendingPushCount===0}
+              title={$t('offline_push_hint')}>
+        {pushing ? $t('offline_pushing') : '⬆ ' + $t('offline_push_btn')}
+      </button>
+      <button on:click={doClearCache} disabled={syncing||pushing}>{$t('offline_clear')}</button>
+    </div>
+
+    {#if syncMsg}
+      <div class="save-msg" style="margin-top:8px;" class:error-msg={syncMsg.startsWith('✗')}>{syncMsg}</div>
+    {/if}
+    {#if pushMsg}
+      <div class="save-msg" style="margin-top:8px;" class:error-msg={pushMsg.startsWith('✗')}>{pushMsg}</div>
     {/if}
   </section>
   {/if}
@@ -1584,6 +1726,10 @@
   .hint code { font-family: monospace; background: #1a1a2e; padding: 1px 4px; border-radius: 3px; color: #8090b0; }
   .offline-notice { background: #1a1a10; border-color: #4a4a20; }
   .offline-notice p { font-size: 11px; color: #808060; line-height: 1.5; }
+  .sync-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #7090c0; }
+  .sync-stats .muted { color: #505070; }
+  .sync-progress { font-size: 12px; color: #6090b8; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .pending-badge { display: inline-block; margin-top: 10px; padding: 4px 10px; background: #2a1e06; border: 1px solid #6a4a10; border-radius: 12px; font-size: 12px; color: #c09030; }
   .url-warning { font-size: 11px; color: #c08040; }
   .url-warning code { font-family: monospace; background: #1a1a10; padding: 1px 4px; border-radius: 3px; }
   .db-path-display {

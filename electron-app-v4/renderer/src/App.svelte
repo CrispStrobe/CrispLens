@@ -1,7 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend } from './stores.js';
-  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings } from './api.js';
+  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages } from './stores.js';
+  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages } from './api.js';
+  import syncManager from './lib/SyncManager.js';
 
   import Sidebar     from './lib/Sidebar.svelte';
   import Toolbar     from './lib/Toolbar.svelte';
@@ -70,8 +71,17 @@
       dbg(`→ 200 OK  model_ready=${h.model_ready}`);
       if (!$backendReady) {
         backendReady.set(true);
+        isOffline.set(false);
         clearInterval(checkTimer);   // stop polling — backend is up
         loadAll();
+        // Auto-push any items processed while offline
+        const apiBase = localStorage.getItem('remote_url') || window.location.origin;
+        syncManager.pushPending(apiBase).then(({ pushed }) => {
+          if (pushed > 0) {
+            console.log(`[reconnect] pushed ${pushed} queued item(s)`);
+            fetchImages().then(imgs => galleryImages.set(imgs)).catch(() => {});
+          }
+        }).catch(() => {});
         // Start polling for model warm-up completion (every 3s until ready)
         if (!h.model_ready) {
           modelPollTimer = setInterval(pollModelReady, 3000);
@@ -86,6 +96,20 @@
         backendReady.set(false);
         modelReady.set(false);
         checkTimer = setInterval(checkBackend, 5000);
+      }
+      // If we have cached data, switch to offline mode so gallery remains usable
+      if (!$isOffline) {
+        const hasCached = await syncManager.hasCachedData().catch(() => false);
+        if (hasCached) {
+          isOffline.set(true);
+          sessionChecked = true;
+          try {
+            const cached = await syncManager.getImages({ limit: 200 });
+            galleryImages.set(cached);
+            const cachedPeople = await syncManager.getPeople();
+            allPeople.set(cachedPeople);
+          } catch { /* ignore */ }
+        }
       }
     }
   }
@@ -209,9 +233,13 @@
   <div class="main-area">
     <Sidebar />
     <div class="content">
+      {#if $isOffline && !$backendReady}
+        <div class="offline-banner">⚡ Offline — showing cached data</div>
+      {/if}
+
       {#if view === 'settings'}
         <SettingsView />
-      {:else if !$backendReady}
+      {:else if !$backendReady && !$isOffline}
         <div class="backend-waiting">
           <div class="spinner"></div>
           <h2>Connecting to CrispLens…</h2>
@@ -268,7 +296,7 @@
             {/if}
           </div>
         </div>
-      {:else if sessionChecked && !$currentUser}
+      {:else if sessionChecked && !$currentUser && !$isOffline}
         <!-- No active session — show full-page login -->
         <LoginScreen on:loggedin={loadAll} />
       {:else if view === 'all'}
@@ -368,6 +396,15 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  .offline-banner {
+    background: #2a2a10;
+    border-bottom: 1px solid #6a6a20;
+    color: #c0c060;
+    font-size: 11px;
+    padding: 4px 16px;
+    text-align: center;
+    flex-shrink: 0;
   }
   .main-area {
     flex: 1;

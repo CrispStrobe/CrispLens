@@ -89,6 +89,29 @@ app.use('/api/settings',   settingsRouter);
 // Misc routes (tags, albums, events, watchfolders, filesystem, duplicates, batch-jobs, etc.)
 app.use('/api',            miscRouter);
 
+// ── Serve ONNX models for client-side inference (browser / mobile) ───────────
+// GET /models/det_10g.onnx  → SCRFD detector  (~16 MB)
+// GET /models/w600k_r50.onnx → ArcFace embedder (~166 MB)
+// The browser FaceEngineWeb.js fetches these once and stores them in Cache API.
+{
+  const { findModelDir } = require('./core/face-engine');
+  const modelDir = findModelDir();
+  if (modelDir) {
+    app.use('/models', (req, res, next) => {
+      // Only serve the two known model files — no directory traversal
+      const allowed = ['det_10g.onnx', 'w600k_r50.onnx', 'face_detection_yunet_2023mar.onnx'];
+      const filename = path.basename(req.path);
+      if (!allowed.includes(filename)) return res.status(404).json({ error: 'Unknown model' });
+      const filePath = path.join(modelDir, filename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Model not found' });
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.sendFile(filePath);
+    });
+    console.log(`[server] ONNX models served at /models/ from: ${modelDir}`);
+  }
+}
+
 // ── Serve Svelte UI ───────────────────────────────────────────────────────────
 
 // Try v4's own renderer/dist first, then v2's renderer/dist

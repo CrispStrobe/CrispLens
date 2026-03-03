@@ -6,6 +6,35 @@ const { requireAuth } = require('../auth');
 
 const router = express.Router();
 
+// ── GET /people/embeddings ────────────────────────────────────────────────────
+// Returns one representative 512D embedding per known person (base64-encoded).
+// Used by clients to build a local search index for offline face recognition.
+
+router.get('/embeddings', requireAuth, (req, res) => {
+  const db = getDb();
+  // For each person, pick the face with the highest detection_confidence
+  const rows = db.prepare(`
+    SELECT p.id, p.name, fe.embedding_vector, fe.embedding_dimension
+    FROM people p
+    JOIN face_embeddings fe ON fe.id = (
+      SELECT fe2.id FROM face_embeddings fe2
+      JOIN faces f2 ON fe2.face_id = f2.id
+      WHERE fe2.person_id = p.id AND f2.image_id != -1
+        AND fe2.embedding_vector IS NOT NULL
+      ORDER BY f2.detection_confidence DESC
+      LIMIT 1
+    )
+    WHERE fe.embedding_vector IS NOT NULL
+    ORDER BY p.name ASC
+  `).all();
+  res.json(rows.map(r => ({
+    id:   r.id,
+    name: r.name,
+    dim:  r.embedding_dimension ?? 512,
+    embedding: Buffer.from(r.embedding_vector).toString('base64'),
+  })));
+});
+
 // ── GET /people ───────────────────────────────────────────────────────────────
 
 router.get('/', requireAuth, (req, res) => {

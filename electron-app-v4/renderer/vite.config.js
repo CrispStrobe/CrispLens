@@ -1,6 +1,7 @@
-import { defineConfig } from 'vite';
-import { svelte }       from '@sveltejs/vite-plugin-svelte';
-import { VitePWA }      from 'vite-plugin-pwa';
+import { defineConfig }   from 'vite';
+import { svelte }         from '@sveltejs/vite-plugin-svelte';
+import { VitePWA }        from 'vite-plugin-pwa';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
   plugins: [
@@ -11,9 +12,20 @@ export default defineConfig({
         handler(warning);
       },
     }),
+
+    // Copy onnxruntime-web WASM files so they're served at /wasm/*.wasm
+    // Required for client-side ONNX inference (mobile / PWA local inference)
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'node_modules/onnxruntime-web/dist/ort-wasm*.wasm',
+          dest: 'wasm',
+        },
+      ],
+    }),
+
     VitePWA({
       registerType: 'autoUpdate',
-      // Include the icon files as additional static assets
       includeAssets: ['favicon.png', 'icons/*.png'],
       manifest: {
         name: 'CrispLens',
@@ -38,35 +50,59 @@ export default defineConfig({
         categories: ['photography', 'productivity', 'utilities'],
       },
       workbox: {
-        // Precache all JS/CSS/HTML/font/image assets
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
-        // SPA fallback — all navigation routes serve index.html
         navigateFallback: 'index.html',
-        // Never intercept /api/ requests with the SW (always go to network)
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/models\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
+          // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
           {
-            // API calls: always network, never cache
-            urlPattern: /^\/api\//,
-            handler: 'NetworkOnly',
+            urlPattern: /\/api\/images\/\d+\/thumbnail/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'crisplens-thumbnails',
+              expiration: { maxEntries: 5000, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            },
+          },
+          { urlPattern: /^\/api\//, handler: 'NetworkOnly' },
+          // ONNX models: cache-first after first download (very large, rarely change)
+          {
+            urlPattern: /^\/models\//,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'crisplens-onnx-models',
+              expiration: { maxEntries: 10 },
+            },
           },
         ],
       },
     }),
   ],
+
+  // onnxruntime-web ships pre-built ESM + WASM — exclude from Vite's optimizer
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
+
+  // Treat .wasm files as assets so Rollup doesn't try to parse them
+  assetsInclude: ['**/*.wasm'],
+
   server: {
     port: 5173,
     proxy: {
       '/api': {
         target: `http://127.0.0.1:${process.env.CRISP_V4_PORT || 7861}`,
         changeOrigin: true,
-        configure: (proxy) => {
-          proxy.on('error', () => {});
-        },
+        configure: (proxy) => { proxy.on('error', () => {}); },
+      },
+      '/models': {
+        target: `http://127.0.0.1:${process.env.CRISP_V4_PORT || 7861}`,
+        changeOrigin: true,
+        configure: (proxy) => { proxy.on('error', () => {}); },
       },
     },
   },
+
   build: {
     outDir: 'dist',
     emptyOutDir: true,

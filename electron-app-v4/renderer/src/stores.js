@@ -8,6 +8,8 @@ export const selectedItems  = writable(new Set()); // Set of selected image IDs
 export const lastClickedId  = writable(null);  // for shift-click selection
 export const galleryLoading = writable(false);
 export const backendReady   = writable(false);
+export const isOffline      = writable(false);   // true when server unreachable but cached data available
+export const syncStatus     = writable(null);    // { syncing, phase, done, total } | null
 
 // ── Filters & sort ──────────────────────────────────────────────────────────
 export const filters = writable({
@@ -442,6 +444,9 @@ const EN = {
   // ProcessView — mode badges, controls, drop zone, server folder, detection settings
   pv_mode_local:             'Local process',
   pv_mode_upload:            'Upload full',
+  pv_mode_web_infer:         'Browser inference',
+  pv_web_local_infer:        'Local inference (browser/mobile)',
+  pv_web_local_infer_hint:   'Detect & embed faces locally using ONNX — only vectors sent to server. First run downloads models (~180 MB, cached after).',
   pv_clear_done:             'Clear done',
   pv_clear_all:              'Clear all',
   pv_local_base_label:       'Local base folder (optional):',
@@ -526,6 +531,30 @@ const EN = {
   bj_retry:                  'Retry failed',
   bj_persistent_hint:        'Create a persistent server-side job for these files',
   bj_source_selection:       'Manual selection',
+
+  // Offline / local cache (browser/PWA sync)
+  offline_cache_section:     'Offline Cache',
+  offline_cache_hint:        'Download the most recent images and thumbnails for offline browsing. The service worker caches thumbnails automatically as you browse; use Sync to prefetch a larger set.',
+  offline_max_images:        'Max images to cache',
+  offline_max_size_mb:       'Max cache size (MB)',
+  offline_sync_btn:          'Sync now',
+  offline_syncing:           'Syncing…',
+  offline_clear:             'Clear cache',
+  offline_stats_images:      'images cached',
+  offline_stats_size:        'MB used',
+  offline_last_sync:         'Last sync:',
+  offline_never_synced:      'Not yet synced',
+  offline_phase_metadata:    'Fetching metadata…',
+  offline_phase_thumbnails:  'Caching thumbnails',
+  offline_phase_done:        'Sync complete',
+  offline_cleared:           'Cache cleared',
+  offline_banner:            '⚡ Offline — showing cached data',
+  offline_thumb_size:        'Thumbnail size',
+  offline_pending_push:      'item(s) queued to push',
+  offline_push_btn:          'Push now',
+  offline_push_hint:         'Upload locally-processed images to the server',
+  offline_pushing:           'Pushing…',
+  pv_queued_offline:         'Queued — will sync when online',
 };
 
 export const TRANSLATIONS = {
@@ -923,6 +952,9 @@ export const TRANSLATIONS = {
     // ProcessView — mode badges, controls, drop zone, server folder, detection settings
     pv_mode_local:             'Lokal',
     pv_mode_upload:            'Hochladen',
+    pv_mode_web_infer:         'Browser-Inferenz',
+    pv_web_local_infer:        'Lokale Inferenz (Browser/Mobil)',
+    pv_web_local_infer_hint:   'Erkennung & Einbettung lokal via ONNX — nur Vektoren werden gesendet. Beim ersten Start werden Modelle heruntergeladen (~180 MB, danach gecacht).',
     pv_clear_done:             'Fertige entfernen',
     pv_clear_all:              'Alle entfernen',
     pv_local_base_label:       'Lokaler Basisordner (optional):',
@@ -1005,6 +1037,30 @@ export const TRANSLATIONS = {
     bj_retry:                  'Fehlgeschlagene erneut versuchen',
     bj_persistent_hint:        'Einen dauerhaften serverseitigen Auftrag für diese Dateien erstellen',
     bj_source_selection:       'Manuelle Auswahl',
+
+    // Offline / local cache
+    offline_cache_section:     'Offline-Cache',
+    offline_cache_hint:        'Lade die neuesten Bilder und Thumbnails für die Offline-Nutzung herunter.',
+    offline_max_images:        'Max. gecachte Bilder',
+    offline_max_size_mb:       'Max. Cache-Größe (MB)',
+    offline_sync_btn:          'Jetzt synchronisieren',
+    offline_syncing:           'Synchronisiere…',
+    offline_clear:             'Cache leeren',
+    offline_stats_images:      'Bilder gecacht',
+    offline_stats_size:        'MB belegt',
+    offline_last_sync:         'Letzte Synchronisierung:',
+    offline_never_synced:      'Noch nicht synchronisiert',
+    offline_phase_metadata:    'Metadaten laden…',
+    offline_phase_thumbnails:  'Thumbnails cachen',
+    offline_phase_done:        'Synchronisierung abgeschlossen',
+    offline_cleared:           'Cache geleert',
+    offline_banner:            '⚡ Offline — zeige gecachte Daten',
+    offline_thumb_size:        'Vorschaugröße',
+    offline_pending_push:      'Element(e) zum Hochladen in Warteschlange',
+    offline_push_btn:          'Jetzt hochladen',
+    offline_push_hint:         'Lokal verarbeitete Bilder auf den Server hochladen',
+    offline_pushing:           'Hochladen…',
+    pv_queued_offline:         'In Warteschlange — wird synchronisiert wenn online',
   },
 };
 

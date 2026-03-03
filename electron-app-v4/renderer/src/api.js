@@ -2,7 +2,9 @@
  * api.js — Typed fetch wrappers for all FastAPI endpoints.
  */
 
-// On Desktop, we use relative paths (/api). 
+import syncManager from './lib/SyncManager.js';
+
+// On Desktop, we use relative paths (/api).
 // On Mobile, we need the full URL of the remote VPS.
 let BASE = '/api';
 
@@ -39,9 +41,17 @@ const del  = (path)        => _fetch('DELETE', path);
 
 export async function fetchImages({ person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='', sort='newest', limit=200, offset=0, unidentified=false, album=0 } = {}) {
   const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom, date_to: dateTo, sort, limit, offset, unidentified, album });
-  const data = await get(`/images?${q}`);
-  // Backend returns {images:[...], total:N} — unwrap to plain array
-  return Array.isArray(data) ? data : (data.images ?? []);
+  try {
+    const data = await get(`/images?${q}`);
+    // Backend returns {images:[...], total:N} — unwrap to plain array
+    return Array.isArray(data) ? data : (data.images ?? []);
+  } catch (e) {
+    // Network error → fall back to IndexedDB cache
+    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+      return syncManager.getImages({ sort, limit, offset, person, tag });
+    }
+    throw e;
+  }
 }
 
 export function fetchImage(id) { return get(`/images/${id}`); }
@@ -95,7 +105,16 @@ export function addManualFace(imageId, bbox, rec_thresh = null) {
 
 // ── People ────────────────────────────────────────────────────────────────────
 
-export function fetchPeople()        { return get('/people'); }
+export async function fetchPeople() {
+  try {
+    return await get('/people');
+  } catch (e) {
+    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+      return syncManager.getPeople();
+    }
+    throw e;
+  }
+}
 export function fetchPerson(id)      { return get(`/people/${id}`); }
 export function renamePerson(id, name) { return put(`/people/${id}`, { name }); }
 export function mergePeople(source_id, target_id) { return post('/people/merge', { source_id, target_id }); }

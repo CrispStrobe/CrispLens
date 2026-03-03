@@ -20,7 +20,14 @@
     "proto": "node proto-test.js",
     "self-test": "node proto-selfcontained.js",
     "self-test:db": "node proto-selfcontained.js ../face_recognition.db",
-    "download-models": "node core/model-downloader.js"
+    "download-models": "node core/model-downloader.js",
+    "mobile:setup:ios": "cd renderer && npm install && npx cap add ios",
+    "mobile:setup:android": "cd renderer && npm install && npx cap add android",
+    "mobile:sync": "npm run build:ui && cd renderer && npx cap sync",
+    "mobile:open:ios": "cd renderer && npx cap open ios",
+    "mobile:open:android": "cd renderer && npx cap open android",
+    "mobile:run:ios": "npm run build:ui && cd renderer && npx cap run ios",
+    "mobile:run:android": "npm run build:ui && cd renderer && npx cap run android"
   },
   "dependencies": {
     "adm-zip": "^0.5.10",

@@ -3,16 +3,35 @@
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView, processingBackend } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
+  import syncManager from './SyncManager.js';
 
   let serverPickerOpen = false;
   const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
+  // Capacitor/mobile: window.Capacitor is injected by the Capacitor runtime
+  const isMobile = typeof window !== 'undefined' && !!window.Capacitor;
+
+  // ── Web / mobile local inference ───────────────────────────────────────────
+  // When enabled, files are processed locally (onnxruntime-web + Canvas) and
+  // only 512D vectors + thumbnail are posted to the server (import-processed).
+  // Works in any browser/PWA — especially useful on mobile where the user can
+  // take photos and have faces recognised without uploading full images.
+  let webLocalInfer = false;   // toggle; persists across the session
+  let webInferMsg   = '';      // per-item progress message from FaceEngineWeb
+  let _engineWebModule = null; // lazy import
+
+  async function _getWebEngine() {
+    if (!_engineWebModule) {
+      _engineWebModule = await import('./FaceEngineWeb.js');
+    }
+    return _engineWebModule.faceEngineWeb;
+  }
 
   const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm']);
   function isImage(name) { return IMAGE_EXTS.has(name.slice(name.lastIndexOf('.')).toLowerCase()); }
 
   // ── Queue ──────────────────────────────────────────────────────────────────
-  // Each item: { id, path, name, file, status: 'pending'|'processing'|'done'|'error',
-  //              imageId, faces, people, sceneType, description, error }
+  // Each item: { id, path, name, file, status: 'pending'|'processing'|'done'|'error'|'queued',
+  //              imageId, faces, people, sceneType, description, error, msg }
   // `file` is a browser File object (browser mode) or null (Electron mode)
   let queue = [];
   let nextId = 0;
@@ -263,6 +282,7 @@
   let totalCount = 0;
   let doneCount = 0;
   let errorCount = 0;
+  let queuedCount = 0;       // queued offline; will push on reconnect
   let skippedCount = 0;      // same-user duplicate (already uploaded by this user)
   let sharedDupCount = 0;    // cross-user shared duplicate (another user uploaded the same content)
   let finished = false;
@@ -274,12 +294,74 @@
 
   $: pendingItems    = queue.filter(q => q.status === 'pending');
   $: processingItem  = queue.find(q => q.status === 'processing');
-  $: doneItems       = queue.filter(q => q.status === 'done' || q.status === 'error' || q.status === 'skipped');
+  $: doneItems       = queue.filter(q => q.status === 'done' || q.status === 'error' || q.status === 'skipped' || q.status === 'queued');
   $: progressPct     = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0;
 
   function startProcessing() {
+    if (webLocalInfer && !inElectron) { startWebLocalInfer(); return; }
     if ($processingMode === 'local_process') { startLocalProcess(); return; }
     startUploadFull();
+  }
+
+  // ── Web local inference — onnxruntime-web + Canvas → import-processed ────
+  async function startWebLocalInfer() {
+    const pending = queue.filter(q => q.status === 'pending');
+    if (!pending.length) return;
+    running = true; finished = false; cancelled = false;
+    errorCount = 0; queuedCount = 0; doneCount = 0; totalCount = pending.length;
+
+    let engine;
+    try {
+      engine = await _getWebEngine();
+      // Point engine at the currently connected API server so it can download models
+      const remoteBase = localStorage.getItem('remote_url') || window.location.origin;
+      engine.setModelBaseUrl(remoteBase + '/models');
+    } catch (e) {
+      errorCount = pending.length;
+      queue = queue.map(q => q.status === 'pending' ? { ...q, status: 'error', error: 'Engine load failed: ' + e.message } : q);
+      running = false; finished = true;
+      return;
+    }
+
+    for (const item of pending) {
+      if (cancelled) break;
+      if (!item.file) {
+        errorCount++;
+        queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'No file object — web local inference requires direct file selection' } : q);
+        doneCount++;
+        continue;
+      }
+      queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
+      try {
+        const faceData = await engine.processFile(item.file, {
+          det_thresh:    detParams.det_thresh,
+          min_face_size: detParams.min_face_size,
+          det_model:     detParams.det_model,
+          visibility,
+          onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
+        });
+        const resp = await importProcessed(faceData);
+        queue = queue.map(q => q.id === item.id
+          ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? faceData.faces.length }
+          : q);
+      } catch (e) {
+        if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+          // Offline — queue payload locally; push to server on next reconnect
+          await syncManager.queueForPush(faceData).catch(() => {});
+          queue = queue.map(q => q.id === item.id
+            ? { ...q, status: 'queued', msg: $t('pv_queued_offline') }
+            : q);
+          queuedCount++;
+        } else {
+          errorCount++;
+          queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: e.message } : q);
+        }
+      }
+      doneCount++;
+    }
+    webInferMsg = '';
+    running = false; finished = true;
+    refreshGlobalData();
   }
 
   // ── Mode B: upload_full — Electron reads file, VPS processes ──────────────
@@ -548,7 +630,9 @@
   <div class="view-header">
     <h2>
       {$t('tab_batch')}
-      {#if $processingMode === 'local_process'}
+      {#if !inElectron && webLocalInfer}
+        <span class="mode-badge mobile">🔬 {$t('pv_mode_web_infer')}</span>
+      {:else if $processingMode === 'local_process'}
         <span class="mode-badge local">⚡ {$t('pv_mode_local')}</span>
       {:else}
         <span class="mode-badge upload">⬆ {$t('pv_mode_upload')}</span>
@@ -601,7 +685,20 @@
       <button on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
       <button on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
     </div>
+    {#if !inElectron}
+    <!-- Web / mobile local inference toggle -->
+    <div class="web-infer-row">
+      <label class="web-infer-label">
+        <input type="checkbox" bind:checked={webLocalInfer} />
+        🔬 {$t('pv_web_local_infer')}
+      </label>
+      <span class="hint" style="font-size:11px;margin:0;">{$t('pv_web_local_infer_hint')}</span>
+    </div>
+    {/if}
   </div>
+  {#if webInferMsg}
+    <div class="web-infer-progress">{webInferMsg}</div>
+  {/if}
 
   <!-- Queue controls for local files -->
   {#if queue.length > 0}
@@ -812,6 +909,7 @@
       <div class="progress-label">
         {doneCount} / {totalCount}
         {#if errorCount > 0}<span class="err-count"> · {errorCount} {$t('failed')}</span>{/if}
+        {#if queuedCount > 0}<span class="queued-count"> · {queuedCount} {$t('offline_pending_push')}</span>{/if}
         {#if skippedCount > 0}<span class="skip-count"> · {skippedCount} {$t('pv_already_uploaded')}</span>{/if}
         {#if sharedDupCount > 0}<span class="shared-count"> · {sharedDupCount} {$t('pv_shared_by_others')}</span>{/if}
         {#if finished} · {$t('batch_complete')} ✓{/if}
@@ -825,7 +923,7 @@
   {#if queue.length > 0}
     <div class="results-list">
       {#each queue as item (item.id)}
-        <div class="result-row" class:is-error={item.status === 'error'} class:is-done={item.status === 'done'}>
+        <div class="result-row" class:is-error={item.status === 'error'} class:is-done={item.status === 'done'} class:is-queued={item.status === 'queued'}>
           <!-- Thumbnail or status icon -->
           <div class="thumb-cell">
             {#if item.status === 'done' && item.imageId}
@@ -834,6 +932,8 @@
               <div class="thumb-placeholder spin">⏳</div>
             {:else if item.status === 'error'}
               <div class="thumb-placeholder err">✗</div>
+            {:else if item.status === 'queued'}
+              <div class="thumb-placeholder queued">⬆</div>
             {:else}
               <div class="thumb-placeholder">🖼</div>
             {/if}
@@ -862,6 +962,7 @@
                 {/if}
               {/if}
               {#if item.status === 'error'}<span class="badge error">{$t('pv_badge_error')}</span>{/if}
+              {#if item.status === 'queued'}<span class="badge queued">⬆ {$t('offline_push_btn')}</span>{/if}
             </div>
             <div class="line2">
               {#if item.status === 'done' && item.description}
@@ -870,6 +971,8 @@
                 <span class="desc muted">{item.sceneType}</span>
               {:else if item.status === 'error'}
                 <span class="desc err">{item.error}</span>
+              {:else if item.status === 'queued'}
+                <span class="desc muted">{item.msg}</span>
               {:else if item.status === 'pending' || item.status === 'processing'}
                 <span class="desc muted">{item.path}</span>
               {/if}
@@ -905,8 +1008,13 @@
   h2 { font-size: 1rem; color: #c0c8e0; margin: 0; display: flex; align-items: center; gap: 8px; }
   .header-actions { display: flex; gap: 6px; }
   .mode-badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 500; }
-.mode-badge.upload { background: #2a2010; color: #c09040; }
+  .mode-badge.upload { background: #2a2010; color: #c09040; }
   .mode-badge.local  { background: #1a2a1a; color: #60c060; }
+  .mode-badge.mobile { background: #1a1a3a; color: #8080e0; }
+  .web-infer-row { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; align-items: flex-start; }
+  .web-infer-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; color: #a0b0d0; }
+  .web-infer-label input[type=checkbox] { cursor: pointer; }
+  .web-infer-progress { font-size: 12px; color: #8080c0; padding: 4px 8px; background: #12122a; border-radius: 4px; margin-top: 4px; }
   .server-path-input {
     display: flex; flex-direction: column; gap: 8px;
     background: #141422; border: 1px solid #2a2a3a; border-radius: 8px;
@@ -1043,6 +1151,7 @@
   }
   .progress-label .pct { margin-left: auto; color: #5070a0; }
   .err-count    { color: #d07070; }
+  .queued-count { color: #d0a030; }
   .skip-count   { color: #8090b0; }
   .shared-count { color: #b09040; }
 
@@ -1068,8 +1177,9 @@
     transition: background 0.1s;
   }
   .result-row:hover { background: #1e1e30; }
-  .result-row.is-done  { border-left: 2px solid #3a6a3a; }
-  .result-row.is-error { border-left: 2px solid #6a3a3a; }
+  .result-row.is-done   { border-left: 2px solid #3a6a3a; }
+  .result-row.is-error  { border-left: 2px solid #6a3a3a; }
+  .result-row.is-queued { border-left: 2px solid #7a5a1a; }
 
   /* Thumbnail cell */
   .thumb-cell {
@@ -1088,8 +1198,9 @@
     font-size: 18px;
     color: #404060;
   }
-  .thumb-placeholder.spin { animation: pulse 0.8s infinite alternate; }
-  .thumb-placeholder.err  { color: #904040; }
+  .thumb-placeholder.spin   { animation: pulse 0.8s infinite alternate; }
+  .thumb-placeholder.err    { color: #904040; }
+  .thumb-placeholder.queued { color: #a07020; }
   @keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
 
   /* Info cell */
@@ -1129,6 +1240,7 @@
   .badge.processing { background: #1e2e50; color: #6090d0; }
   .badge.done       { background: #1a3a1a; color: #50b050; }
   .badge.error      { background: #3a1a1a; color: #c05050; }
+  .badge.queued     { background: #3a2a0a; color: #c09030; }
   .badge.faces      { background: #1e2a40; color: #6090c0; }
   .badge.people     { background: #2a1e3a; color: #9070c0; }
   .badge.skipped    { background: #252535; color: #707090; }

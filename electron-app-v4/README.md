@@ -49,17 +49,61 @@ Deploy `renderer/dist/` to any static host and run `node server.js` on the serve
 
 ### 3. iOS & Android (Capacitor)
 
+**From the top-level `electron-app-v4/` directory:**
+
+```bash
+# First-time setup (creates ios/ or android/ native project)
+npm run mobile:setup:ios
+npm run mobile:setup:android
+
+# Build + sync (rebuild JS → copy into native project)
+npm run mobile:sync
+
+# Open in Xcode / Android Studio
+npm run mobile:open:ios
+npm run mobile:open:android
+
+# Build + launch on device/simulator
+npm run mobile:run:ios
+npm run mobile:run:android
+```
+
+**Or from `renderer/` directly:**
+
 ```bash
 cd electron-app-v4/renderer
 npm install
-npx cap add ios         # sets up Xcode project
-npx cap add android     # sets up Android Studio project
-npm run build           # build web assets
-npx cap sync            # copy dist/ into native projects
-
-CAPACITOR_SERVER_URL=http://192.168.1.x:7861 npx cap run ios
-CAPACITOR_SERVER_URL=http://192.168.1.x:7861 npx cap run android
+npx cap add ios         # sets up Xcode project in renderer/ios/
+npx cap add android     # sets up Android Studio project in renderer/android/
+npm run build && npx cap sync   # build + copy dist/ into native projects
+npx cap run ios
+npx cap run android
 ```
+
+**Point the app at a remote server:**
+
+The mobile app is a thin shell — it connects to a CrispLens server for all API calls.
+Configure the server URL in Settings → API / Database Server, or at build time:
+
+```bash
+CAPACITOR_SERVER_URL=http://192.168.1.x:7861 npx cap run ios
+```
+
+**Local inference on device (privacy-first):**
+
+Enable "Local inference (browser/mobile)" in the Process view drop zone. This uses
+`onnxruntime-web` (WASM) + Canvas API to run the full SCRFD detection + ArcFace embedding
+pipeline on-device. Only 512D vectors + thumbnail are sent to the server — full images
+never leave the device. Models (~180 MB) are downloaded once from the configured server
+and cached via the browser Cache API.
+
+| Library | Role | Mobile backend |
+|---|---|---|
+| `onnxruntime-web` | SCRFD detection + ArcFace embedding | WASM (single-threaded, no COOP/COEP needed) |
+| `@mediapipe/tasks-vision` | Alternative detector (`det_model=mediapipe`) | WebGL / GPU-accelerated |
+| `voy-search` | Optional HNSW index for offline recognition | WASM |
+| `@capacitor/camera` | Native camera access | Capacitor plugin |
+| `@capacitor/filesystem` | Local file access | Capacitor plugin |
 
 ---
 
