@@ -14,11 +14,10 @@ const path = require('path');
 const fs   = require('fs');
 
 class RemoteV2Client {
-  constructor(baseUrl, username, password, mode = 'shared_path') {
+  constructor(baseUrl, username, password) {
     this.baseUrl  = baseUrl.replace(/\/$/, '');
     this.username = username;
     this.password = password;
-    this.mode     = mode;     // 'shared_path' | 'upload_bytes'
     this._cookie  = null;
   }
 
@@ -94,17 +93,12 @@ class RemoteV2Client {
   // ── High-level methods ────────────────────────────────────────────────────────
 
   /**
-   * Process a single image on the remote server.
-   * mode='shared_path': remote reads the file from filepath.
-   * mode='upload_bytes': sends the file bytes as multipart.
+   * Process a single image on the remote server by uploading its bytes.
+   * Always uses upload_bytes — no shared filesystem assumption.
    */
   async processFilepath(filepath, opts = {}) {
-    if (this.mode === 'upload_bytes') {
-      const buf = fs.readFileSync(filepath);
-      return this.processBytes(buf, path.basename(filepath), opts);
-    }
-    // shared_path: POST /api/process/single with { filepath, ...opts }
-    return this._post('/api/process/single', { filepath, ...opts });
+    const buf = fs.readFileSync(filepath);
+    return this.processBytes(buf, path.basename(filepath), opts);
   }
 
   /**
@@ -123,6 +117,15 @@ class RemoteV2Client {
       throw new Error(`processBytes → ${res.status}: ${text}`);
     }
     return res.json();
+  }
+
+  /**
+   * POST pre-computed face data (512D embeddings + thumbnail) to the remote server.
+   * Remote server skips detection — runs only FAISS person-matching and stores to DB.
+   * data format matches local_processor.py / FaceEngine.extractFaceData() output.
+   */
+  async importProcessed(data) {
+    return this._post('/api/ingest/import-processed', data);
   }
 
   /**
@@ -201,11 +204,10 @@ function getRemoteClient(flatSettings) {
   const url  = (flatSettings.remote_v2_url  || '').trim();
   const user = (flatSettings.remote_v2_user || '').trim();
   const pass = (flatSettings.remote_v2_pass || '').trim();
-  const mode = (flatSettings.remote_v2_mode || 'shared_path');
-  const key  = `${url}|${user}|${mode}`;
+  const key  = `${url}|${user}`;
   if (!url) throw new Error('remote_v2_url is not configured');
   if (key !== _clientKey) {
-    _client    = new RemoteV2Client(url, user, pass, mode);
+    _client    = new RemoteV2Client(url, user, pass);
     _clientKey = key;
   }
   return _client;

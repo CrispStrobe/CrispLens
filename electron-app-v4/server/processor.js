@@ -94,12 +94,29 @@ function upsertImage(db, filepath, meta, opts = {}) {
 // ── Process one image and write faces+embeddings to DB ───────────────────────
 
 async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
+  const detOpts = {
+    det_model:     opts.det_model             || 'auto',
+    det_thresh:    parseFloat(opts.det_thresh) || 0.5,
+    min_face_size: parseInt(opts.min_face_size)|| 0,
+    max_size:      parseInt(opts.max_size)     || 0,
+    visibility:    opts.visibility             || 'shared',
+  };
+
   // ── Remote v2 routing ──────────────────────────────────────────────────────
   try {
     const { loadFlat } = require('./routes/settings');
     const flat = loadFlat();
     if ((flat.processing_backend || 'local') === 'remote_v2') {
       const client = getRemoteClient(flat);
+      const mode   = flat.remote_v2_mode || 'upload_bytes';
+      if (mode === 'local_infer') {
+        // Run ONNX detection+embedding here; send only 512D vectors to remote DB
+        const engine   = await getEngine();
+        const faceData = await engine.extractFaceData(imagePath, detOpts);
+        console.log(`[processor/local_infer] ${path.basename(imagePath)}: ${faceData.faces.length} face(s) → POST import-processed`);
+        return await client.importProcessed(faceData);
+      }
+      // upload_bytes: send full image to remote server for inference
       return await client.processFilepath(imagePath, opts);
     }
   } catch (err) {
@@ -118,13 +135,6 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
   if (opts.force) {
     db.prepare('DELETE FROM faces WHERE image_id=?').run(imageId);
   }
-
-  const detOpts = {
-    det_model:    opts.det_model    || 'auto',
-    det_thresh:   parseFloat(opts.det_thresh)    || 0.5,
-    min_face_size: parseInt(opts.min_face_size)  || 0,
-    max_size:     parseInt(opts.max_size)         || 0,
-  };
 
   const t0 = Date.now();
   const faces = await engine.processImage(imagePath, detOpts);

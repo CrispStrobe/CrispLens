@@ -22,12 +22,12 @@ const DEFAULTS = {
   upload_max_dimension:  0,
   copy_exempt_paths:     [],
   fix_db_path:           '',
-  // Remote processing backend
-  processing_backend:  'local',  // 'local' | 'remote_v2'
-  remote_v2_url:       '',       // e.g. 'http://nas:7861'
+  // Remote processing backend (only used when browser API = local v4)
+  processing_backend:  'local',          // 'local' | 'remote_v2'
+  remote_v2_url:       '',               // e.g. 'https://img.akademie-rs.de'
   remote_v2_user:      '',
   remote_v2_pass:      '',
-  remote_v2_mode:      'shared_path', // 'shared_path' | 'upload_bytes'
+  remote_v2_mode:      'upload_bytes',   // 'upload_bytes' | 'local_infer'
 };
 
 // ── Load flat settings from DB (merged with DEFAULTS) ─────────────────────────
@@ -83,8 +83,8 @@ function flatToNested(f) {
       remote_v2: {
         url:  f.remote_v2_url,
         user: f.remote_v2_user,
-        // Password intentionally omitted from GET response
         mode: f.remote_v2_mode,
+        // Password intentionally omitted from GET response
       },
     },
   };
@@ -372,6 +372,24 @@ router.get('/processing-status', requireAuth, async (req, res) => {
 router.get('/processing-backend', requireAuth, (req, res) => {
   const f = loadFlat();
   res.json({ backend: f.processing_backend || 'local' });
+});
+
+// ── POST /settings/test-remote-v2 ────────────────────────────────────────────
+// Tests a remote v2 connection using params from the request body (not DB).
+// This allows testing before saving settings.
+
+router.post('/test-remote-v2', requireAuth, async (req, res) => {
+  const { url, user, pass } = req.body || {};
+  if (!url) return res.json({ ok: false, error: 'URL required' });
+  try {
+    const { RemoteV2Client } = require('../../core/remote-v2-client');
+    const client = new RemoteV2Client(url, user || '', pass || '');
+    await client.ensureAuth();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[test-remote-v2]', err.message);
+    res.json({ ok: false, error: err.message });
+  }
 });
 
 module.exports = router;

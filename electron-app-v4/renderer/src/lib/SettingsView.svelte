@@ -52,11 +52,11 @@
   const LANGUAGES  = [{ code: 'en', label: 'English' }, { code: 'de', label: 'Deutsch' }];
 
   // ── Remote processing backend ─────────────────────────────────────────────
-  let procBackend    = 'local';  // 'local' | 'remote_v2'
+  let procBackend    = 'local';         // 'local' | 'remote_v2'
   let remoteV2Url    = '';
   let remoteV2User   = '';
   let remoteV2Pass   = '';
-  let remoteV2Mode   = 'shared_path';  // 'shared_path' | 'upload_bytes'
+  let remoteV2Mode   = 'upload_bytes';  // 'upload_bytes' | 'local_infer'
   let remoteV2TestMsg = '';
   let remoteV2Testing = false;
   const DET_MODELS = [
@@ -88,10 +88,10 @@
         vlmModel    = c?.vlm?.model ?? '';
         detModel    = c?.face_recognition?.insightface?.det_model ?? 'auto';
         // Remote backend settings
-        procBackend  = c?.processing?.backend    ?? 'local';
+        procBackend  = c?.processing?.backend         ?? 'local';
         remoteV2Url  = c?.processing?.remote_v2?.url  ?? '';
         remoteV2User = c?.processing?.remote_v2?.user ?? '';
-        remoteV2Mode = c?.processing?.remote_v2?.mode ?? 'shared_path';
+        remoteV2Mode = c?.processing?.remote_v2?.mode ?? 'upload_bytes';
         processingBackend.set(procBackend);
       }
     }).catch(() => {});
@@ -169,6 +169,27 @@
   let connectionMode = 'local';
   let remoteUrl = '';
   let localPort = 7865;
+
+  // ── PWA / Browser API server ──────────────────────────────────────────────
+  // App.svelte reads 'remote_url' from localStorage — we must use the same key.
+  let pwaServerUrl  = typeof window !== 'undefined'
+    ? (localStorage.getItem('remote_url') || window.location.origin)
+    : '';
+  let pwaConnectMsg = '';
+
+  function doPwaConnect() {
+    const url = pwaServerUrl.trim().replace(/\/$/, '');
+    if (!url) { pwaConnectMsg = '✗ Enter a server URL'; return; }
+    if (!url.startsWith('http')) { pwaConnectMsg = '✗ URL must start with https:// or http://'; return; }
+    // Same key App.svelte reads on startup
+    if (url === window.location.origin) {
+      localStorage.removeItem('remote_url');  // same-origin = no stored URL
+    } else {
+      localStorage.setItem('remote_url', url);
+    }
+    pwaConnectMsg = '✓ Saved — reloading…';
+    setTimeout(() => { window.location.reload(); }, 800);
+  }
 
   // ── Electron / ingest mode state ──────────────────────────────────────────
   let isElectron = false;
@@ -251,10 +272,10 @@
           vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
           vlmModel    = cfg?.vlm?.model ?? '';
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
-          procBackend  = cfg?.processing?.backend    ?? 'local';
+          procBackend  = cfg?.processing?.backend         ?? 'local';
           remoteV2Url  = cfg?.processing?.remote_v2?.url  ?? '';
           remoteV2User = cfg?.processing?.remote_v2?.user ?? '';
-          remoteV2Mode = cfg?.processing?.remote_v2?.mode ?? 'shared_path';
+          remoteV2Mode = cfg?.processing?.remote_v2?.mode ?? 'upload_bytes';
           processingBackend.set(procBackend);
         }
       } catch (e) { saveMsg = '⚠ Could not load server settings: ' + e.message; }
@@ -328,8 +349,8 @@
             processing_backend: procBackend,
             remote_v2_url:      remoteV2Url.trim(),
             remote_v2_user:     remoteV2User.trim(),
-            ...(remoteV2Pass ? { remote_v2_pass: remoteV2Pass } : {}),
             remote_v2_mode:     remoteV2Mode,
+            ...(remoteV2Pass ? { remote_v2_pass: remoteV2Pass } : {}),
           });
           processingBackend.set(procBackend);
         } else {
@@ -565,12 +586,15 @@
     remoteV2Testing = true;
     remoteV2TestMsg = '';
     try {
-      const r = await fetch('/api/settings/processing-status').then(r => r.json());
-      if (r.remote_v2_reachable) {
-        remoteV2TestMsg = '✓ ' + $t('remote_v2_connected');
-      } else {
-        remoteV2TestMsg = '✗ ' + $t('remote_v2_unreachable') + (r.error ? `: ${r.error}` : '');
-      }
+      // POST current form values directly — works before saving
+      const r = await fetch('/api/settings/test-remote-v2', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ url: remoteV2Url, user: remoteV2User, pass: remoteV2Pass }),
+      }).then(r => r.json());
+      remoteV2TestMsg = r.ok
+        ? '✓ ' + $t('remote_v2_connected')
+        : '✗ ' + $t('remote_v2_unreachable') + (r.error ? `: ${r.error}` : '');
     } catch (e) {
       remoteV2TestMsg = '✗ ' + e.message;
     } finally {
@@ -800,14 +824,20 @@
     {/if}
   </section>
   {:else}
-  <!-- Browser/PWA: static server info -->
+  <!-- Browser/PWA: editable API server URL -->
   <section class="card">
-    <h3>{$t('settings_server_section')}</h3>
+    <h3>{$t('api_server_section')}</h3>
+    <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
     <div class="form-grid">
-      <label>Connected to</label>
-      <span class="db-path-display">{typeof window !== 'undefined' ? (localStorage.getItem('face_rec_server_url') || window.location.origin) : ''}</span>
+      <label>{$t('api_server_url_label')}</label>
+      <div class="field-row">
+        <input type="text" bind:value={pwaServerUrl} placeholder="https://faces.example.com" style="flex:1;" />
+        <button class="primary" on:click={doPwaConnect} style="flex-shrink:0;">{$t('api_server_connect')}</button>
+      </div>
     </div>
-    <p class="hint">Running as a web app — the server is the host you connected to. To change, go back to the connection screen and enter a new URL.</p>
+    {#if pwaConnectMsg}
+      <div class="save-msg" class:error-msg={pwaConnectMsg.startsWith('✗')}>{pwaConnectMsg}</div>
+    {/if}
   </section>
   {/if}
 
@@ -904,6 +934,7 @@
   {#if isAdmin && $backendReady}
   <section class="card">
     <h3>{$t('processing_backend_section')}</h3>
+    <p class="hint" style="margin-bottom:10px;">{$t('processing_backend_hint')}</p>
     <div class="form-grid">
       <label>{$t('processing_backend_section')}</label>
       <select bind:value={procBackend}>
@@ -914,15 +945,15 @@
     {#if procBackend === 'remote_v2'}
     <div class="form-grid" style="margin-top:10px;">
       <label>{$t('remote_v2_url')}</label>
-      <input type="text" bind:value={remoteV2Url} placeholder="http://nas:7861" />
+      <input type="text" bind:value={remoteV2Url} placeholder="https://img.example.com" />
       <label>{$t('remote_v2_user')}</label>
       <input type="text" bind:value={remoteV2User} placeholder="admin" />
       <label>{$t('remote_v2_pass')}</label>
       <input type="password" bind:value={remoteV2Pass} placeholder="••••••••" autocomplete="new-password" />
       <label>{$t('remote_v2_mode')}</label>
       <select bind:value={remoteV2Mode}>
-        <option value="shared_path">{$t('remote_v2_shared_path')}</option>
         <option value="upload_bytes">{$t('remote_v2_upload_bytes')}</option>
+        <option value="local_infer">{$t('remote_v2_local_infer')}</option>
       </select>
     </div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">

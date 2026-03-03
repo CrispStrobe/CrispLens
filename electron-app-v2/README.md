@@ -35,7 +35,7 @@ See the [root README](../README.md) for complete environment variable, config.ya
 | Feature | Description |
 |---|---|
 | **Mode B — Upload full** | Electron reads local file → uploads to VPS → VPS processes (InsightFace + VLM) + stores `local_path` |
-| **Mode C — Local process** | Electron runs InsightFace locally (`local_processor.py`) → uploads thumbnail + embeddings → VPS does FAISS matching (no VLM) |
+| **Mode C — Local process** | Electron runs InsightFace locally (`local_processor.py`) → POSTs thumbnail + 512D embeddings → VPS does FAISS matching only (no re-detection, no VLM) |
 | **Server folder section** | Always visible in ProcessView — enter or browse a VPS path to trigger server-side SSE batch scan without transferring files |
 | **Lightbox local access** | When `local_path` is set, Electron loads full-res image via `localfile://` (instant, no network) |
 | **Browser fallback** | In-browser lightbox shows preview + "Full resolution only in desktop app" warning |
@@ -44,6 +44,7 @@ See the [root README](../README.md) for complete environment variable, config.ya
 | **Filesystem browser** | Navigate real FS; DB-status badges per file/folder; select → "Add to DB" (SSE) |
 | **Watch folders** | Register folders; manual "Scan Now" (SSE); optional auto-scan interval |
 | **Duplicate detection** | Filename+Size / SHA256 hash / pHash visual. Resolve: delete / DB-only / symlink. Face merge by bbox IOU |
+| **v4 local_infer compatibility** | `POST /api/ingest/import-processed` accepts pre-computed embeddings from v4's Node.js ONNX engine — same endpoint used by Mode C. v4 users can point at this v2 server as their API+DB backend while running inference locally (no Python required on client) |
 
 ### Image Editing
 
@@ -193,8 +194,8 @@ Stored in the platform app-data directory. `adminPass` is **never written to dis
 ## Hybrid Ingest Flow
 
 ```
-Local Mac                             VPS / Local Server
-──────────                            ──────────────────
+Local Mac / v4 Node.js               VPS / Local Server (v2 FastAPI)
+──────────────────────               ────────────────────────────────
 
 Server folder section  (VPS-side, browse or type a path)
   ProcessView → POST /api/process/batch {serverPath}
@@ -206,23 +207,39 @@ Mode B — upload_full
     readLocalFile(path) → ArrayBuffer
     uploadLocal(buf, localPath) →     POST /api/ingest/upload-local
                                         writes tmp file
-                                        processes with engine
+                                        InsightFace detect+embed
+                                        VLM description (optional)
                                         stores local_path in DB
                                       ← {image_id, face_count}
   Lightbox → localfile:///path (instant)
 
-Mode C — local_process
+Mode C — local_process  (v2 Electron)
   local_processor.py subprocess
     InsightFace detects + embeds locally
     → NDJSON per image to Electron stdout
   Electron
     importProcessed(result) →         POST /api/ingest/import-processed
-                                        saves thumbnail
-                                        stores embeddings
+                                        saves 200px thumbnail to disk
+                                        inserts image + face records
                                         FAISS match → person_id
                                         stores local_path in DB
                                       ← {image_id, people, face_count}
   Lightbox → localfile:///path (instant)
+
+v4 local_infer mode  (v4 Node.js → v2 FastAPI as remote store)
+  v4 core/face-engine.js
+    ONNX SCRFD detects faces locally
+    ArcFace embeds each face locally (512D, L2-normalised)
+    Generates 200px JPEG thumbnail
+    Computes sha256 file hash
+  v4 processor.js
+    importProcessed(data) →           POST /api/ingest/import-processed
+                                        (same endpoint as Mode C)
+                                        saves thumbnail to disk
+                                        FAISS match → person_id
+                                        stores in v2 DB
+                                      ← {image_id, people, face_count}
+  Full images never leave the local machine — only vectors + thumbnail
 ```
 
 ---

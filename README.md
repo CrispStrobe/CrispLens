@@ -10,9 +10,12 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 | Backend | face_rec_ui.py | face_rec_ui.py | fastapi_app.py | Node.js / Express |
 | Default port | 7860 | 7860 | 7865 | 7861 |
 | Requires Python | ✓ | ✓ | ✓ | — |
-| Hybrid ingest | — | — | ✓ (B/C + server folder) | — |
+| Hybrid ingest | — | — | ✓ (B/C + server folder) | ✓ (upload / local_infer) |
+| Local inference → remote store | — | — | ✓ Mode C (Python) | ✓ `local_infer` (ONNX) |
+| Remote API/DB routing | — | — | — | ✓ any CrispLens server |
 | First-run wizard | — | — | ✓ | — |
 | PWA / Capacitor mobile | — | — | — | ✓ |
+| Detection models | dlib / InsightFace | dlib / InsightFace | dlib / InsightFace | SCRFD + YuNet (ONNX) |
 | Recommended | — | — | existing deployments | new / Python-free |
 
 > **v4** lives in `electron-app-v4/` — zero Python dependency, same 512D ArcFace vectors, same SQLite DB.
@@ -24,6 +27,7 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 
 - [Features](#features)
 - [Architecture overview](#architecture-overview)
+- [v4 — Pure Node.js Quick Start](#v4--pure-nodejs-quick-start)
 - [Python setup (v2 FastAPI)](#python-setup-v2-fastapi)
 - [Python setup (v1 Gradio)](#python-setup-v1-gradio)
 - [Desktop App V2 — Build & Run](#desktop-app-v2--build--run)
@@ -55,9 +59,11 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 
 ## Features
 
-- **Face detection & recognition** — InsightFace (`buffalo_l/m/s/sc`) or dlib (HOG/CNN)
-- **FAISS vector search** — fast nearest-neighbour lookup over millions of embeddings
-- **Hybrid ingest modes** — upload-full (B) and local InsightFace (C); server-side folder section always present in ProcessView for direct VPS path scanning
+- **Face detection & recognition** — InsightFace (`buffalo_l/m/s/sc`) or dlib (HOG/CNN) in v2; SCRFD + YuNet ONNX (no Python) in v4
+- **FAISS / usearch vector search** — fast nearest-neighbour lookup; v4 uses usearch HNSW → faiss-node → brute-force fallback
+- **Three-axis connection model (v4)** — independently configure UI source / API+DB server / inference engine
+- **Hybrid ingest modes** — v2: upload-full (B) or local Python InsightFace (C); v4: upload-full or `local_infer` (ONNX on client, only vectors sent to remote)
+- **`local_infer` privacy mode (v4)** — full images never leave the local machine; only 512D embeddings + 200px thumbnail sent to remote DB server
 - **`localfile://` Electron protocol** — full-res images served from local disk instantly
 - **AI image enrichment** — 9 VLM providers; scene type, description, auto-tags
 - **Encrypted API key storage** — Fernet (AES-128-CBC + HMAC-SHA256); never plaintext
@@ -67,7 +73,7 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 - **Filesystem browser + watch folders** — real FS navigation, DB-status badges, auto-scan
 - **Identify view** — gallery of images with unidentified faces; SVG bbox overlay + autocomplete
 - **Image editing** — EXIF-preserving rotate, free-draw crop, format conversion
-- **CoreML acceleration** — macOS: ONNX → CoreML compiled on first run, cached
+- **CoreML acceleration (v2)** — macOS: ONNX → CoreML compiled on first run, cached
 - **Network drive mounting** — SMB/CIFS shares (macOS & Linux)
 - **i18n** — German and English
 
@@ -75,7 +81,30 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 
 ## Architecture overview
 
-### Desktop V2 (Recommended)
+### v4 — Three-Axis Connection Model
+
+v4 separates three concerns that were previously coupled:
+
+```
+Axis 1: UI source         Axis 2: API + DB server     Axis 3: Inference engine
+─────────────────         ──────────────────────────   ──────────────────────────
+Where the JS bundle       Where all API calls go        Where face detection runs
+comes from                (set in Settings UI)          (only when Axis 2 = local v4)
+
+local v4 Node.js    ──►   localhost:7861 (local v4)  ──►  Local ONNX (default)
+compiled/hosted     ──►   https://vps (remote v2)    ──►  [remote handles its own]
+any static host     ──►   any CrispLens instance     ──►  Remote v2 (upload_bytes)
+                                                      ──►  Local ONNX → vectors only
+                                                           (local_infer = privacy mode)
+```
+
+**Changing the API server**: Settings → API/Database Server → enter URL → Connect. The browser reloads pointing at the new server. All images, people, faces, and recognition data come from that server's DB.
+
+**Processing override** (admin, only when API = local v4):
+- `upload_bytes` — send full image to remote v2, which runs Python InsightFace
+- `local_infer` — run ONNX detection+embedding locally, send only 512D vectors to remote v2's `import-processed` endpoint (privacy-friendly: full images never transmitted)
+
+### Desktop V2
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
@@ -88,8 +117,8 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 ┌───────────────────────────────────────────────────────────────────┐
 │  Electron v2 — "Client only" (remote VPS)                         │
 │  BrowserWindow → https://your-vps.example.com                    │
-│  Ingest mode B: Electron uploads full images → VPS processes      │
-│  Ingest mode C: InsightFace on Mac → uploads embeddings only      │
+│  Ingest Mode B: Electron uploads full images → VPS processes      │
+│  Ingest Mode C: Python InsightFace on Mac → embeddings only      │
 │  Server folder section: browse + trigger VPS-side SSE scan        │
 │  Lightbox → localfile:// (instant, no network round-trip)         │
 └───────────────────────────────────────────────────────────────────┘
@@ -97,7 +126,33 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 ┌───────────────────────────────────────────────────────────────────┐
 │  Electron v2 — "Server only" (headless, tray-icon only)           │
 │  FastAPI subprocess, no BrowserWindow                             │
-│  Accessible from any browser or remote Electron client            │
+│  Accessible from any browser or remote Electron / v4 client       │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### v4 — Pure Node.js
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  v4 — local (default)                                             │
+│  node server.js → Express + ONNX engine → local DB               │
+│  Browser at http://localhost:7861 → API server = same             │
+│  SCRFD-10GF detection + ArcFace ResNet50 embedding                │
+└───────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────┐
+│  v4 — remote API (any CrispLens instance as backend)              │
+│  Browser localStorage 'remote_url' → all API calls go there      │
+│  Can be remote v2 FastAPI or another v4 instance                  │
+│  Inference runs on whichever server handles the API               │
+└───────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────┐
+│  v4 — local_infer + remote store (privacy mode)                   │
+│  Local ONNX runs SCRFD detection + ArcFace embedding              │
+│  Sends only 512D vectors + 200px thumbnail to remote DB server    │
+│  Remote server (v2 or v4) runs FAISS matching, stores in its DB  │
+│  Full images never leave the local machine                        │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -154,6 +209,31 @@ A self-hosted face recognition and photo management system. Ships as a standalon
 │  face_recognition_core.py  (same shared engine)                  │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## v4 — Pure Node.js Quick Start
+
+No Python, no venv, no InsightFace setup. Uses the same ONNX models and SQLite DB.
+
+```bash
+cd electron-app-v4
+npm install
+node server.js          # → http://localhost:7861
+```
+
+Models are auto-downloaded on first run (`~/.insightface/models/buffalo_l/` reused if present).
+
+### v4 connection modes
+
+| Scenario | How to configure |
+|---|---|
+| Local all-in-one | `node server.js` — browser and API on localhost:7861 |
+| Remote v2 as API+DB | Settings → API/Database Server → enter `https://your-v2-host` |
+| Local inference + remote store | Settings → Processing Override → `Remote v2 FastAPI` → `Local inference` |
+| PWA on phone → local v4 | Set server URL in Settings or the connection screen to `http://local-ip:7861` |
+
+See [electron-app-v4/README.md](electron-app-v4/README.md) for full v4 documentation.
 
 ---
 

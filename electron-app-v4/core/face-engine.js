@@ -15,13 +15,14 @@
  *   4. Same L2 normalization of the 512D output
  */
 
-const ort   = require('onnxruntime-node');
-const sharp = require('sharp');
-const fs    = require('fs');
-const path  = require('path');
-const https = require('https');
-const http  = require('http');
-const os    = require('os');
+const ort    = require('onnxruntime-node');
+const sharp  = require('sharp');
+const fs     = require('fs');
+const path   = require('path');
+const https  = require('https');
+const http   = require('http');
+const os     = require('os');
+const crypto = require('crypto');
 const { warpToArcFace }  = require('./face-align');
 const { ensureYuNet }    = require('./model-downloader');
 
@@ -499,6 +500,70 @@ class FaceEngine {
       results.push({ ...face, embedding });
     }
     return results;
+  }
+
+  /**
+   * Run detection+embedding locally, return data in import-processed format.
+   * Does NOT write to DB. For local_infer → remote_store mode:
+   * v4 runs ONNX detection+embedding, sends only 512D vectors + thumbnail to
+   * a remote server's POST /api/ingest/import-processed endpoint.
+   *
+   * Return format matches what v2's import-processed endpoint expects.
+   */
+  async extractFaceData(imagePath, opts = {}) {
+    // Detection + embedding
+    const detModel = (opts.det_model || 'auto').toLowerCase();
+    let detection;
+    if (detModel === 'yunet') {
+      detection = await this.detectFacesYuNet(imagePath, opts);
+    } else {
+      detection = await this.detectFaces(imagePath, opts);
+    }
+    const { faces: detFaces, imageWidth: W, imageHeight: H } = detection;
+
+    const facesWithEmb = [];
+    for (const face of detFaces) {
+      const embedding = await this.embedFace(imagePath, face.landmarks, W, H);
+      facesWithEmb.push({ ...face, embedding });
+    }
+
+    // Thumbnail: 200px JPEG, base64-encoded
+    const thumbBuf = await sharp(imagePath)
+      .rotate()
+      .resize(200, 200, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+
+    // File hash (sha256) and size — read file once
+    const rawBuf    = fs.readFileSync(imagePath);
+    const file_hash = crypto.createHash('sha256').update(rawBuf).digest('hex');
+
+    // Normalise bboxes to [0,1] and convert Float32Array embedding to plain array
+    const faces = facesWithEmb.map(f => {
+      const [x1, y1, x2, y2] = f.bbox;
+      return {
+        bbox_left:            Math.max(0, x1 / W),
+        bbox_top:             Math.max(0, y1 / H),
+        bbox_right:           Math.min(1, x2 / W),
+        bbox_bottom:          Math.min(1, y2 / H),
+        detection_confidence: f.score,
+        embedding:            Array.from(f.embedding),
+        embedding_dimension:  f.embedding.length,
+      };
+    });
+
+    return {
+      local_path:    imagePath,
+      filename:      path.basename(imagePath),
+      width:         W,
+      height:        H,
+      file_size:     rawBuf.length,
+      file_hash,
+      thumbnail_b64: thumbBuf.toString('base64'),
+      local_model:   'buffalo_l',
+      faces,
+      visibility:    opts.visibility || 'shared',
+    };
   }
 }
 
