@@ -1,11 +1,31 @@
 /**
- * api.js — Typed fetch wrappers for all FastAPI endpoints.
+ * api.js — Typed fetch wrappers for all FastAPI/v4-Node endpoints.
+ *
+ * Three modes, controlled by localStorage key 'db_mode':
+ *   'server' (default) — HTTP fetch to a v4 Node.js or v2 FastAPI server
+ *   'local'            — @capacitor-community/sqlite directly on-device (no server)
+ *
+ * All Svelte components use this file unchanged regardless of mode.
  */
 
 import syncManager from './lib/SyncManager.js';
+import { localAdapter, fileCache, toWebUrl } from './lib/LocalAdapter.js';
 
+// ── Mode ──────────────────────────────────────────────────────────────────────
+
+let _localMode = localStorage.getItem('db_mode') === 'local';
+
+/** Switch to local SQLite mode (standalone Capacitor — no server needed). */
+export function setLocalMode(enabled) {
+  _localMode = enabled;
+  localStorage.setItem('db_mode', enabled ? 'local' : 'server');
+}
+
+export function isLocalMode() { return _localMode; }
+
+// ── Server base URL ───────────────────────────────────────────────────────────
 // On Desktop, we use relative paths (/api).
-// On Mobile, we need the full URL of the remote VPS.
+// On Mobile pointing at a remote server, we need the full URL.
 let BASE = '/api';
 
 export function setRemoteBase(url) {
@@ -39,22 +59,26 @@ const del  = (path)        => _fetch('DELETE', path);
 
 // ── Images ────────────────────────────────────────────────────────────────────
 
-export async function fetchImages({ person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='', sort='newest', limit=200, offset=0, unidentified=false, album=0 } = {}) {
-  const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom, date_to: dateTo, sort, limit, offset, unidentified, album });
+export async function fetchImages(params = {}) {
+  if (_localMode) return localAdapter.getImages(params);
+  const { person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='',
+          sort='newest', limit=200, offset=0, unidentified=false, album=0 } = params;
+  const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom,
+                                   date_to: dateTo, sort, limit, offset, unidentified, album });
   try {
     const data = await get(`/images?${q}`);
-    // Backend returns {images:[...], total:N} — unwrap to plain array
     return Array.isArray(data) ? data : (data.images ?? []);
   } catch (e) {
-    // Network error → fall back to IndexedDB cache
-    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message))
       return syncManager.getImages({ sort, limit, offset, person, tag });
-    }
     throw e;
   }
 }
 
-export function fetchImage(id) { return get(`/images/${id}`); }
+export function fetchImage(id) {
+  if (_localMode) return localAdapter.getImage(id);
+  return get(`/images/${id}`);
+}
 
 // Snap the requested size to the nearest standard bucket so that small slider
 // movements share a browser-cache entry.  The <img> CSS width/height still uses
@@ -63,10 +87,19 @@ const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];
 function _snapSize(size) {
   return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
 }
-export function thumbnailUrl(id, size = 200) { return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`; }
-export function previewUrl(id)               { return `${BASE}/images/${id}/preview`; }
-export function fullUrl(id)                  { return `${BASE}/images/${id}/full`; }
-export function downloadUrl(id)              { return `${BASE}/images/${id}/download`; }
+export function thumbnailUrl(id, size = 200) {
+  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`;
+}
+export function previewUrl(id) {
+  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  return `${BASE}/images/${id}/preview`;
+}
+export function fullUrl(id) {
+  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  return `${BASE}/images/${id}/full`;
+}
+export function downloadUrl(id) { return `${BASE}/images/${id}/download`; }
 
 /** Force-download the original image file via a hidden <a> click. */
 export function downloadImage(id, filename) {
@@ -79,7 +112,9 @@ export function downloadImage(id, filename) {
   document.body.removeChild(a);
 }
 
-export function patchMetadata(id, { description='', scene_type='', tags_csv='' }) {
+export function patchMetadata(id, params) {
+  if (_localMode) return localAdapter.patchMetadata(id, params);
+  const { description='', scene_type='', tags_csv='' } = params;
   return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv });
 }
 
@@ -87,11 +122,17 @@ export function renameImage(id, new_filename) {
   return post(`/images/${id}/rename`, { new_filename });
 }
 
-export function deleteImage(id)   { return del(`/images/${id}`); }
+export function deleteImage(id) {
+  if (_localMode) return localAdapter.deleteImage(id);
+  return del(`/images/${id}`);
+}
 export function openInOs(id)      { return post(`/images/${id}/open`); }
 export function openFolderInOs(id) { return post(`/images/${id}/open-folder`); }
 export function fetchExif(id)     { return get(`/images/${id}/exif`); }
-export function fetchImageFaces(id) { return get(`/images/${id}/faces`); }
+export function fetchImageFaces(id) {
+  if (_localMode) return localAdapter.getImageFaces(id);
+  return get(`/images/${id}/faces`);
+}
 export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
 export function clearIdentifications(imageId) { return post(`/images/${imageId}/clear-identifications`, {}); }
 export function clearDetections(imageId) { return post(`/images/${imageId}/clear-detections`, {}); }
@@ -106,20 +147,35 @@ export function addManualFace(imageId, bbox, rec_thresh = null) {
 // ── People ────────────────────────────────────────────────────────────────────
 
 export async function fetchPeople() {
+  if (_localMode) return localAdapter.getPeople();
   try {
     return await get('/people');
   } catch (e) {
-    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message))
       return syncManager.getPeople();
-    }
     throw e;
   }
 }
-export function fetchPerson(id)      { return get(`/people/${id}`); }
-export function renamePerson(id, name) { return put(`/people/${id}`, { name }); }
-export function mergePeople(source_id, target_id) { return post('/people/merge', { source_id, target_id }); }
-export function reassignFace(face_id, new_name) { return post('/people/reassign-face', { face_id, new_name }); }
-export function deletePerson(id)     { return del(`/people/${id}`); }
+export function fetchPerson(id) {
+  if (_localMode) return localAdapter.getPerson(id);
+  return get(`/people/${id}`);
+}
+export function renamePerson(id, name) {
+  if (_localMode) return localAdapter.renamePerson(id, name);
+  return put(`/people/${id}`, { name });
+}
+export function mergePeople(source_id, target_id) {
+  if (_localMode) return localAdapter.mergePeople(source_id, target_id);
+  return post('/people/merge', { source_id, target_id });
+}
+export function reassignFace(face_id, new_name) {
+  if (_localMode) return localAdapter.reassignFace(face_id, new_name);
+  return post('/people/reassign-face', { face_id, new_name });
+}
+export function deletePerson(id) {
+  if (_localMode) return localAdapter.deletePerson(id);
+  return del(`/people/${id}`);
+}
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
@@ -150,8 +206,10 @@ export function scanFolder(folder, recursive = true) {
 /**
  * Mode C: import pre-computed thumbnail + embeddings from local Electron processing.
  * VPS does FAISS person-matching only.
+ * In local mode: writes directly to on-device SQLite (no server needed).
  */
 export function importProcessed(data) {
+  if (_localMode) return localAdapter.importProcessed(data);
   return post('/ingest/import-processed', data);
 }
 
@@ -235,11 +293,17 @@ function _streamSSE(url, body, onEvent) {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-export function fetchHealth() { return get('/health'); }
+export function fetchHealth() {
+  if (_localMode) return Promise.resolve(localAdapter.health());
+  return get('/health');
+}
 
 export function login(username, password) { return post('/auth/login', { username, password }); }
 export function logout()                  { return post('/auth/logout'); }
-export function fetchMe()                 { return get('/auth/me'); }
+export function fetchMe() {
+  if (_localMode) return Promise.resolve(localAdapter.me());
+  return get('/auth/me');
+}
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
@@ -262,11 +326,15 @@ export function setImageVisibility(imageId, visibility) {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
-export function fetchSettings()                     { return get('/settings'); }
+export function fetchSettings() {
+  if (_localMode) return Promise.resolve(localAdapter.settings());
+  return get('/settings');
+}
 export function saveSettings(body)                  { return put('/settings', body); }
-export function fetchTranslations(nocache = false) { 
+export function fetchTranslations(nocache = false) {
+  if (_localMode) return Promise.resolve(localAdapter.i18n());
   const q = nocache ? `?t=${Date.now()}` : '';
-  return get(`/settings/i18n${q}`); 
+  return get(`/settings/i18n${q}`);
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { return get('/settings/db-status'); }
@@ -342,12 +410,18 @@ export function testApiKey(provider) { return post(`/api-keys/test/${provider}`,
 
 // ── Tags & Stats ──────────────────────────────────────────────────────────────
 
-export function fetchTags()       { return get('/tags'); }
+export function fetchTags() {
+  if (_localMode) return localAdapter.getTags();
+  return get('/tags');
+}
 export function fetchTagsStats()  { return get('/tags/stats'); }
 export function fetchDatesStats() { return get('/dates/stats'); }
 export function fetchFoldersStats() { return get('/folders/stats'); }
 export function fetchSceneTypes() { return get('/scene-types'); }
-export function fetchStats()      { return get('/stats'); }
+export function fetchStats() {
+  if (_localMode) return localAdapter.getStats();
+  return get('/stats');
+}
 
 // ── Duplicates ────────────────────────────────────────────────────────────────
 

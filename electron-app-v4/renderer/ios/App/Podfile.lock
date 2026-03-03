@@ -3,27 +3,42 @@ PODS:
     - CapacitorCordova
   - CapacitorCamera (7.0.4):
     - Capacitor
+  - CapacitorCommunitySqlite (8.0.0):
+    - Capacitor
+    - SQLCipher
+    - ZIPFoundation
   - CapacitorCordova (7.4.3)
   - CapacitorFilesystem (7.1.8):
     - Capacitor
     - IONFilesystemLib (~> 1.1.1)
   - IONFilesystemLib (1.1.1)
+  - SQLCipher (4.10.0):
+    - SQLCipher/standard (= 4.10.0)
+  - SQLCipher/common (4.10.0)
+  - SQLCipher/standard (4.10.0):
+    - SQLCipher/common
+  - ZIPFoundation (0.9.20)
 
 DEPENDENCIES:
   - "Capacitor (from `../../../../../node_modules/@capacitor/ios`)"
   - "CapacitorCamera (from `../../node_modules/@capacitor/camera`)"
+  - "CapacitorCommunitySqlite (from `../../node_modules/@capacitor-community/sqlite`)"
   - "CapacitorCordova (from `../../../../../node_modules/@capacitor/ios`)"
   - "CapacitorFilesystem (from `../../node_modules/@capacitor/filesystem`)"
 
 SPEC REPOS:
   trunk:
     - IONFilesystemLib
+    - SQLCipher
+    - ZIPFoundation
 
 EXTERNAL SOURCES:
   Capacitor:
     :path: "../../../../../node_modules/@capacitor/ios"
   CapacitorCamera:
     :path: "../../node_modules/@capacitor/camera"
+  CapacitorCommunitySqlite:
+    :path: "../../node_modules/@capacitor-community/sqlite"
   CapacitorCordova:
     :path: "../../../../../node_modules/@capacitor/ios"
   CapacitorFilesystem:
@@ -32,10 +47,13 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   Capacitor: 28d6c01026a9a3f7156529498ec1f389a2a28dbc
   CapacitorCamera: 3158866d7ab503bb04e190e679d28c55def20088
+  CapacitorCommunitySqlite: 8a61c1d599927d4321c13b28f132de8ca94b6d95
   CapacitorCordova: 435121e81a2df4d0034f0fb11fcefab5104cfdb5
   CapacitorFilesystem: c63fc54df41e5a6761785a7f3c49dc696c22e296
   IONFilesystemLib: dfa8706539ac9ab77ccfd6e5b3830ce9b5e57f6c
+  SQLCipher: eb79c64049cb002b4e9fcb30edb7979bf4706dfc
+  ZIPFoundation: dfd3d681c4053ff7e2f7350bc4e53b5dba3f5351
 
-PODFILE CHECKSUM: a444ccfbec1693044b8c6b00ebf0df67948f887a
+PODFILE CHECKSUM: 191a3f689cc2d1bd45efbc1e5898a948f537fef2
 
 COCOAPODS: 1.16.2

@@ -14,9 +14,14 @@
     "cap:open:ios": "npx cap open ios",
     "cap:open:android": "npx cap open android",
     "cap:run:ios": "npx cap run ios",
-    "cap:run:android": "npx cap run android"
+    "cap:run:android": "npx cap run android",
+    "sim:ios": "CAPACITOR_SERVER_URL=http://localhost:7861 npx cap sync ios && npx cap open ios",
+    "sim:android": "CAPACITOR_SERVER_URL=http://10.0.2.2:7861 npx cap sync android && npx cap open android",
+    "dev:ios": "CAPACITOR_SERVER_URL=http://localhost:5173 npx cap sync ios && npx cap open ios",
+    "build:mobile": "vite build && npx cap sync"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^8.0.0",
     "@capacitor/camera": "^7.0.0",
     "@capacitor/core": "^7.0.0",
     "@capacitor/filesystem": "^7.0.0",

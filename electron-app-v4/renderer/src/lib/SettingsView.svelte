@@ -9,6 +9,7 @@
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
+    isLocalMode, setLocalMode,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
   import syncManager, { loadSyncSettings, saveSyncSettings } from './SyncManager.js';
@@ -170,6 +171,18 @@
   let connectionMode = 'local';
   let remoteUrl = '';
   let localPort = 7865;
+
+  // ── Storage mode: 'server' (HTTP) vs 'local' (on-device SQLite) ─────────
+  let dbMode = typeof window !== 'undefined'
+    ? (localStorage.getItem('db_mode') || 'server')
+    : 'server';
+
+  function switchDbMode(mode) {
+    setLocalMode(mode === 'local');
+    dbMode = mode;
+    // Reload so the new mode takes effect immediately
+    setTimeout(() => { window.location.reload(); }, 300);
+  }
 
   // ── PWA / Browser API server ──────────────────────────────────────────────
   // App.svelte reads 'remote_url' from localStorage — we must use the same key.
@@ -925,7 +938,34 @@
     {/if}
   </section>
   {:else}
-  <!-- Browser/PWA: editable API server URL -->
+  <!-- Storage Mode selector (browser/PWA/Capacitor) -->
+  <section class="card">
+    <h3>Storage Mode</h3>
+    <p class="hint" style="margin-bottom:12px;">
+      Choose how CrispLens stores data. <strong>Server</strong> connects to a v4 Node.js or v2 FastAPI
+      backend. <strong>Standalone (Local)</strong> uses on-device SQLite — no server required, ideal for iOS/Android offline use.
+    </p>
+    <div class="mode-selector">
+      <button class="mode-btn" class:active={dbMode === 'server'} on:click={() => dbMode !== 'server' && switchDbMode('server')}>
+        <span class="mode-icon">☁</span>
+        <span class="mode-label">Server</span>
+        <span class="mode-desc">v4 Node.js or v2 FastAPI</span>
+      </button>
+      <button class="mode-btn" class:active={dbMode === 'local'} on:click={() => dbMode !== 'local' && switchDbMode('local')}>
+        <span class="mode-icon">📱</span>
+        <span class="mode-label">Standalone (Local)</span>
+        <span class="mode-desc">On-device SQLite, no server needed</span>
+      </button>
+    </div>
+    {#if dbMode === 'local'}
+      <p class="hint" style="margin-top:10px;color:#c09030;">
+        ⚠ Standalone mode: face recognition runs on-device (ONNX). Some features (VLM descriptions, admin panel, cloud drives) are not available without a server.
+      </p>
+    {/if}
+  </section>
+
+  <!-- Browser/PWA: editable API server URL (only shown in server mode) -->
+  {#if dbMode === 'server'}
   <section class="card">
     <h3>{$t('api_server_section')}</h3>
     <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
@@ -973,8 +1013,9 @@
       <div class="save-msg" class:error-msg={presetMsg.startsWith('✗')}>{presetMsg}</div>
     {/if}
   </section>
+  {/if}
 
-  <!-- Offline / Local Cache (browser/PWA only) -->
+  <!-- Offline / Local Cache (browser/PWA only, server mode) -->
   <section class="card">
     <h3>{$t('offline_cache_section')}</h3>
     <p class="hint" style="margin-bottom:12px;">{$t('offline_cache_hint')}</p>
@@ -1730,6 +1771,13 @@
   .sync-stats .muted { color: #505070; }
   .sync-progress { font-size: 12px; color: #6090b8; margin-top: 8px; font-variant-numeric: tabular-nums; }
   .pending-badge { display: inline-block; margin-top: 10px; padding: 4px 10px; background: #2a1e06; border: 1px solid #6a4a10; border-radius: 12px; font-size: 12px; color: #c09030; }
+  .mode-selector { display: flex; gap: 10px; margin-top: 4px; }
+  .mode-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px; border: 2px solid #2a2a42; border-radius: 8px; background: #16161e; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .mode-btn:hover { border-color: #4a5a8a; background: #1e1e30; }
+  .mode-btn.active { border-color: #4a6fa5; background: #1a2030; }
+  .mode-icon { font-size: 1.4rem; }
+  .mode-label { font-size: 13px; font-weight: 600; color: #d0d8f0; }
+  .mode-desc { font-size: 10px; color: #6878a0; }
   .url-warning { font-size: 11px; color: #c08040; }
   .url-warning code { font-family: monospace; background: #1a1a10; padding: 1px 4px; border-radius: 3px; }
   .db-path-display {

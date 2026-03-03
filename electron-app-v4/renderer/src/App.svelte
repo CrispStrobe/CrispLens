@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages } from './stores.js';
-  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages } from './api.js';
+  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages, isLocalMode, setLocalMode } from './api.js';
   import syncManager from './lib/SyncManager.js';
 
   import Sidebar     from './lib/Sidebar.svelte';
@@ -200,6 +200,15 @@
           translations.update(cur => ({ ...cur, ...localStrings }));
       }
     } catch { /* ignore */ }
+
+    // ── Local (standalone) mode: no server needed ──────────────────────────
+    if (isLocalMode()) {
+      backendReady.set(true);
+      modelReady.set(true);
+      sessionChecked = true;
+      loadAll();
+      return;
+    }
 
     // Configure remote base URL (Electron or browser/PWA)
     if (inElectron) {
