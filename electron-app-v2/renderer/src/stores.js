@@ -155,6 +155,8 @@ const EN = {
   run_detection: 'Run detection', remove_detection: 'Remove detection',
   run_vlm_only: 'Run VLM only',
   min_face_size: 'Min Face Size',
+  downsize_before_detect: 'Downsize before detect (px)',
+  downsize_before_vlm: 'Downsize before VLM (px)',
   // Detection model labels
   det_model_auto: 'Auto (default)',
   det_model_retinaface: 'RetinaFace',
@@ -609,6 +611,8 @@ export const TRANSLATIONS = {
     run_detection: 'Erkennung starten', remove_detection: 'Erkennung entfernen',
     run_vlm_only: 'Nur VLM ausführen',
     min_face_size: 'Min. Gesichtsgröße',
+    downsize_before_detect: 'Verkleinern auf (px)',
+    downsize_before_vlm: 'Verkleinern vor VLM (px)',
     // Detection model labels
     det_model_auto: 'Auto (Standard)',
     det_model_retinaface: 'RetinaFace',

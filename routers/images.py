@@ -140,6 +140,7 @@ class ReDetectRequest(BaseModel):
     skip_vlm:      bool  = True   # default: re-detect faces only, don't re-run VLM
     det_model:     str   = 'auto' # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
     max_size:      int   = 0      # 0 = no resize; >0 = max long-edge pixels before detection
+    vlm_max_size:  int   = 0      # 0 = send original; >0 = resize long-edge before VLM
 
 class ManualAddFaceRequest(BaseModel):
     bbox: Dict[str, float]  # top, right, bottom, left
@@ -677,7 +678,8 @@ def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_
         if not row:
             raise HTTPException(status_code=404, detail="Image not found")
         result = s.engine.process_image(row['filepath'], vlm_provider=vlm_prov,
-                                        skip_faces=True, force=True)
+                                        skip_faces=True, force=True,
+                                        vlm_max_size=body.vlm_max_size)
         return {"ok": True, "message": "VLM enrichment complete", "result": result}
 
     vlm_prov = None if body.skip_vlm else get_effective_vlm_provider(user, s)
@@ -690,6 +692,7 @@ def do_re_detect(image_id: int, body: ReDetectRequest, user=Depends(get_current_
         vlm_provider=vlm_prov,
         det_model=body.det_model,
         max_size=body.max_size,
+        vlm_max_size=body.vlm_max_size,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

@@ -139,6 +139,7 @@ _DE: dict = {
     'clear_all_identifications': 'Alle Identifikationen löschen',
     'clear_all_detections': 'Alle Erkennungen löschen',
     'downsize_before_detect': 'Verkleinern auf (px)',
+    'downsize_before_vlm': 'Verkleinern vor VLM (px)',
     'downsize_original': 'Original',
     'drag_to_mark_face': 'Ziehen um Gesicht zu markieren',
     # Train

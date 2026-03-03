@@ -1136,7 +1136,8 @@ class FaceRecognitionEngine:
                      rec_thresh: Optional[float] = None,
                      skip_faces: bool = False, skip_vlm: bool = False,
                      det_model: str = 'auto', max_size: int = 0,
-                     original_filename: Optional[str] = None) -> Dict[str, Any]:
+                     original_filename: Optional[str] = None,
+                     vlm_max_size: int = 0) -> Dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
 
@@ -1176,7 +1177,7 @@ class FaceRecognitionEngine:
                 if vlm_provider and (not existing['ai_description']):
                     try:
                         from i18n import i18n as _i18n
-                        vlm_r = vlm_provider.enrich_image(image_path, _i18n.t('vlm_prompt'))
+                        vlm_r = vlm_provider.enrich_image(image_path, _i18n.t('vlm_prompt'), vlm_max_size=vlm_max_size)
                         if vlm_r and 'error' not in vlm_r:
                             self._update_image_vlm(image_id, vlm_r)
                     except Exception as e:
@@ -1282,7 +1283,7 @@ class FaceRecognitionEngine:
                 logger.info(f"Calling VLM provider for: {image_path}")
                 try:
                     from i18n import i18n
-                    vlm_result = vlm_provider.enrich_image(image_path, i18n.t('vlm_prompt'))
+                    vlm_result = vlm_provider.enrich_image(image_path, i18n.t('vlm_prompt'), vlm_max_size=vlm_max_size)
                     logger.debug(f"VLM response: {vlm_result}")
                     if vlm_result and 'error' not in vlm_result:
                         self._update_image_vlm(image_id, vlm_result)

@@ -30,7 +30,7 @@ except ImportError:
 class VLMConfig:
     """Configuration for VLM provider."""
     max_retries: int = 3
-    timeout_seconds: int = 30
+    timeout_seconds: int = 90
     max_image_size_mb: float = 5.0
     supported_formats: set = None
     
@@ -127,10 +127,30 @@ class VLMProvider:
         }
         return media_types.get(ext, 'image/jpeg')
     
-    def enrich_image(self, image_path: str, prompt: str) -> Dict[str, Any]:
+    def _prepare_image_for_vlm(self, image_path: str, vlm_max_size: int = 0):
+        """Return (base64_data, media_type), resizing to vlm_max_size long-edge if >0."""
+        if vlm_max_size > 0:
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(image_path)
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGB')
+                w, h = img.size
+                if max(w, h) > vlm_max_size:
+                    scale = vlm_max_size / max(w, h)
+                    img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG', quality=85)
+                    return base64.b64encode(buf.getvalue()).decode('utf-8'), 'image/jpeg'
+            except Exception as e:
+                logger.warning(f"VLM resize failed ({e}), sending original")
+        return self._read_image_base64(image_path), self._get_media_type(image_path)
+
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
         """
         Enrich image with AI analysis.
-        
+
         Returns:
             Dict with keys: description, scene_type, tags, error (if failed)
         """
@@ -159,19 +179,16 @@ class AnthropicVLM(VLMProvider):
         except Exception as e:
             raise ValueError(f"Failed to initialize Anthropic client: {e}")
     
-    def enrich_image(self, image_path: str, prompt: str) -> Dict[str, Any]:
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
         """Enrich image using Claude Vision."""
         # Validate image
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
-        
-        # Read image
-        image_data = self._read_image_base64(image_path)
+
+        image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
-        
-        media_type = self._get_media_type(image_path)
         
         # Retry logic
         for attempt in range(self.config.max_retries):
@@ -488,17 +505,15 @@ class OpenAICompatibleVLM(VLMProvider):
         except Exception as e:
             raise ValueError(f"Failed to initialize {self.__class__.__name__}: {e}")
 
-    def enrich_image(self, image_path: str, prompt: str) -> Dict[str, Any]:
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
         """Enrich image using the OpenAI-compatible vision API."""
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
 
-        image_data = self._read_image_base64(image_path)
+        image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
-
-        media_type = self._get_media_type(image_path)
 
         for attempt in range(self.config.max_retries):
             try:

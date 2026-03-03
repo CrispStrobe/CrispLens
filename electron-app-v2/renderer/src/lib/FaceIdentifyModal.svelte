@@ -85,6 +85,7 @@
   let alsoRunVlm = false;   // when true, also re-runs VLM enrichment after face detection
   let detModel = 'auto';    // detection model override
   let maxSize = 0;          // 0 = no resize; >0 = max long-edge px before detection
+  let vlmMaxSize = 0;       // 0 = send original to VLM; >0 = resize long-edge before VLM
   let showParams = false;
   let reDetecting = false;
 
@@ -222,6 +223,7 @@
         skip_vlm:      !alsoRunVlm,
         det_model:     detModel,
         max_size:      maxSize,
+        vlm_max_size:  vlmMaxSize,
       });
       anyChanged = true;
       await loadFaces();
@@ -445,6 +447,13 @@
             <input type="checkbox" bind:checked={alsoRunVlm} disabled={detModel === 'none'} />
             {$t('also_run_vlm')}
           </label>
+          {#if alsoRunVlm || detModel === 'none'}
+          <div class="param-row">
+            <label for="id-vlm-size-e">{$t('downsize_before_vlm')}</label>
+            <input id="id-vlm-size-e" type="number" bind:value={vlmMaxSize}
+              min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
+          </div>
+          {/if}
           <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
             {reDetecting ? $t('scanning') : detModel === 'none' ? $t('run_vlm_only') : $t('run_detection')}
           </button>
@@ -555,6 +564,13 @@
               <input type="checkbox" bind:checked={alsoRunVlm} disabled={detModel === 'none'} />
               {$t('also_run_vlm')}
             </label>
+            {#if alsoRunVlm || detModel === 'none'}
+            <div class="param-row">
+              <label for="id-vlm-size">{$t('downsize_before_vlm')}</label>
+              <input id="id-vlm-size" type="number" bind:value={vlmMaxSize}
+                min="0" max="9999" step="100" placeholder="0 = Original" class="num-input" />
+            </div>
+            {/if}
             <button class="primary full" on:click={onReDetect} disabled={reDetecting}>
               {reDetecting ? $t('scanning') : detModel === 'none' ? $t('run_vlm_only') : $t('run_detection')}
             </button>

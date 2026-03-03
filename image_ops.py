@@ -520,6 +520,7 @@ def re_detect_faces(
     vlm_provider: Optional[Any] = None,
     det_model: str = 'auto',
     max_size: int = 0,
+    vlm_max_size: int = 0,
 ) -> Tuple[bool, str, Any]:
     """
     Clear existing faces for an image and re-run detection with new parameters.
@@ -561,6 +562,7 @@ def re_detect_faces(
             rec_thresh=rec_thresh,
             det_model=det_model,
             max_size=max_size,
+            vlm_max_size=vlm_max_size,
         )
         
         if result.get('success'):
