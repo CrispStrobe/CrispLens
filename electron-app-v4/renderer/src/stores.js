@@ -141,6 +141,7 @@ const EN = {
   lower_threshold_hint: 'Lower threshold = more results',
   recognition_certainty: 'Certainty', conf_short: 'Conf',
   clear_all_identifications: 'Clear all identifications',
+  clear_all_detections: 'Clear all detections',
   drag_to_mark_face: 'Drag to mark a face',
   // Train
   browse_button: 'Browse', train_folder_description: 'Scan folder for named sub-folders (one per person)',
@@ -595,6 +596,7 @@ export const TRANSLATIONS = {
     lower_threshold_hint: 'Niedrigerer Schwellwert = mehr Ergebnisse',
     recognition_certainty: 'Gewissheit', conf_short: 'Konf',
     clear_all_identifications: 'Alle Identifikationen löschen',
+    clear_all_detections: 'Alle Erkennungen löschen',
     drag_to_mark_face: 'Ziehen um Gesicht zu markieren',
     // Train
     browse_button: 'Durchsuchen', train_folder_description: 'Ordner mit benannten Unterordnern (je eine Person)',

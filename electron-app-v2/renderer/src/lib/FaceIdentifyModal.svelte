@@ -1,7 +1,7 @@
 <script>
-  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { allPeople, t } from '../stores.js';
-  import { fetchImageFaces, fetchPeople, previewUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
+  import { fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
 
   export let imageId;
 
@@ -9,7 +9,6 @@
 
   let faces = [];
   let imgEl;
-  let imgNaturalW = 0, imgNaturalH = 0;
   let displayW = 0, displayH = 0;
   let loading = true;
   let saving = {};       // { [face_id]: bool }
@@ -128,9 +127,6 @@
     }
   }
 
-  // Canvas refs for face crops
-  let canvasRefs = {};
-
   $: imageUrl = previewUrl(imageId);
 
   async function loadFaces() {
@@ -142,8 +138,6 @@
         names[f.face_id] = f.person_name || '';
       }
       if (faces.length === 0) showParams = true;
-      await tick();
-      drawCrops();
     } catch (e) {
       console.error('loadFaces error:', e);
     } finally {
@@ -152,32 +146,9 @@
   }
 
   function onImgLoad(e) {
-    imgNaturalW = e.target.naturalWidth;
-    imgNaturalH = e.target.naturalHeight;
     const rect = e.target.getBoundingClientRect();
     displayW = rect.width;
     displayH = rect.height;
-    drawCrops();
-  }
-
-  function drawCrops() {
-    if (!imgEl || !imgNaturalW) return;
-    for (const f of faces) {
-      const canvas = canvasRefs[f.face_id];
-      if (!canvas) continue;
-      const ctx = canvas.getContext('2d');
-      const { top, right, bottom, left } = f.bbox;
-      const sx = left   * imgNaturalW;
-      const sy = top    * imgNaturalH;
-      const sw = (right  - left) * imgNaturalW;
-      const sh = (bottom - top)  * imgNaturalH;
-      canvas.width  = 64;
-      canvas.height = 64;
-      ctx.clearRect(0, 0, 64, 64);
-      if (sw > 0 && sh > 0) {
-        ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, 64, 64);
-      }
-    }
   }
 
   async function saveFace(face) {
@@ -499,11 +470,12 @@
               aria-pressed={isActive}
             >
               <div class="face-crop-wrap">
-                <canvas
+                <img
                   class="face-crop"
-                  bind:this={canvasRefs[face.face_id]}
-                  width="64" height="64"
-                ></canvas>
+                  src={faceCropUrl(imageId, face.face_id, 64)}
+                  crossorigin="use-credentials"
+                  alt=""
+                />
               </div>
               <div class="face-info">
                 <div class="face-num-row">

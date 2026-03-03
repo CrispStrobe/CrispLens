@@ -917,10 +917,14 @@ router.post('/edit/crop', requireAuth, async (req, res) => {
       db.prepare('UPDATE images SET width=?,height=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(safeW, safeH, Number(image_id));
       res.json({ ok: true, image_id: Number(image_id), width: safeW, height: safeH });
     } else {
-      // new_file: save alongside original
+      // new_file: save alongside original with a unique filename
       const ext  = path.extname(src);
       const base = src.slice(0, -ext.length);
-      const dest = `${base}_crop${ext}`;
+      let dest = `${base}_crop${ext}`;
+      let n = 1;
+      while (fs.existsSync(dest) || db.prepare('SELECT 1 FROM images WHERE filepath=?').get(dest)) {
+        dest = `${base}_crop${n++}${ext}`;
+      }
       await sharp(buf).toFile(dest);
       const fname = path.basename(dest);
       const ins = db.prepare(`INSERT INTO images (filepath,filename,file_size,width,height,format,local_path,visibility)

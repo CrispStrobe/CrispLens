@@ -155,6 +155,7 @@ router.get('/face-crop', requireAuth, async (req, res) => {
     const bottom = Math.min(H, Math.round(face.bbox_bottom * H));
 
     const buf = await sharp(p)
+      .rotate()   // apply EXIF rotation so bbox (display-space) aligns with pixels
       .extract({ left, top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) })
       .resize(size, size, { fit: 'cover' })
       .jpeg({ quality: 85 })
