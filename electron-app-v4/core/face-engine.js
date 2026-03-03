@@ -167,14 +167,16 @@ function applyNMS(faces) {
  * Convert a 112×112 RGB Buffer (HWC, uint8) into a CHW float32 tensor with
  * the exact normalization used by InsightFace:
  *   input = (pixel - 127.5) / 128.0
+ * ArcFace (w600k_r50) was trained with OpenCV BGR channel order, so we feed
+ * channels as [B, G, R] even though Sharp gives us RGB bytes.
  */
 function buildArcFaceInput(rgbBuf) {
   const spatial = 112 * 112;
   const f32 = new Float32Array(3 * spatial);
   for (let i = 0; i < spatial; i++) {
-    f32[i            ] = (rgbBuf[i * 3    ] - 127.5) / 128.0;  // R
-    f32[i + spatial  ] = (rgbBuf[i * 3 + 1] - 127.5) / 128.0;  // G
-    f32[i + spatial*2] = (rgbBuf[i * 3 + 2] - 127.5) / 128.0;  // B
+    f32[i            ] = (rgbBuf[i * 3 + 2] - 127.5) / 128.0;  // B (channel 0)
+    f32[i + spatial  ] = (rgbBuf[i * 3 + 1] - 127.5) / 128.0;  // G (channel 1)
+    f32[i + spatial*2] = (rgbBuf[i * 3    ] - 127.5) / 128.0;  // R (channel 2)
   }
   return f32;
 }
@@ -309,11 +311,12 @@ class FaceEngine {
   async embedFace(imagePath, landmarks, imageWidth, imageHeight) {
     await this.init();
 
-    // Read the source image as raw RGB (apply EXIF rotation so landmarks align)
+    // Read the source image as raw RGB (apply EXIF rotation so landmarks align).
+    // Use flatten() to composite any transparency on white — no-op for JPEGs.
+    // Avoid ensureAlpha(0) which premultiplies all pixels by 0 (corrupts image).
     const srcBuf = await sharp(imagePath)
-      .rotate()           // apply EXIF auto-rotation
-      .ensureAlpha(0)     // strip alpha if present (keeps RGB order)
-      .removeAlpha()      // ensure 3-channel
+      .rotate()                              // apply EXIF auto-rotation
+      .flatten({ background: '#ffffff' })    // composite alpha on white, no-op for JPEG
       .raw()
       .toBuffer();
 
