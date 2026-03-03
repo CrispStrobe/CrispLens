@@ -184,6 +184,46 @@
     setTimeout(() => { window.location.reload(); }, 300);
   }
 
+  // ── ONNX model download (for standalone/local mode) ─────────────────────
+  let modelStatus = { det_10g: false, w600k_r50: false };
+  let modelDownloading = false;
+  let modelDownloadMsg = '';
+
+  async function checkModelStatus() {
+    try {
+      const { faceEngineWeb } = await import('./FaceEngineWeb.js');
+      const remoteBase = localStorage.getItem('remote_url') || window.location.origin;
+      faceEngineWeb.setModelBaseUrl(remoteBase + '/models');
+      modelStatus = await faceEngineWeb.getModelCacheStatus();
+    } catch { /* ignore */ }
+  }
+
+  async function downloadModels() {
+    if (modelDownloading) return;
+    modelDownloading = true;
+    modelDownloadMsg = '';
+    try {
+      const { faceEngineWeb } = await import('./FaceEngineWeb.js');
+      const remoteBase = localStorage.getItem('remote_url') || window.location.origin;
+      faceEngineWeb.setModelBaseUrl(remoteBase + '/models');
+      const results = await faceEngineWeb.downloadModels(
+        (msg) => { modelDownloadMsg = msg; }
+      );
+      const failed = Object.entries(results).filter(([, v]) => v !== 'ok');
+      modelDownloadMsg = failed.length
+        ? '✗ Failed: ' + failed.map(([k, v]) => `${k}: ${v}`).join(', ')
+        : '✓ Models cached — ready for offline use';
+      await checkModelStatus();
+    } catch (e) {
+      modelDownloadMsg = '✗ ' + (e.message || String(e));
+    } finally {
+      modelDownloading = false;
+    }
+  }
+
+  // Check model status when settings view mounts (if in local mode)
+  $: if (dbMode === 'local' && typeof window !== 'undefined') checkModelStatus();
+
   // ── PWA / Browser API server ──────────────────────────────────────────────
   // App.svelte reads 'remote_url' from localStorage — we must use the same key.
   const _PRESETS_KEY = 'crisp_server_presets';
@@ -961,6 +1001,40 @@
       <p class="hint" style="margin-top:10px;color:#c09030;">
         ⚠ Standalone mode: face recognition runs on-device (ONNX). Some features (VLM descriptions, admin panel, cloud drives) are not available without a server.
       </p>
+      <!-- ONNX model cache status + download -->
+      <div class="model-cache-section">
+        <div class="model-status-row">
+          <span class="model-status-label">SCRFD detector</span>
+          <span class="model-badge" class:ok={modelStatus.det_10g} class:missing={!modelStatus.det_10g}>
+            {modelStatus.det_10g ? '✓ cached' : '✗ not downloaded'}
+          </span>
+        </div>
+        <div class="model-status-row">
+          <span class="model-status-label">ArcFace recognizer</span>
+          <span class="model-badge" class:ok={modelStatus.w600k_r50} class:missing={!modelStatus.w600k_r50}>
+            {modelStatus.w600k_r50 ? '✓ cached' : '✗ not downloaded'}
+          </span>
+        </div>
+        {#if modelDownloadMsg}
+          <div class="save-msg" class:error-msg={modelDownloadMsg.startsWith('✗')} style="margin-top:8px;">
+            {modelDownloadMsg}
+          </div>
+        {/if}
+        <p class="hint" style="margin-top:6px;">
+          Models are downloaded from the connected server and cached on-device (~185 MB total).
+          Download once while online, then use offline forever.
+        </p>
+        <button class="primary" style="margin-top:8px;" on:click={downloadModels}
+                disabled={modelDownloading || (modelStatus.det_10g && modelStatus.w600k_r50)}>
+          {#if modelDownloading}
+            ⏳ {modelDownloadMsg || 'Downloading…'}
+          {:else if modelStatus.det_10g && modelStatus.w600k_r50}
+            ✓ Models ready
+          {:else}
+            ⬇ Download ONNX models
+          {/if}
+        </button>
+      </div>
     {/if}
   </section>
 
@@ -1771,6 +1845,12 @@
   .sync-stats .muted { color: #505070; }
   .sync-progress { font-size: 12px; color: #6090b8; margin-top: 8px; font-variant-numeric: tabular-nums; }
   .pending-badge { display: inline-block; margin-top: 10px; padding: 4px 10px; background: #2a1e06; border: 1px solid #6a4a10; border-radius: 12px; font-size: 12px; color: #c09030; }
+  .model-cache-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid #2a2a42; display: flex; flex-direction: column; gap: 4px; }
+  .model-status-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+  .model-status-label { color: #8090b0; }
+  .model-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+  .model-badge.ok { background: #0e2a1e; color: #50c080; border: 1px solid #205040; }
+  .model-badge.missing { background: #2a1e06; color: #c09030; border: 1px solid #6a4a10; }
   .mode-selector { display: flex; gap: 10px; margin-top: 4px; }
   .mode-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px; border: 2px solid #2a2a42; border-radius: 8px; background: #16161e; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
   .mode-btn:hover { border-color: #4a5a8a; background: #1e1e30; }

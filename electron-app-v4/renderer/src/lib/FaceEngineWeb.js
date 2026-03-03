@@ -205,24 +205,60 @@ export class FaceEngineWeb {
   // ── Model loading + Cache API ───────────────────────────────────────────────
 
   async _fetchModelCached(filename) {
-    const url = `${this.modelBaseUrl}/${filename}`;
-    // Try Cache API first (survives page reloads; Capacitor WebView has full Cache API)
+    // Use a canonical key (just the filename) so models downloaded from a server
+    // are reusable in standalone/local mode regardless of base URL changes.
+    const canonicalKey = `onnx-model://${filename}`;
+    const fetchUrl = `${this.modelBaseUrl}/${filename}`;
+
     if ('caches' in globalThis) {
       const cache = await caches.open(MODEL_CACHE_NAME);
-      let resp = await cache.match(url);
+      // Check canonical key first
+      let resp = await cache.match(canonicalKey);
+      if (!resp) {
+        // Also check legacy full-URL key (backward compat with previously cached models)
+        resp = await cache.match(fetchUrl);
+      }
       if (!resp) {
         this._progress(`Downloading ${filename}…`);
-        resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Model download failed: ${resp.status} ${url}`);
-        await cache.put(url, resp.clone());
+        resp = await fetch(fetchUrl);
+        if (!resp.ok) throw new Error(`Model download failed: ${resp.status} ${fetchUrl}`);
+        // Store under canonical key so the cache survives base URL changes
+        await cache.put(canonicalKey, resp.clone());
       }
       return resp.arrayBuffer();
     }
     // Fallback: plain fetch (no caching)
     this._progress(`Fetching ${filename}…`);
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Model fetch failed: ${resp.status} ${url}`);
+    const resp = await fetch(fetchUrl);
+    if (!resp.ok) throw new Error(`Model fetch failed: ${resp.status} ${fetchUrl}`);
     return resp.arrayBuffer();
+  }
+
+  /** Pre-download both ONNX models and store in Cache API. Call from SettingsView. */
+  async downloadModels(onProgress) {
+    const files = ['det_10g.onnx', 'w600k_r50.onnx'];
+    const results = {};
+    for (const file of files) {
+      onProgress?.(`Downloading ${file}…`);
+      try {
+        await this._fetchModelCached(file);
+        results[file] = 'ok';
+      } catch (e) {
+        results[file] = e.message;
+      }
+    }
+    return results;
+  }
+
+  /** Check which models are cached without fetching. */
+  async getModelCacheStatus() {
+    if (!('caches' in globalThis)) return { det_10g: false, w600k_r50: false };
+    const cache = await caches.open(MODEL_CACHE_NAME);
+    const keys = await cache.keys();
+    const keyStrings = keys.map(r => r.url || String(r));
+    const hasDet = keyStrings.some(k => k.includes('det_10g'));
+    const hasRec = keyStrings.some(k => k.includes('w600k_r50'));
+    return { det_10g: hasDet, w600k_r50: hasRec };
   }
 
   async _initDetector() {

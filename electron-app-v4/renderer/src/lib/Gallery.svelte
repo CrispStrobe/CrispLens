@@ -1,6 +1,8 @@
 <script>
   import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags, galleryRefreshTick } from '../stores.js';
-  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
+  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, localThumb } from '../api.js';
+
+  const localMode = isLocalMode();
   import { onMount, onDestroy, tick } from 'svelte';
   import ContextMenu from './ContextMenu.svelte';
   import CropModal from './CropModal.svelte';
@@ -224,13 +226,23 @@
                 on:contextmenu={(e) => onContextMenu(e, img)}
                 title={img.filename}
               >
-                <img
-                  src={thumbnailUrl(img.id, $thumbSize)}
-                  alt={img.filename}
-                  loading="lazy"
-                  width={$thumbSize}
-                  height={$thumbSize}
-                />
+                {#if localMode && img.filepath}
+                  {#await localThumb(img.filepath, $thumbSize)}
+                    <img src={thumbnailUrl(img.id, $thumbSize)} alt={img.filename}
+                         loading="lazy" width={$thumbSize} height={$thumbSize} />
+                  {:then src}
+                    <img {src} alt={img.filename}
+                         loading="lazy" width={$thumbSize} height={$thumbSize} />
+                  {/await}
+                {:else}
+                  <img
+                    src={thumbnailUrl(img.id, $thumbSize)}
+                    alt={img.filename}
+                    loading="lazy"
+                    width={$thumbSize}
+                    height={$thumbSize}
+                  />
+                {/if}
                 {#if img.face_count > 0}
                   <span class="face-badge">{img.face_count}</span>
                 {/if}

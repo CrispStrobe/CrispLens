@@ -10,6 +10,9 @@
 
 import syncManager from './lib/SyncManager.js';
 import { localAdapter, fileCache, toWebUrl } from './lib/LocalAdapter.js';
+import { localThumb } from './lib/LocalThumbnailCache.js';
+
+export { localThumb };
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
