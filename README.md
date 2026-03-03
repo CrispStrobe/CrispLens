@@ -988,32 +988,61 @@ face_rec/
 ├── deploy.sh                   # VPS deploy (v1/Gradio)
 ├── deploy-v2.sh                # VPS deploy (v2/FastAPI, recommended)
 ├── electron-app/               # Electron v1 (wraps Gradio, port 7860)
-└── electron-app-v2/            # Electron v2 (FastAPI + Svelte, recommended)
-    ├── main.js                 # Main process (wizard, windows, tray, IPC)
-    ├── preload.js              # Context bridge (exposes IPC to renderer)
-    ├── python-manager.js       # Venv setup + FastAPI subprocess lifecycle
-    ├── setup-wizard.html       # First-run multi-step wizard
-    ├── loading.html            # Setup progress screen (legacy)
-    ├── package.json            # npm / electron-builder config
-    └── renderer/               # Svelte 4 + Vite frontend
+├── electron-app-v2/            # Electron v2 (FastAPI + Svelte, recommended)
+│   ├── main.js                 # Main process (wizard, windows, tray, IPC)
+│   ├── preload.js              # Context bridge (exposes IPC to renderer)
+│   ├── python-manager.js       # Venv setup + FastAPI subprocess lifecycle
+│   ├── setup-wizard.html       # First-run multi-step wizard
+│   ├── loading.html            # Setup progress screen (legacy)
+│   ├── package.json            # npm / electron-builder config
+│   └── renderer/               # Svelte 4 + Vite frontend
+│       ├── src/
+│       │   ├── App.svelte          # View router
+│       │   ├── api.js              # Typed fetch wrappers (all API endpoints)
+│       │   ├── stores.js           # Global Svelte stores
+│       │   └── lib/                # All view components
+│       │       ├── Gallery.svelte
+│       │       ├── Lightbox.svelte         # localfile:// aware
+│       │       ├── ProcessView.svelte      # 2-mode ingest + server folder section
+│       │       ├── SettingsView.svelte     # Config + API keys + ingest mode
+│       │       ├── IdentifyView.svelte     # Unidentified faces gallery
+│       │       ├── FaceIdentifyModal.svelte
+│       │       ├── FaceClusterView.svelte
+│       │       ├── FilesystemView.svelte
+│       │       ├── WatchFoldersView.svelte
+│       │       ├── DuplicatesView.svelte
+│       │       ├── ServerDirPicker.svelte  # reusable VPS dir browser modal
+│       │       └── ...
+│       └── dist/                   # Production build (served by FastAPI)
+└── electron-app-v4/            # v4 — Pure Node.js, Python-free
+    ├── server.js               # Express server (port 7861) + static UI
+    ├── core/
+    │   ├── face-engine.js      # SCRFD detection + YuNet + ArcFace embedding
+    │   ├── face-align.js       # Umeyama similarity transform → 112×112 crop
+    │   ├── model-downloader.js # Downloads buffalo_l + YuNet (opencv_zoo)
+    │   ├── remote-v2-client.js # HTTP client for remote v2 FastAPI
+    │   └── search.js           # VectorStore: usearch HNSW → faiss-node → brute-force
+    ├── server/
+    │   ├── db.js               # better-sqlite3 singleton
+    │   ├── auth.js             # PBKDF2 session auth
+    │   ├── processor.js        # processImageIntoDb() + local_infer routing
+    │   └── routes/
+    │       ├── images.js       image CRUD + thumbnail + re-detect
+    │       ├── people.js       person CRUD + merge + reassign
+    │       ├── ingest.js       upload-local + import-processed
+    │       ├── settings.js     settings CRUD + engine/db status
+    │       └── misc.js         tags/albums/batch-jobs/filesystem/…
+    └── renderer/               # Same Svelte 4 + Vite UI as v2
         ├── src/
-        │   ├── App.svelte          # View router
-        │   ├── api.js              # Typed fetch wrappers (all API endpoints)
-        │   ├── stores.js           # Global Svelte stores
-        │   └── lib/                # All view components
-        │       ├── Gallery.svelte
-        │       ├── Lightbox.svelte         # localfile:// aware
-        │       ├── ProcessView.svelte      # 2-mode ingest + server folder section
-        │       ├── SettingsView.svelte     # Config + API keys + ingest mode
-        │       ├── IdentifyView.svelte     # Unidentified faces gallery
-        │       ├── FaceIdentifyModal.svelte
-        │       ├── FaceClusterView.svelte
-        │       ├── FilesystemView.svelte
-        │       ├── WatchFoldersView.svelte
-        │       ├── DuplicatesView.svelte
-        │       ├── ServerDirPicker.svelte  # reusable VPS dir browser modal
-        │       └── ...
-        └── dist/                   # Production build (served by FastAPI)
+        │   ├── App.svelte          # Root shell — health polling, API base URL
+        │   ├── api.js              # Typed fetch + setRemoteBase() for remote API
+        │   ├── stores.js           # Svelte stores (processingBackend, t(), …)
+        │   └── lib/
+        │       ├── SettingsView.svelte  # Three-axis config + saved server presets
+        │       ├── ProcessView.svelte   # Upload + local folder scan + det params
+        │       ├── FaceIdentifyModal.svelte  # SVG bbox overlay + per-face re-detect
+        │       └── ...              (all other views identical to v2)
+        └── dist/                   # Production build (served by Express)
 ```
 
 ---

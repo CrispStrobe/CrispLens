@@ -172,15 +172,22 @@
 
   // ── PWA / Browser API server ──────────────────────────────────────────────
   // App.svelte reads 'remote_url' from localStorage — we must use the same key.
+  const _PRESETS_KEY = 'crisp_server_presets';
   let pwaServerUrl  = typeof window !== 'undefined'
     ? (localStorage.getItem('remote_url') || window.location.origin)
     : '';
   let pwaConnectMsg = '';
+  let serverPresets = typeof window !== 'undefined'
+    ? JSON.parse(localStorage.getItem(_PRESETS_KEY) || '[]')
+    : [];
+  let newPresetName = '';
+  let presetMsg = '';
 
-  function doPwaConnect() {
-    const url = pwaServerUrl.trim().replace(/\/$/, '');
+  function doPwaConnect(urlOverride) {
+    const url = (urlOverride ?? pwaServerUrl).trim().replace(/\/$/, '');
     if (!url) { pwaConnectMsg = '✗ Enter a server URL'; return; }
     if (!url.startsWith('http')) { pwaConnectMsg = '✗ URL must start with https:// or http://'; return; }
+    pwaServerUrl = url;
     // Same key App.svelte reads on startup
     if (url === window.location.origin) {
       localStorage.removeItem('remote_url');  // same-origin = no stored URL
@@ -189,6 +196,23 @@
     }
     pwaConnectMsg = '✓ Saved — reloading…';
     setTimeout(() => { window.location.reload(); }, 800);
+  }
+
+  function saveCurrentAsPreset() {
+    const url = pwaServerUrl.trim().replace(/\/$/, '');
+    if (!url || !url.startsWith('http')) { presetMsg = '✗ Set a valid URL first'; return; }
+    const name = newPresetName.trim() || url;
+    serverPresets = serverPresets.filter(p => p.url !== url);
+    serverPresets = [...serverPresets, { name, url }];
+    localStorage.setItem(_PRESETS_KEY, JSON.stringify(serverPresets));
+    newPresetName = '';
+    presetMsg = '✓ Saved';
+    setTimeout(() => { presetMsg = ''; }, 2000);
+  }
+
+  function deletePreset(i) {
+    serverPresets = serverPresets.filter((_, idx) => idx !== i);
+    localStorage.setItem(_PRESETS_KEY, JSON.stringify(serverPresets));
   }
 
   // ── Electron / ingest mode state ──────────────────────────────────────────
@@ -828,15 +852,48 @@
   <section class="card">
     <h3>{$t('api_server_section')}</h3>
     <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
+
+    <!-- Saved presets -->
+    {#if serverPresets.length > 0}
+    <div style="margin-bottom:12px;">
+      <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted,#888);margin-bottom:6px;">{$t('api_server_saved')}</div>
+      {#each serverPresets as preset, i}
+      <div class="preset-row">
+        <div class="preset-info" title={preset.url}>
+          <span class="preset-name">{preset.name}</span>
+          <span class="preset-url">{preset.url}</span>
+        </div>
+        <button class="preset-connect" on:click={() => doPwaConnect(preset.url)}
+          class:active-preset={pwaServerUrl === preset.url}
+        >{pwaServerUrl === preset.url ? '✓ ' : ''}{$t('api_server_connect')}</button>
+        <button class="icon-btn danger" on:click={() => deletePreset(i)} title="Remove preset">×</button>
+      </div>
+      {/each}
+    </div>
+    {/if}
+
+    <!-- URL input + connect -->
     <div class="form-grid">
       <label>{$t('api_server_url_label')}</label>
       <div class="field-row">
         <input type="text" bind:value={pwaServerUrl} placeholder="https://faces.example.com" style="flex:1;" />
-        <button class="primary" on:click={doPwaConnect} style="flex-shrink:0;">{$t('api_server_connect')}</button>
+        <button class="primary" on:click={() => doPwaConnect()} style="flex-shrink:0;">{$t('api_server_connect')}</button>
       </div>
     </div>
     {#if pwaConnectMsg}
       <div class="save-msg" class:error-msg={pwaConnectMsg.startsWith('✗')}>{pwaConnectMsg}</div>
+    {/if}
+
+    <!-- Save as preset -->
+    <div class="form-grid" style="margin-top:10px;">
+      <label>{$t('api_server_save_as')}</label>
+      <div class="field-row">
+        <input type="text" bind:value={newPresetName} placeholder={pwaServerUrl || $t('api_server_preset_ph')} style="flex:1;" />
+        <button on:click={saveCurrentAsPreset} style="flex-shrink:0;">{$t('api_server_save_preset')}</button>
+      </div>
+    </div>
+    {#if presetMsg}
+      <div class="save-msg" class:error-msg={presetMsg.startsWith('✗')}>{presetMsg}</div>
     {/if}
   </section>
   {/if}
@@ -1491,6 +1548,18 @@
   .save-btn { align-self: flex-start; padding: 8px 20px; }
   .save-msg { font-size: 12px; color: #80c080; }
   .error-msg { font-size: 12px; color: #e08080; }
+
+  /* Server presets */
+  .preset-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .preset-row:last-child { border-bottom: none; }
+  .preset-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .preset-name { font-size: 13px; color: #c0d0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preset-url  { font-size: 11px; color: #6070a0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preset-connect { font-size: 12px; padding: 3px 10px; flex-shrink: 0; }
+  .preset-connect.active-preset { background: #2a4a2a; border-color: #4a8a4a; color: #80c080; }
+  .icon-btn { padding: 3px 8px; font-size: 14px; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; color: #8090a8; }
+  .icon-btn:hover { border-color: rgba(255,255,255,0.15); color: #c0d0f0; }
+  .icon-btn.danger:hover { color: #e08080; border-color: rgba(224,128,128,0.3); }
 
   /* API keys */
   .key-row {
