@@ -383,7 +383,8 @@ else
             UPDATE batch_jobs SET status='paused' WHERE status='running';
         " 2>/dev/null && info "batch_jobs + batch_job_files tables ensured" || true
         # Additive column: local_path on batch_job_files (added later — idempotent)
-        sqlite3 "$DB_PATH" "ALTER TABLE batch_job_files ADD COLUMN local_path TEXT;" 2>/dev/null || true
+        apply_migration "batch_job_files.local_path" \
+            "ALTER TABLE batch_job_files ADD COLUMN local_path TEXT;"
 
         info "All migrations complete"
     fi

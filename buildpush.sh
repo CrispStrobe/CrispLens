@@ -12,25 +12,26 @@ fi
 
 MESSAGE="$1"
 
-echo "--- 1. Navigating to renderer ---"
+echo "--- 1. Building v2 renderer ---"
 cd electron-app-v2/renderer
-
-echo "--- 2. Building frontend (npm run build) ---"
 npm run build
-
-echo "--- 3. Navigating back to root ---"
 cd ../..
 
-echo "--- 4. Staging all changes (including backend) ---"
+echo "--- 2. Building v4 renderer ---"
+cd electron-app-v4/renderer
+npm run build
+cd ../..
+
+echo "--- 3. Staging all changes ---"
 git add .
 
-echo "--- 5. Committing with message: $MESSAGE ---"
+echo "--- 4. Committing with message: $MESSAGE ---"
 git commit -m "$MESSAGE"
 
-echo "--- 6. Pushing to remote ---"
+echo "--- 5. Pushing to remote ---"
 git push
 
-echo "--- 7. Final status check ---"
+echo "--- 6. Final status check ---"
 git status
 
 echo "--- Done! ---"
