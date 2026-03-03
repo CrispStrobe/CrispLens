@@ -30,21 +30,26 @@ class RemoteV2Client {
   }
 
   async _login() {
-    const form = new URLSearchParams();
-    form.set('username', this.username);
-    form.set('password', this.password);
+    const url = `${this.baseUrl}/api/auth/login`;
+    console.log(`[remote-v2] POST ${url} (user=${this.username})`);
 
-    const res = await this._fetch('/api/auth/login', {
+    const res = await fetch(url, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:    form.toString(),
-    }, false /* skipAuth */);
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ username: this.username, password: this.password }),
+    });
 
-    if (!res.ok) throw new Error(`Remote v2 auth failed: ${res.status}`);
-    // Extract Set-Cookie header
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Remote v2 auth failed: HTTP ${res.status} — ${body}`);
+    }
     const setCookie = res.headers.get('set-cookie');
-    if (setCookie) this._cookie = setCookie.split(';')[0];
-    else throw new Error('Remote v2 auth: no Set-Cookie in response');
+    if (setCookie) {
+      this._cookie = setCookie.split(';')[0];
+      console.log(`[remote-v2] auth OK, cookie set`);
+    } else {
+      throw new Error('Remote v2 auth: no Set-Cookie in response');
+    }
   }
 
   // ── HTTP helpers ──────────────────────────────────────────────────────────────

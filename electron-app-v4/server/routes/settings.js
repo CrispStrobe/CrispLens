@@ -354,13 +354,17 @@ router.get('/processing-status', requireAuth, async (req, res) => {
     return res.json({ backend, remote_v2_reachable: false });
   }
   let reachable = false;
+  let error_msg = null;
   try {
     const { getRemoteClient } = require('../../core/remote-v2-client');
     const client = getRemoteClient(f);
     await client.ensureAuth();
     reachable = true;
-  } catch {}
-  res.json({ backend, remote_v2_reachable: reachable });
+  } catch (err) {
+    error_msg = err.message;
+    console.error('[processing-status] remote v2 unreachable:', err.message);
+  }
+  res.json({ backend, remote_v2_reachable: reachable, error: error_msg });
 });
 
 // ── GET /settings/processing-backend (lightweight read) ─────────────────────

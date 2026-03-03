@@ -566,9 +566,11 @@
     remoteV2TestMsg = '';
     try {
       const r = await fetch('/api/settings/processing-status').then(r => r.json());
-      remoteV2TestMsg = r.remote_v2_reachable
-        ? '✓ ' + $t('remote_v2_connected')
-        : '✗ ' + $t('remote_v2_unreachable');
+      if (r.remote_v2_reachable) {
+        remoteV2TestMsg = '✓ ' + $t('remote_v2_connected');
+      } else {
+        remoteV2TestMsg = '✗ ' + $t('remote_v2_unreachable') + (r.error ? `: ${r.error}` : '');
+      }
     } catch (e) {
       remoteV2TestMsg = '✗ ' + e.message;
     } finally {

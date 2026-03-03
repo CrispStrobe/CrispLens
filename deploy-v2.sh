@@ -15,6 +15,9 @@
 #   CRISP_WEB_SERVER    nginx|apache2 — web server     (auto-detected: apache2 if running)
 #   CRISP_SSL           true|false — Let's Encrypt     (default: false)
 #   CRISP_SSL_EMAIL     email for Let's Encrypt        (required if CRISP_SSL=true)
+#   CRISP_ALLOWED_ORIGINS  extra CORS origins (comma-separated, no spaces)
+#                          e.g. "http://nas.local:7861,http://192.168.1.5:7861"
+#                          localhost:7861/5173 are always included automatically.
 #   CRISP_YES=1         skip the "Proceed?" confirmation prompt
 #
 # Container mode (auto-detected from /.dockerenv, /run/.containerenv, cgroup,
@@ -209,6 +212,8 @@ create_service() {
         printf 'Environment="FACE_REC_DATA_DIR=%s"\n' "$dir"
         printf 'Environment="FACE_REC_WORKERS=%s"\n' "$workers"
         printf 'Environment="CRISP_HTTPS_COOKIES=1"\n'
+        [[ -n "${CRISP_ALLOWED_ORIGINS:-}" ]] && \
+            printf 'Environment="CRISP_ALLOWED_ORIGINS=%s"\n' "$CRISP_ALLOWED_ORIGINS"
         [[ -n "$admin_env" ]] && printf '%b' "$admin_env"
         printf 'ExecStart=%s/venv/bin/uvicorn fastapi_app:app \\\n' "$dir"
         printf '    --host 127.0.0.1 \\\n'
