@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { allPeople, t } from '../stores.js';
+  import { allPeople, t, processingBackend } from '../stores.js';
   import { fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
 
   export let imageId;
@@ -89,12 +89,21 @@
   let showParams = false;
   let reDetecting = false;
 
-  // v4 Node.js backend only supports SCRFD (buffalo_l det_10g.onnx).
-  // 'auto' maps to SCRFD; 'none' skips detection and runs VLM only.
-  const DET_MODELS = [
-    { value: 'auto', label: 'det_model_auto' },
-    { value: 'none', label: 'det_model_none' },
+  // Local det models for v4 Node.js backend. Extended when remote_v2 backend active.
+  const LOCAL_DET_MODELS = [
+    { value: 'auto',  label: 'det_model_auto'  },  // SCRFD (buffalo_l)
+    { value: 'yunet', label: 'det_model_yunet' },  // YuNet (lightweight)
+    { value: 'none',  label: 'det_model_none'  },  // VLM only
   ];
+  const REMOTE_DET_MODELS = [
+    { value: 'auto',       label: 'det_model_auto'       },
+    { value: 'retinaface', label: 'det_model_retinaface' },
+    { value: 'scrfd',      label: 'det_model_scrfd'      },
+    { value: 'yunet',      label: 'det_model_yunet'      },
+    { value: 'mediapipe',  label: 'det_model_mediapipe'  },
+    { value: 'none',       label: 'det_model_none'       },
+  ];
+  $: DET_MODELS = $processingBackend === 'remote_v2' ? REMOTE_DET_MODELS : LOCAL_DET_MODELS;
 
   // When "none (VLM only)" is selected, VLM must run — force the toggle on
   $: if (detModel === 'none') alsoRunVlm = true;
@@ -422,6 +431,9 @@
         </div>
 
         <div class="params-box visible">
+          <div class="backend-badge" title={$t('processing_backend_section')}>
+            {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+          </div>
           <div class="param-row">
             <label for="id-det-thresh-e">{$t('detection_threshold')}: {detThresh}</label>
             <input id="id-det-thresh-e" type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} />
@@ -539,6 +551,9 @@
 
         {#if showParams}
           <div class="params-box">
+            <div class="backend-badge" title={$t('processing_backend_section')}>
+              {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+            </div>
             <div class="param-row">
               <label for="id-det-thresh">{$t('detection_threshold')}: {detThresh}</label>
               <input id="id-det-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={detThresh} />
@@ -813,6 +828,7 @@
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   }
   .params-box.visible { border-color: #4a6fa5; }
+  .backend-badge { font-size: 10px; color: #7090c0; padding: 2px 0; opacity: 0.8; }
   .param-row { display: flex; flex-direction: column; gap: 4px; }
   .param-row label { color: #8090b0; }
   .param-row input[type="range"] { width: 100%; }

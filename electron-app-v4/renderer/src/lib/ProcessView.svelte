@@ -1,6 +1,6 @@
 <script>
   import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob } from '../api.js';
-  import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView } from '../stores.js';
+  import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView, processingBackend } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
 
@@ -232,13 +232,20 @@
   let skipVlm      = false;
   let showDetParams = false;
 
-  const DET_MODELS = [
-    { value: 'auto',       label: 'Auto (Standard)' },
-    { value: 'retinaface', label: 'RetinaFace' },
-    { value: 'scrfd',      label: 'SCRFD' },
-    { value: 'yunet',      label: 'YuNet' },
-    { value: 'mediapipe',  label: 'MediaPipe' },
+  const LOCAL_DET_MODELS = [
+    { value: 'auto',  label: 'det_model_auto'  },
+    { value: 'yunet', label: 'det_model_yunet' },
+    { value: 'none',  label: 'det_model_none'  },
   ];
+  const REMOTE_DET_MODELS = [
+    { value: 'auto',       label: 'det_model_auto'       },
+    { value: 'retinaface', label: 'det_model_retinaface' },
+    { value: 'scrfd',      label: 'det_model_scrfd'      },
+    { value: 'yunet',      label: 'det_model_yunet'      },
+    { value: 'mediapipe',  label: 'det_model_mediapipe'  },
+    { value: 'none',       label: 'det_model_none'       },
+  ];
+  $: DET_MODELS = $processingBackend === 'remote_v2' ? REMOTE_DET_MODELS : LOCAL_DET_MODELS;
 
   $: detParams = {
     det_thresh:    detThresh,
@@ -743,9 +750,14 @@
 
   <!-- Detection settings (collapsible) -->
   <div class="det-settings">
-    <button class="det-toggle" on:click={() => showDetParams = !showDetParams}>
-      ⚙ {$t('pv_det_settings')} {showDetParams ? '▲' : '▼'}
-    </button>
+    <div class="det-settings-header">
+      <button class="det-toggle" on:click={() => showDetParams = !showDetParams}>
+        ⚙ {$t('pv_det_settings')} {showDetParams ? '▲' : '▼'}
+      </button>
+      <span class="backend-chip">
+        {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+      </span>
+    </div>
     {#if showDetParams}
       <div class="det-params-box">
         <!-- Skip toggles at the top — affect which pipelines run -->
@@ -777,7 +789,7 @@
             <label>{$t('detection_model')}</label>
             <select bind:value={detModel} disabled={skipFaces}>
               {#each DET_MODELS as m}
-                <option value={m.value}>{m.label}</option>
+                <option value={m.value}>{$t(m.label)}</option>
               {/each}
             </select>
           </div>
@@ -918,6 +930,8 @@
     width: 100%;
   }
   .det-toggle:hover { color: #90b0d0; background: #1a1a2e; }
+  .det-settings-header { display: flex; align-items: center; justify-content: space-between; }
+  .backend-chip { font-size: 10px; color: #5070a0; padding-right: 14px; }
   .det-params-box {
     display: flex; flex-direction: column; gap: 8px;
     padding: 10px 14px; border-top: 1px solid #2a2a3a;

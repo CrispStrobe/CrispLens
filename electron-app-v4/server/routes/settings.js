@@ -22,6 +22,12 @@ const DEFAULTS = {
   upload_max_dimension:  0,
   copy_exempt_paths:     [],
   fix_db_path:           '',
+  // Remote processing backend
+  processing_backend:  'local',  // 'local' | 'remote_v2'
+  remote_v2_url:       '',       // e.g. 'http://nas:7861'
+  remote_v2_user:      '',
+  remote_v2_pass:      '',
+  remote_v2_mode:      'shared_path', // 'shared_path' | 'upload_bytes'
 };
 
 // ── Load flat settings from DB (merged with DEFAULTS) ─────────────────────────
@@ -72,6 +78,15 @@ function flatToNested(f) {
       copy_exempt_paths:    exempts,
     },
     admin: { fix_db_path: f.fix_db_path },
+    processing: {
+      backend:   f.processing_backend,
+      remote_v2: {
+        url:  f.remote_v2_url,
+        user: f.remote_v2_user,
+        // Password intentionally omitted from GET response
+        mode: f.remote_v2_mode,
+      },
+    },
   };
 }
 
@@ -329,4 +344,37 @@ router.get('/user-detection', requireAuth, (req, res) => {
 
 router.put('/user-detection', requireAuth, (req, res) => res.json({ ok: true }));
 
+// ── GET /settings/processing-status ──────────────────────────────────────────
+// Returns the current processing backend and (if remote_v2) whether it's reachable.
+
+router.get('/processing-status', requireAuth, async (req, res) => {
+  const f       = loadFlat();
+  const backend = f.processing_backend || 'local';
+  if (backend !== 'remote_v2' || !f.remote_v2_url) {
+    return res.json({ backend, remote_v2_reachable: false });
+  }
+  let reachable = false;
+  try {
+    const { getRemoteClient } = require('../../core/remote-v2-client');
+    const client = getRemoteClient(f);
+    await client.ensureAuth();
+    reachable = true;
+  } catch {}
+  res.json({ backend, remote_v2_reachable: reachable });
+});
+
+// ── GET /settings/processing-backend (lightweight read) ─────────────────────
+
+router.get('/processing-backend', requireAuth, (req, res) => {
+  const f = loadFlat();
+  res.json({ backend: f.processing_backend || 'local' });
+});
+
 module.exports = router;
+
+// ── Helper: read processing_backend flat setting (used by other routes) ───────
+function getProcessingBackend() {
+  try { return loadFlat().processing_backend || 'local'; } catch { return 'local'; }
+}
+module.exports.getProcessingBackend = getProcessingBackend;
+module.exports.loadFlat             = loadFlat;

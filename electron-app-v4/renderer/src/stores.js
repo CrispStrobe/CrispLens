@@ -165,6 +165,21 @@ const EN = {
   det_model_yunet: 'YuNet',
   det_model_mediapipe: 'MediaPipe',
   det_model_none: 'None (VLM only)',
+  // Processing backend (v4)
+  processing_backend_section: 'Processing Backend',
+  backend_local:              'Local (Node.js ONNX)',
+  backend_remote_v2:          'Remote v2 FastAPI',
+  remote_v2_url:              'Remote FastAPI URL',
+  remote_v2_user:             'Remote username',
+  remote_v2_pass:             'Remote password',
+  remote_v2_mode:             'Path mode',
+  remote_v2_shared_path:      'Shared filesystem (filepath)',
+  remote_v2_upload_bytes:     'Upload image bytes',
+  remote_v2_test:             'Test Connection',
+  remote_v2_connected:        'Connected',
+  remote_v2_unreachable:      'Unreachable',
+  pipeline_local:             'Local',
+  pipeline_remote_v2:         'Remote v2',
   // Generate / BFL
   gen_seed_random: 'random',
   // Misc
@@ -622,6 +637,21 @@ export const TRANSLATIONS = {
     det_model_yunet: 'YuNet',
     det_model_mediapipe: 'MediaPipe',
     det_model_none: 'Keines (nur VLM)',
+    // Processing backend (v4)
+    processing_backend_section: 'Verarbeitungs-Backend',
+    backend_local:              'Lokal (Node.js ONNX)',
+    backend_remote_v2:          'Remote v2 FastAPI',
+    remote_v2_url:              'Remote-FastAPI-URL',
+    remote_v2_user:             'Remote-Benutzername',
+    remote_v2_pass:             'Remote-Passwort',
+    remote_v2_mode:             'Pfadmodus',
+    remote_v2_shared_path:      'Gemeinsames Dateisystem (Pfad)',
+    remote_v2_upload_bytes:     'Bilddaten hochladen',
+    remote_v2_test:             'Verbindung testen',
+    remote_v2_connected:        'Verbunden',
+    remote_v2_unreachable:      'Nicht erreichbar',
+    pipeline_local:             'Lokal',
+    pipeline_remote_v2:         'Remote v2',
     // Generate / BFL
     gen_seed_random: 'zufällig',
     // Misc
@@ -997,6 +1027,11 @@ export const backgroundTask = writable(null);
 export const processingMode   = writable('upload_full');
 export const localModel       = writable('buffalo_l');
 export const localModelStatus = writable({});   // { buffalo_l: bool, ... }
+
+// ── Processing backend (v4) ────────────────────────────────────────────────────
+// 'local'      — Node.js ONNX (SCRFD + YuNet)
+// 'remote_v2'  — Route to remote v2 FastAPI server (Python pipeline)
+export const processingBackend = writable('local');
 
 // ── Derived ───────────────────────────────────────────────────────────────────
 export const activeFilterCount = derived(filters, $f =>

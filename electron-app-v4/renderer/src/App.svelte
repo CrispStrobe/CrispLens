@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS } from './stores.js';
-  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase } from './api.js';
+  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend } from './stores.js';
+  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings } from './api.js';
 
   import Sidebar     from './lib/Sidebar.svelte';
   import Toolbar     from './lib/Toolbar.svelte';
@@ -125,6 +125,11 @@
     try { allTags.set(await fetchTags()); } catch { /* ignore */ }
     try { allPeople.set(await fetchPeople()); } catch { /* ignore */ }
     try { allAlbums.set(await fetchAlbums()); } catch { /* ignore */ }
+    // Load processing backend preference
+    try {
+      const s = await fetchSettings();
+      processingBackend.set(s?.processing?.backend ?? 'local');
+    } catch { /* ignore */ }
   }
 
   function applyServerUrl(url) {

@@ -683,11 +683,14 @@ router.post('/batch-jobs/:id/start', requireAuth, async (req, res) => {
 
   const { processImageIntoDb } = require('../processor');
 
+  const det_params = (() => { try { return job.det_params ? JSON.parse(job.det_params) : {}; } catch { return {}; } })();
+
   for (const f of files) {
     if (cancelled) break;
     try {
       const r = await processImageIntoDb(f.filepath, null, {
         visibility: job.visibility || 'shared',
+        ...det_params,   // det_model, det_thresh, rec_thresh, min_face_size, max_size, skip_faces
       });
       db.prepare("UPDATE batch_job_files SET status='done', image_id=?, processed_at=CURRENT_TIMESTAMP WHERE id=?")
         .run(r.imageId, f.id);

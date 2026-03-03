@@ -6,7 +6,10 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+import os
+import tempfile
+
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -145,6 +148,44 @@ async def _stream_paths(paths, s, vlm_provider, det_thresh=None, min_face_size=N
             payload = _build_payload(i, total, path, error=e)
         yield f"data: {json.dumps(payload)}\n\n"
     yield f"data: {json.dumps({'done': True, 'total': total})}\n\n"
+
+
+@router.post("/bytes")
+async def process_bytes(
+    file:              UploadFile = File(...),
+    det_model:         str   = Form('auto'),
+    det_thresh:        float = Form(0.5),
+    rec_thresh:        float = Form(0.4),
+    skip_faces:        bool  = Form(False),
+    skip_vlm:          bool  = Form(True),
+    original_filename: str   = Form(None),
+    user=Depends(get_current_user),
+):
+    """Accept raw image bytes, write to temp file, process, return result."""
+    s = _state_with_engine()
+    suffix = Path(file.filename or original_filename or 'img.jpg').suffix or '.jpg'
+    contents = await file.read()
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        os.write(fd, contents)
+        os.close(fd)
+        vlm = get_effective_vlm_provider(user, s)
+        result = s.engine.process_image(
+            tmp_path, vlm, force=True,
+            skip_faces=skip_faces, skip_vlm=skip_vlm,
+            det_model=det_model, det_thresh=det_thresh, rec_thresh=rec_thresh,
+        )
+        return {
+            "ok": True,
+            "image_id":   result.get('image_id'),
+            "faces_found": result.get('face_count', 0),
+        }
+    except Exception as e:
+        logger.error("process_bytes failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try: os.unlink(tmp_path)
+        except OSError: pass
 
 
 @router.post("/scan-folder")

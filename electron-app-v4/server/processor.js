@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { FaceEngine, findModelDir } = require('../core/face-engine');
 const { VectorStore }              = require('../core/search');
 const { getDb }                    = require('./db');
+const { getRemoteClient }          = require('../core/remote-v2-client');
 
 let _engine = null;
 
@@ -93,6 +94,20 @@ function upsertImage(db, filepath, meta, opts = {}) {
 // ── Process one image and write faces+embeddings to DB ───────────────────────
 
 async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
+  // ── Remote v2 routing ──────────────────────────────────────────────────────
+  try {
+    const { loadFlat } = require('./routes/settings');
+    const flat = loadFlat();
+    if ((flat.processing_backend || 'local') === 'remote_v2') {
+      const client = getRemoteClient(flat);
+      return await client.processFilepath(imagePath, opts);
+    }
+  } catch (err) {
+    if (err.message && err.message.includes('remote_v2')) throw err; // propagate config errors
+    // If settings module not loaded yet, fall through to local
+    console.warn('[processor] Remote backend check failed, using local:', err.message);
+  }
+  // ── Local processing ───────────────────────────────────────────────────────
   const db      = getDb();
   const engine  = await getEngine();
 
@@ -104,10 +119,17 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
     db.prepare('DELETE FROM faces WHERE image_id=?').run(imageId);
   }
 
+  const detOpts = {
+    det_model:    opts.det_model    || 'auto',
+    det_thresh:   parseFloat(opts.det_thresh)    || 0.5,
+    min_face_size: parseInt(opts.min_face_size)  || 0,
+    max_size:     parseInt(opts.max_size)         || 0,
+  };
+
   const t0 = Date.now();
-  const faces = await engine.processImage(imagePath);
+  const faces = await engine.processImage(imagePath, detOpts);
   const elapsed = Date.now() - t0;
-  console.log(`[processor] ${path.basename(imagePath)}: ${faces.length} face(s) in ${elapsed}ms  (${meta.width}×${meta.height})`);
+  console.log(`[processor] ${path.basename(imagePath)}: ${faces.length} face(s) in ${elapsed}ms  (${meta.width}×${meta.height}) det_model=${detOpts.det_model}`);
 
   const recThresh = parseFloat(opts.rec_thresh) || 0.40;
 

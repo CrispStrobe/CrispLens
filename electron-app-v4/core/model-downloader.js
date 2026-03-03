@@ -94,7 +94,27 @@ async function ensureModels() {
   return BUFFALO_DIR;
 }
 
-module.exports = { ensureModels, BUFFALO_DIR };
+// ── YuNet face detection model ────────────────────────────────────────────────
+
+const YUNET_URL  = 'https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx';
+const YUNET_FILE = 'face_detection_yunet_2023mar.onnx';
+
+/**
+ * Download the YuNet ONNX model into the given modelDir (same dir as buffalo_l).
+ * No-op if already present. Returns the full path to the model file.
+ */
+async function ensureYuNet(modelDir) {
+  const dest = path.join(modelDir, YUNET_FILE);
+  if (fs.existsSync(dest)) return dest;
+
+  console.log('[models] Downloading YuNet face detection model (~370KB)...');
+  fs.mkdirSync(modelDir, { recursive: true });
+  await download(YUNET_URL, dest);
+  console.log(`[models] YuNet ready at: ${dest}`);
+  return dest;
+}
+
+module.exports = { ensureModels, ensureYuNet, BUFFALO_DIR };
 
 if (require.main === module) {
   ensureModels().catch(err => { console.error(err); process.exit(1); });

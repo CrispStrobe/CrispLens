@@ -10,7 +10,7 @@
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
   } from '../api.js';
-  import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS } from '../stores.js';
+  import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags, fetchAlbums, fetchServerLogs,
            testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
@@ -50,6 +50,15 @@
   const BACKENDS   = ['insightface', 'dlib_hog', 'dlib_cnn'];
   const IF_MODELS  = ['buffalo_l', 'buffalo_m', 'buffalo_s', 'buffalo_sc'];
   const LANGUAGES  = [{ code: 'en', label: 'English' }, { code: 'de', label: 'Deutsch' }];
+
+  // ── Remote processing backend ─────────────────────────────────────────────
+  let procBackend    = 'local';  // 'local' | 'remote_v2'
+  let remoteV2Url    = '';
+  let remoteV2User   = '';
+  let remoteV2Pass   = '';
+  let remoteV2Mode   = 'shared_path';  // 'shared_path' | 'upload_bytes'
+  let remoteV2TestMsg = '';
+  let remoteV2Testing = false;
   const DET_MODELS = [
     { value: 'auto',       label: 'det_model_auto' },
     { value: 'retinaface', label: 'det_model_retinaface' },
@@ -78,6 +87,12 @@
         vlmProvider = c?.vlm?.provider ?? 'anthropic';
         vlmModel    = c?.vlm?.model ?? '';
         detModel    = c?.face_recognition?.insightface?.det_model ?? 'auto';
+        // Remote backend settings
+        procBackend  = c?.processing?.backend    ?? 'local';
+        remoteV2Url  = c?.processing?.remote_v2?.url  ?? '';
+        remoteV2User = c?.processing?.remote_v2?.user ?? '';
+        remoteV2Mode = c?.processing?.remote_v2?.mode ?? 'shared_path';
+        processingBackend.set(procBackend);
       }
     }).catch(() => {});
     // Non-admin: load personal VLM prefs (shows effective = override || global fallback)
@@ -236,6 +251,11 @@
           vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
           vlmModel    = cfg?.vlm?.model ?? '';
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
+          procBackend  = cfg?.processing?.backend    ?? 'local';
+          remoteV2Url  = cfg?.processing?.remote_v2?.url  ?? '';
+          remoteV2User = cfg?.processing?.remote_v2?.user ?? '';
+          remoteV2Mode = cfg?.processing?.remote_v2?.mode ?? 'shared_path';
+          processingBackend.set(procBackend);
         }
       } catch (e) { saveMsg = '⚠ Could not load server settings: ' + e.message; }
       if ($currentUser?.role !== 'admin') {
@@ -305,7 +325,13 @@
             upload_max_dimension: uploadMaxDim,
             copy_exempt_paths:    exemptPaths.filter(p => p.trim()),
             fix_db_path:          fixDbPath.trim(),
+            processing_backend: procBackend,
+            remote_v2_url:      remoteV2Url.trim(),
+            remote_v2_user:     remoteV2User.trim(),
+            ...(remoteV2Pass ? { remote_v2_pass: remoteV2Pass } : {}),
+            remote_v2_mode:     remoteV2Mode,
           });
+          processingBackend.set(procBackend);
         } else {
           // Non-admin saves language + upload settings to global config
           await saveSettings({ language, upload_max_dimension: uploadMaxDim });
@@ -531,6 +557,22 @@
       keyTestMsg = { ...keyTestMsg, [provider]: '✓ ' + r.message };
     } catch (e) {
       keyTestMsg = { ...keyTestMsg, [provider]: '✗ ' + e.message.replace(/^.*→ \d+: /, '') };
+    }
+  }
+
+  // ── Test remote v2 connection ─────────────────────────────────────────────
+  async function doTestRemoteV2() {
+    remoteV2Testing = true;
+    remoteV2TestMsg = '';
+    try {
+      const r = await fetch('/api/settings/processing-status').then(r => r.json());
+      remoteV2TestMsg = r.remote_v2_reachable
+        ? '✓ ' + $t('remote_v2_connected')
+        : '✗ ' + $t('remote_v2_unreachable');
+    } catch (e) {
+      remoteV2TestMsg = '✗ ' + e.message;
+    } finally {
+      remoteV2Testing = false;
     }
   }
 
@@ -852,6 +894,43 @@
           {/each}
         </div>
       {/if}
+    {/if}
+  </section>
+  {/if}
+
+  <!-- Processing backend (admin only) -->
+  {#if isAdmin && $backendReady}
+  <section class="card">
+    <h3>{$t('processing_backend_section')}</h3>
+    <div class="form-grid">
+      <label>{$t('processing_backend_section')}</label>
+      <select bind:value={procBackend}>
+        <option value="local">{$t('backend_local')}</option>
+        <option value="remote_v2">{$t('backend_remote_v2')}</option>
+      </select>
+    </div>
+    {#if procBackend === 'remote_v2'}
+    <div class="form-grid" style="margin-top:10px;">
+      <label>{$t('remote_v2_url')}</label>
+      <input type="text" bind:value={remoteV2Url} placeholder="http://nas:7861" />
+      <label>{$t('remote_v2_user')}</label>
+      <input type="text" bind:value={remoteV2User} placeholder="admin" />
+      <label>{$t('remote_v2_pass')}</label>
+      <input type="password" bind:value={remoteV2Pass} placeholder="••••••••" autocomplete="new-password" />
+      <label>{$t('remote_v2_mode')}</label>
+      <select bind:value={remoteV2Mode}>
+        <option value="shared_path">{$t('remote_v2_shared_path')}</option>
+        <option value="upload_bytes">{$t('remote_v2_upload_bytes')}</option>
+      </select>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+      <button on:click={doTestRemoteV2} disabled={remoteV2Testing || !remoteV2Url}>
+        {remoteV2Testing ? '…' : $t('remote_v2_test')}
+      </button>
+      {#if remoteV2TestMsg}
+        <span class:ok={remoteV2TestMsg.startsWith('✓')} class:error-msg={remoteV2TestMsg.startsWith('✗')}>{remoteV2TestMsg}</span>
+      {/if}
+    </div>
     {/if}
   </section>
   {/if}

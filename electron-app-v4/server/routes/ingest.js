@@ -33,18 +33,22 @@ const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
 router.post('/upload-local', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ detail: 'file required' });
 
-  const local_path  = req.body.local_path  || req.file.originalname;
-  const visibility  = req.body.visibility  || 'shared';
-  const rec_thresh  = parseFloat(req.body.rec_thresh)  || 0.40;
-  const skip_faces  = req.body.skip_faces  === 'true';
-  const skip_vlm    = req.body.skip_vlm    === 'true';
-  const owner_id    = req.user?.userId || null;
+  const local_path    = req.body.local_path    || req.file.originalname;
+  const visibility    = req.body.visibility    || 'shared';
+  const rec_thresh    = parseFloat(req.body.rec_thresh)    || 0.40;
+  const skip_faces    = req.body.skip_faces    === 'true';
+  const skip_vlm      = req.body.skip_vlm      === 'true';
+  const owner_id      = req.user?.userId || null;
+  const det_model     = req.body.det_model     || undefined;
+  const det_thresh    = req.body.det_thresh    ? parseFloat(req.body.det_thresh)    : undefined;
+  const min_face_size = req.body.min_face_size ? parseInt(req.body.min_face_size)   : undefined;
+  const max_size      = req.body.max_size      ? parseInt(req.body.max_size)        : undefined;
 
   try {
     const result = await processImageIntoDb(req.file.path, null, {
       local_path, visibility, rec_thresh,
       skip_recognition: skip_faces,
-      owner_id,
+      owner_id, det_model, det_thresh, min_face_size, max_size,
     });
     res.json({
       ok: true,

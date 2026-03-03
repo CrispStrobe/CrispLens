@@ -22,7 +22,8 @@ const path  = require('path');
 const https = require('https');
 const http  = require('http');
 const os    = require('os');
-const { warpToArcFace } = require('./face-align');
+const { warpToArcFace }  = require('./face-align');
+const { ensureYuNet }    = require('./model-downloader');
 
 sharp.cache(false);
 
@@ -50,7 +51,6 @@ function findModelDir() {
 // ── SCRFD decode helpers ─────────────────────────────────────────────────────
 
 const NMS_THRESHOLD   = 0.4;
-const SCORE_THRESHOLD = 0.5;
 const NUM_ANCHORS     = 2;  // buffalo_l det_10g uses 2 anchors per feature map cell
 
 /**
@@ -72,7 +72,7 @@ const NUM_ANCHORS     = 2;  // buffalo_l det_10g uses 2 anchors per feature map 
  *
  * `invScale = max(origW, origH) / 640` converts back to original pixels.
  */
-function decodeOutputs(detOutputs, outputNames, invScale) {
+function decodeOutputs(detOutputs, outputNames, invScale, scoreThresh = 0.5) {
   const strides = [8, 16, 32];
   const faces = [];
 
@@ -98,7 +98,7 @@ function decodeOutputs(detOutputs, outputNames, invScale) {
       for (let a = 0; a < NUM_ANCHORS; a++) {
         const ai = idx * NUM_ANCHORS + a;   // anchor index (0..nTotal-1)
         const score = scores[ai];
-        if (score < SCORE_THRESHOLD) continue;
+        if (score < scoreThresh) continue;
 
         // Anchor center in 640-space pixels
         const cx = col * stride;
@@ -196,11 +196,13 @@ function l2Normalize(vec) {
 
 class FaceEngine {
   constructor(modelDir) {
-    this.modelDir     = modelDir || findModelDir();
-    this.detModel     = null;
-    this.recModel     = null;
-    this.initialized  = false;
-    this._outputNames = null;  // cached after first detection
+    this.modelDir        = modelDir || findModelDir();
+    this.detModel        = null;     // SCRFD (det_10g.onnx)
+    this.recModel        = null;     // ArcFace (w600k_r50.onnx)
+    this.yunetModel      = null;     // YuNet (lazy-loaded on first use)
+    this.yunetOutputNames = null;
+    this.initialized     = false;
+    this._outputNames    = null;     // cached SCRFD output names
   }
 
   async init() {
@@ -240,41 +242,69 @@ class FaceEngine {
     console.log('[FaceEngine] Detection output names:', this._outputNames.join(', '));
   }
 
+  /** Lazy-load YuNet ONNX model (downloads if not present). */
+  async initYuNet() {
+    if (this.yunetModel) return;
+    const yunetPath = require('path').join(this.modelDir, 'face_detection_yunet_2023mar.onnx');
+    if (!fs.existsSync(yunetPath)) await ensureYuNet(this.modelDir);
+    this.yunetModel = await ort.InferenceSession.create(yunetPath, {
+      executionProviders: ['cpu'],
+      intraOpNumThreads:  2,
+      interOpNumThreads:  1,
+    });
+    this.yunetOutputNames = this.yunetModel.outputNames;
+    console.log('[FaceEngine] YuNet ready. Output names:', this.yunetOutputNames.join(', '));
+  }
+
   /**
-   * Detect all faces in `imagePath`.
+   * Detect all faces in `imagePath` using SCRFD (det_10g.onnx).
    *
-   * Returns array of { bbox:[x1,y1,x2,y2], score, landmarks:[[x,y]*5] }
-   * in original image pixel coordinates (display-space, after EXIF rotation).
+   * @param {string} imagePath
+   * @param {object} opts
+   * @param {number} [opts.det_thresh=0.5]    Score threshold (0-1)
+   * @param {number} [opts.min_face_size=0]   Minimum face short-side in px (0=no filter)
+   * @param {number} [opts.max_size=0]        Downscale image to this long-edge before detection
+   * Returns { faces, imageWidth, imageHeight }
    */
-  async detectFaces(imagePath) {
+  async detectFaces(imagePath, opts = {}) {
     await this.init();
+
+    const detThresh   = parseFloat(opts.det_thresh)   || 0.5;
+    const minFaceSize = parseInt(opts.min_face_size)  || 0;
+    const maxSize     = parseInt(opts.max_size)        || 0;
 
     const img  = sharp(imagePath);
     const meta = await img.metadata();
 
     // Use display-space dimensions (swap for EXIF orientations 5-8 which rotate 90°/270°)
-    let W = meta.width, H = meta.height;
+    const origW = meta.width, origH = meta.height;
+    let W = origW, H = origH;
     if (meta.orientation && meta.orientation >= 5) { [W, H] = [H, W]; }
 
-    // Apply EXIF rotation before letterboxing so detection runs in display coordinate space.
-    // This ensures bboxes align with how the image is displayed in the browser.
+    // Apply EXIF rotation; optionally downscale to max_size before letterboxing.
+    // invScale is computed from ORIGINAL dims — correct even with max_size pre-scale
+    // because: invScale(preSized→640) * invScale(orig→preSized) = max(origW,origH)/640
+    let pipeline = img.clone().rotate();
+    if (maxSize > 0 && Math.max(W, H) > maxSize) {
+      pipeline = pipeline.resize(maxSize, maxSize, { fit: 'inside', withoutEnlargement: true });
+    }
+
     // Letterbox to 640×640 (top-left placement, matching InsightFace)
-    const { data: detBuf } = await img.clone()
-      .rotate()   // apply EXIF auto-rotation (no-op if already upright)
+    const { data: detBuf } = await pipeline
       .resize(640, 640, {
         fit:        'contain',
         background: { r: 0, g: 0, b: 0 },
-        position:   'northwest',   // top-left, same as InsightFace padding
+        position:   'northwest',
       })
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    // NCHW float32 with (pixel - 127.5) / 128.0
+    // SCRFD: NCHW float32, (pixel - 127.5) / 128.0, RGB channel order
     const f32 = new Float32Array(3 * 640 * 640);
     const px  = 640 * 640;
     for (let i = 0; i < px; i++) {
-      f32[i      ] = (detBuf[i * 3    ] - 127.5) / 128.0;
-      f32[i + px ] = (detBuf[i * 3 + 1] - 127.5) / 128.0;
+      f32[i       ] = (detBuf[i * 3    ] - 127.5) / 128.0;
+      f32[i + px  ] = (detBuf[i * 3 + 1] - 127.5) / 128.0;
       f32[i + px*2] = (detBuf[i * 3 + 2] - 127.5) / 128.0;
     }
 
@@ -283,20 +313,126 @@ class FaceEngine {
     });
 
     // invScale: multiply 640-space coords → original pixel coords
-    // InsightFace uses det_scale = 640 / max(W,H), so invScale = max(W,H)/640
     const invScale = Math.max(W, H) / 640;
-    const raw   = decodeOutputs(detOutputs, this._outputNames, invScale);
-    const faces = applyNMS(raw);
+    const raw = decodeOutputs(detOutputs, this._outputNames, invScale, detThresh);
+    let faces = applyNMS(raw);
+
+    // Filter by minimum face size (short-side in px)
+    if (minFaceSize > 0) {
+      faces = faces.filter(f => {
+        const [x1, y1, x2, y2] = f.bbox;
+        return Math.min(x2 - x1, y2 - y1) >= minFaceSize;
+      });
+    }
 
     if (process.env.DEBUG) {
-      console.log(`[FaceEngine] detect: ${faces.length} face(s) after NMS (${raw.length} raw proposals), image ${W}x${H}`);
+      console.log(`[FaceEngine/SCRFD] ${faces.length} face(s) (${raw.length} raw), image ${W}x${H}, thresh=${detThresh}`);
       for (const f of faces) {
         const [x1, y1, x2, y2] = f.bbox;
-        console.log(`  score=${f.score.toFixed(3)}  bbox=[${Math.round(x1)},${Math.round(y1)},${Math.round(x2)},${Math.round(y2)}]  size=${Math.round(x2-x1)}x${Math.round(y2-y1)}px`);
+        console.log(`  score=${f.score.toFixed(3)}  bbox=[${[x1,y1,x2,y2].map(v=>Math.round(v)).join(',')}]  size=${Math.round(x2-x1)}x${Math.round(y2-y1)}px`);
       }
     }
 
     return { faces, imageWidth: W, imageHeight: H };
+  }
+
+  /**
+   * Detect faces using YuNet (face_detection_yunet_2023mar.onnx).
+   * YuNet is a lightweight (370KB) alternative to SCRFD. The ONNX model
+   * includes built-in NMS and outputs post-NMS detections directly.
+   *
+   * Input normalization: BGR float32, subtract mean [104, 117, 123] (no /128).
+   * Output tensor: [1, N, 15] — [x_tl, y_tl, w, h, kp0x, kp0y, ..., kp4x, kp4y, score]
+   * Keypoint order matches InsightFace: right_eye, left_eye, nose, mouth_right, mouth_left.
+   */
+  async detectFacesYuNet(imagePath, opts = {}) {
+    await this.initYuNet();
+
+    const DET_SIZE    = 640;
+    const detThresh   = parseFloat(opts.det_thresh)   || 0.5;
+    const minFaceSize = parseInt(opts.min_face_size)  || 0;
+    const maxSize     = parseInt(opts.max_size)        || 0;
+
+    const img  = sharp(imagePath);
+    const meta = await img.metadata();
+
+    let W = meta.width, H = meta.height;
+    if (meta.orientation && meta.orientation >= 5) { [W, H] = [H, W]; }
+
+    let pipeline = img.clone().rotate();
+    if (maxSize > 0 && Math.max(W, H) > maxSize) {
+      pipeline = pipeline.resize(maxSize, maxSize, { fit: 'inside', withoutEnlargement: true });
+    }
+
+    const { data: detBuf } = await pipeline
+      .resize(DET_SIZE, DET_SIZE, {
+        fit:        'contain',
+        background: { r: 0, g: 0, b: 0 },
+        position:   'northwest',
+      })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // YuNet: BGR NCHW float32, subtract mean [104, 117, 123]
+    const f32 = new Float32Array(3 * DET_SIZE * DET_SIZE);
+    const px  = DET_SIZE * DET_SIZE;
+    for (let i = 0; i < px; i++) {
+      f32[i       ] = detBuf[i * 3 + 2] - 104.0;  // B
+      f32[i + px  ] = detBuf[i * 3 + 1] - 117.0;  // G
+      f32[i + px*2] = detBuf[i * 3    ] - 123.0;  // R
+    }
+
+    const outputs = await this.yunetModel.run({
+      [this.yunetModel.inputNames[0]]: new ort.Tensor('float32', f32, [1, 3, DET_SIZE, DET_SIZE]),
+    });
+
+    const outData = outputs[this.yunetOutputNames[0]].data;   // Float32Array
+    const dims    = outputs[this.yunetOutputNames[0]].dims;
+
+    // Expect [1, N, 15] or [N, 15] — determine total detections
+    const N = dims.length === 3 ? dims[1] : (dims.length === 2 ? dims[0] : outData.length / 15);
+
+    // invScale: 640-space → original image coords (same formula as SCRFD)
+    const invScale = Math.max(W, H) / DET_SIZE;
+
+    const faces = [];
+    for (let i = 0; i < N; i++) {
+      const base  = i * 15;
+      const score = outData[base + 14];
+      if (score < detThresh || score <= 0) continue;
+
+      // YuNet: [x_tl, y_tl, width, height, kp0x, kp0y, ..., kp4x, kp4y, score]
+      const x1 = outData[base    ] * invScale;
+      const y1 = outData[base + 1] * invScale;
+      const x2 = (outData[base] + outData[base + 2]) * invScale;
+      const y2 = (outData[base + 1] + outData[base + 3]) * invScale;
+
+      if (minFaceSize > 0 && Math.min(x2 - x1, y2 - y1) < minFaceSize) continue;
+
+      // 5 keypoints
+      const landmarks = [];
+      for (let k = 0; k < 5; k++) {
+        landmarks.push([
+          outData[base + 4 + k * 2    ] * invScale,
+          outData[base + 4 + k * 2 + 1] * invScale,
+        ]);
+      }
+
+      faces.push({ bbox: [x1, y1, x2, y2], score, landmarks });
+    }
+
+    // Safety NMS pass (model should include NMS, but just in case)
+    const finalFaces = applyNMS(faces);
+
+    if (process.env.DEBUG) {
+      console.log(`[FaceEngine/YuNet] ${finalFaces.length} face(s), image ${W}x${H}, thresh=${detThresh}`);
+      for (const f of finalFaces) {
+        const [x1, y1, x2, y2] = f.bbox;
+        console.log(`  score=${f.score.toFixed(3)}  bbox=[${[x1,y1,x2,y2].map(v=>Math.round(v)).join(',')}]`);
+      }
+    }
+
+    return { faces: finalFaces, imageWidth: W, imageHeight: H };
   }
 
   /**
@@ -337,10 +473,23 @@ class FaceEngine {
   /**
    * Full pipeline: detect all faces in an image and return their embeddings.
    *
+   * @param {string} imagePath
+   * @param {object} opts
+   * @param {string} [opts.det_model='auto']  'auto'|'scrfd' → SCRFD, 'yunet' → YuNet
+   * @param {number} [opts.det_thresh=0.5]    Detection confidence threshold
+   * @param {number} [opts.min_face_size=0]   Minimum face short-side in px
+   * @param {number} [opts.max_size=0]        Pre-downscale long-edge before detection
    * Returns array of { bbox, score, landmarks, embedding:Float32Array<512> }
    */
-  async processImage(imagePath) {
-    const { faces, imageWidth, imageHeight } = await this.detectFaces(imagePath);
+  async processImage(imagePath, opts = {}) {
+    const detModel = (opts.det_model || 'auto').toLowerCase();
+    let detection;
+    if (detModel === 'yunet') {
+      detection = await this.detectFacesYuNet(imagePath, opts);
+    } else {
+      detection = await this.detectFaces(imagePath, opts);
+    }
+    const { faces, imageWidth, imageHeight } = detection;
 
     const results = [];
     for (const face of faces) {

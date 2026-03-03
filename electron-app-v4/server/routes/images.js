@@ -314,6 +314,26 @@ router.post('/:id/re-detect', requireAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM images WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ detail: 'Not found' });
 
+  // Check if using remote v2 backend
+  try {
+    const { loadFlat } = require('../routes/settings');
+    const flat = loadFlat();
+    if ((flat.processing_backend || 'local') === 'remote_v2') {
+      res.json({ ok: true, pending: true, message: 'routed to remote v2' });
+      setImmediate(async () => {
+        try {
+          const { getRemoteClient } = require('../../core/remote-v2-client');
+          const client = getRemoteClient(flat);
+          await client.reDetect(id, req.body || {});
+          console.log(`[re-detect remote] done: image ${id}`);
+        } catch (err) {
+          console.error(`[re-detect remote] image ${id}:`, err.message);
+        }
+      });
+      return;
+    }
+  } catch {}
+
   const p = resolveImagePath(row.filepath);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
 
