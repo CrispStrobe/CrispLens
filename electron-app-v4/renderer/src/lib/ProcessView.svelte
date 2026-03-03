@@ -1,9 +1,12 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob } from '../api.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob, isLocalMode } from '../api.js';
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView, processingBackend } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
   import syncManager from './SyncManager.js';
+
+  // Detect standalone (local SQLite) mode — no server required
+  const localMode = isLocalMode();
 
   let serverPickerOpen = false;
   const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -116,8 +119,44 @@
     if (inElectron) {
       const paths = await window.electronAPI.openFileDialog({ multiple: true });
       if (paths?.length) addPaths(paths);
+    } else if (localMode && isMobile) {
+      await pickPhotosFromLibrary();
     } else {
       document.getElementById('pv-file-input').click();
+    }
+  }
+
+  /** Pick photos from the iOS/Android photo library via @capacitor/camera. */
+  async function pickPhotosFromLibrary() {
+    let Camera;
+    try {
+      ({ Camera } = await import('@capacitor/camera'));
+    } catch {
+      // Fallback if Camera plugin not available
+      document.getElementById('pv-file-input')?.click();
+      return;
+    }
+    try {
+      const result = await Camera.pickImages({ quality: 90, limit: 50 });
+      if (!result.photos?.length) return;
+      const newItems = result.photos
+        .filter(p => {
+          // Avoid duplicates — match on native path or webPath
+          const key = p.path || p.webPath;
+          return !queue.find(q => q.path === key || q.webPath === p.webPath);
+        })
+        .map(p => ({
+          id: nextId++,
+          path: p.path || p.webPath,   // native path preferred (permanent)
+          webPath: p.webPath,           // Capacitor web URL for loading/inference
+          name: (p.path || p.webPath || 'photo').split('/').pop(),
+          file: null,                   // resolved at inference time via fetch(webPath)
+          status: 'pending',
+          imageId: null, faces: 0, people: [], sceneType: '', description: '', error: '',
+        }));
+      queue = [...queue, ...newItems];
+    } catch (e) {
+      if (e.message !== 'User cancelled photos app') console.error('Camera picker error:', e);
     }
   }
 
@@ -298,6 +337,8 @@
   $: progressPct     = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0;
 
   function startProcessing() {
+    // Standalone local mode always uses on-device ONNX inference
+    if (localMode) { startWebLocalInfer(); return; }
     if (webLocalInfer && !inElectron) { startWebLocalInfer(); return; }
     if ($processingMode === 'local_process') { startLocalProcess(); return; }
     startUploadFull();
@@ -313,9 +354,12 @@
     let engine;
     try {
       engine = await _getWebEngine();
-      // Point engine at the currently connected API server so it can download models
-      const remoteBase = localStorage.getItem('remote_url') || window.location.origin;
-      engine.setModelBaseUrl(remoteBase + '/models');
+      // In local/standalone mode, models are bundled and served from capacitor://localhost/models.
+      // In server mode, models are served from the connected API server.
+      const modelBase = localMode
+        ? (window.location.origin + '/models')
+        : ((localStorage.getItem('remote_url') || window.location.origin) + '/models');
+      engine.setModelBaseUrl(modelBase);
     } catch (e) {
       errorCount = pending.length;
       queue = queue.map(q => q.status === 'pending' ? { ...q, status: 'error', error: 'Engine load failed: ' + e.message } : q);
@@ -325,7 +369,22 @@
 
     for (const item of pending) {
       if (cancelled) break;
-      if (!item.file) {
+
+      // Resolve the File object — from browser File, or by fetching a Capacitor webPath
+      let fileObj = item.file;
+      if (!fileObj && item.webPath) {
+        try {
+          const blob = await fetch(item.webPath).then(r => r.blob());
+          fileObj = new File([blob], item.name || 'photo.jpg', { type: blob.type || 'image/jpeg' });
+        } catch (fetchErr) {
+          errorCount++;
+          queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'Could not load photo: ' + fetchErr.message } : q);
+          doneCount++;
+          continue;
+        }
+      }
+
+      if (!fileObj) {
         errorCount++;
         queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'No file object — web local inference requires direct file selection' } : q);
         doneCount++;
@@ -333,13 +392,16 @@
       }
       queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
       try {
-        const faceData = await engine.processFile(item.file, {
+        const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
           det_model:     detParams.det_model,
           visibility,
           onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
         });
+        // In local mode, use the native filepath (item.path) so the DB stores the
+        // permanent on-device path; the webPath is ephemeral (changes between sessions).
+        if (localMode && item.path) faceData.filepath = item.path;
         const resp = await importProcessed(faceData);
         queue = queue.map(q => q.id === item.id
           ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? faceData.faces.length }
@@ -676,24 +738,34 @@
     role="region"
     aria-label="Drop images here"
   >
-    <div class="drop-icon">📂</div>
-    <div class="drop-label">
-      {dragOver ? $t('pv_drop_active') : $t('pv_drop_idle')}
-    </div>
-    <div class="drop-sub">{$t('pv_drop_sub')}</div>
-    <div class="drop-buttons">
-      <button on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
-      <button on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
-    </div>
-    {#if !inElectron}
-    <!-- Web / mobile local inference toggle -->
-    <div class="web-infer-row">
-      <label class="web-infer-label">
-        <input type="checkbox" bind:checked={webLocalInfer} />
-        🔬 {$t('pv_web_local_infer')}
-      </label>
-      <span class="hint" style="font-size:11px;margin:0;">{$t('pv_web_local_infer_hint')}</span>
-    </div>
+    {#if localMode && isMobile}
+      <!-- Standalone Capacitor mode: photo library picker -->
+      <div class="drop-icon">📷</div>
+      <div class="drop-label">{$t('pv_local_pick_title')}</div>
+      <div class="drop-sub">{$t('pv_local_pick_sub')}</div>
+      <div class="drop-buttons">
+        <button class="primary" on:click={pickPhotosFromLibrary}>📷 {$t('pv_local_pick_btn')}</button>
+      </div>
+    {:else}
+      <div class="drop-icon">📂</div>
+      <div class="drop-label">
+        {dragOver ? $t('pv_drop_active') : $t('pv_drop_idle')}
+      </div>
+      <div class="drop-sub">{$t('pv_drop_sub')}</div>
+      <div class="drop-buttons">
+        <button on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
+        <button on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
+      </div>
+      {#if !inElectron}
+      <!-- Web / mobile local inference toggle -->
+      <div class="web-infer-row">
+        <label class="web-infer-label">
+          <input type="checkbox" bind:checked={webLocalInfer} />
+          🔬 {$t('pv_web_local_infer')}
+        </label>
+        <span class="hint" style="font-size:11px;margin:0;">{$t('pv_web_local_infer_hint')}</span>
+      </div>
+      {/if}
     {/if}
   </div>
   {#if webInferMsg}

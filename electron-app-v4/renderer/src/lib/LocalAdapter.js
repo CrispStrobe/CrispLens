@@ -26,6 +26,50 @@ export function toWebUrl(filepath) {
   return Capacitor.convertFileSrc(filepath);
 }
 
+// ── Person-matching helpers ───────────────────────────────────────────────────
+
+/** Load all person embeddings from SQLite as { person_id, name, vec: Float32Array }[]. */
+async function _loadPersonEmbeddings() {
+  const rows = await query(`
+    SELECT fe.person_id, p.name,
+           fe.embedding_vector
+    FROM face_embeddings fe
+    JOIN people p ON p.id = fe.person_id
+    WHERE fe.person_id IS NOT NULL
+      AND fe.embedding_vector IS NOT NULL
+  `);
+  return rows.map(r => ({
+    person_id: r.person_id,
+    name: r.name,
+    vec: _csvToFloat32(r.embedding_vector),
+  }));
+}
+
+function _csvToFloat32(str) {
+  if (!str) return new Float32Array(0);
+  const parts = str.split(',');
+  const arr = new Float32Array(parts.length);
+  for (let i = 0; i < parts.length; i++) arr[i] = +parts[i];
+  return arr;
+}
+
+function _cosine(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-10);
+}
+
+/** Return the best-matching person above threshold, or null. */
+function _cosineBestMatch(embedding, knownPeople, threshold = 0.4) {
+  let best = null, bestSim = threshold;
+  for (const p of knownPeople) {
+    if (p.vec.length !== embedding.length) continue;
+    const sim = _cosine(embedding, p.vec);
+    if (sim > bestSim) { best = p; bestSim = sim; }
+  }
+  return best;
+}
+
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
 export const localAdapter = {
@@ -252,7 +296,11 @@ export const localAdapter = {
     for (const tag of tags)
       await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
 
+    // Load all known person embeddings once for matching this image's faces
+    const knownPeople = await _loadPersonEmbeddings();
+
     // Faces + embeddings
+    let faceCount = 0;
     for (const face of faces) {
       const bbox = face.bbox ?? [0, 0, 1, 1];
       const faceRes = await run(
@@ -265,16 +313,24 @@ export const localAdapter = {
         const f32 = face.embedding instanceof Float32Array
           ? face.embedding
           : new Float32Array(face.embedding);
+        // Match against known people (cosine similarity)
+        const match = _cosineBestMatch(f32, knownPeople, 0.4);
         // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
         const embStr = Array.from(f32).join(',');
         await run(
           `INSERT OR REPLACE INTO face_embeddings
-           (face_id, embedding_vector, embedding_dimension) VALUES(?,?,?)`,
-          [faceId, embStr, f32.length],
+           (face_id, person_id, embedding_vector, embedding_dimension) VALUES(?,?,?,?)`,
+          [faceId, match?.person_id ?? null, embStr, f32.length],
         );
+        if (match) {
+          // Increment total_appearances for matched person
+          await run('UPDATE people SET total_appearances=total_appearances+1 WHERE id=?',
+                    [match.person_id]);
+        }
+        faceCount++;
       }
     }
 
-    return { ok: true, image_id: imageId };
+    return { ok: true, image_id: imageId, face_count: faceCount };
   },
 };

@@ -45,13 +45,18 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<!-- ATS: allow HTTP to local/LAN servers (192.168.x.x, .local, loopback).
-	     NSAllowsArbitraryLoads is broad but necessary for user-configured LAN IPs.
-	     Fine for sideloading; for App Store builds use HTTPS + remove this. -->
+	<!-- ATS: allow HTTP to local/LAN servers. For App Store use HTTPS and remove this. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- Photo library access for local mode image import -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>CrispLens needs access to your photo library to import and recognise faces on-device.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>CrispLens may save processed images to your photo library.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>CrispLens can use the camera to capture photos for face recognition.</string>
 </dict>
 </plist>

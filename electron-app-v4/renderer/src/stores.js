@@ -555,6 +555,9 @@ const EN = {
   offline_push_hint:         'Upload locally-processed images to the server',
   offline_pushing:           'Pushing…',
   pv_queued_offline:         'Queued — will sync when online',
+  pv_local_pick_title:       'Pick photos from your library',
+  pv_local_pick_sub:         'Faces are recognised on-device — no server required',
+  pv_local_pick_btn:         'Select Photos',
 };
 
 export const TRANSLATIONS = {
@@ -1061,6 +1064,9 @@ export const TRANSLATIONS = {
     offline_push_hint:         'Lokal verarbeitete Bilder auf den Server hochladen',
     offline_pushing:           'Hochladen…',
     pv_queued_offline:         'In Warteschlange — wird synchronisiert wenn online',
+    pv_local_pick_title:       'Fotos aus Bibliothek auswählen',
+    pv_local_pick_sub:         'Gesichtserkennung läuft auf dem Gerät — kein Server nötig',
+    pv_local_pick_btn:         'Fotos auswählen',
   },
 };
 
