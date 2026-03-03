@@ -42,6 +42,9 @@
   // True when running inside Electron (electronAPI is injected by preload.js)
   const inElectron = !!window.electronAPI;
 
+  // True when bundled inside Capacitor (iOS/Android) — origin is 'capacitor://localhost'
+  const inCapacitor = window.location.protocol === 'capacitor:';
+
   // True after fetchMe() has resolved (either user or null) — prevents login flash
   let sessionChecked = false;
 
@@ -67,6 +70,8 @@
     dbg(`#${attemptCount} GET ${url}`);
     try {
       const h = await fetchHealth();
+      // Validate it's actually a CrispLens backend response (not an HTML fallback page)
+      if (!h || typeof h !== 'object' || !h.ok) throw new Error('Not a CrispLens backend — is the URL correct?');
       lastError = '';
       dbg(`→ 200 OK  model_ready=${h.model_ready}`);
       if (!$backendReady) {
@@ -164,7 +169,8 @@
       // Same-origin — use relative /api paths (no setRemoteBase call)
       serverUrl = window.location.origin;
     }
-    editableServerUrl = serverUrl;
+    // In Capacitor, capacitor://localhost is meaningless as a displayed URL
+    editableServerUrl = (inCapacitor && !url) ? '' : serverUrl;
   }
 
   function connectToServer() {
@@ -215,6 +221,13 @@
     } else {
       // Browser / PWA — restore saved remote URL (empty = same origin)
       const saved = localStorage.getItem('remote_url') || '';
+      if (inCapacitor && !saved) {
+        // First run in Capacitor with no saved server URL.
+        // Don't poll capacitor://localhost — just show the connect screen.
+        editableServerUrl = '';
+        sessionChecked = true;  // prevent login flash
+        return;
+      }
       applyServerUrl(saved);
     }
 
@@ -253,16 +266,25 @@
                 <input
                   type="url"
                   bind:value={editableServerUrl}
-                  placeholder="https://yourserver.com  (leave blank for same origin)"
+                  placeholder={inCapacitor ? 'https://your-server.com or http://192.168.x.x:7861' : 'https://yourserver.com  (leave blank for same origin)'}
                   class="bw-server-input"
                   on:keydown={(e) => e.key === 'Enter' && connectToServer()}
                 />
                 <button class="primary" on:click={connectToServer}>Connect</button>
               </div>
-              <p class="bw-server-hint">
-                Leave blank if you're visiting this page directly from your CrispLens server.
-                Enter the full URL if you're connecting to a remote instance.
-              </p>
+              {#if inCapacitor}
+                <p class="bw-server-hint">
+                  Enter the URL of your CrispLens server.<br>
+                  • <strong>HTTPS</strong>: use your domain (e.g. <code>https://img.example.com</code>)<br>
+                  • <strong>LAN</strong>: use your Mac's IP, not localhost (e.g. <code>http://192.168.1.x:7861</code>)<br>
+                  • <strong>CORS</strong>: the server must allow origin <code>capacitor://localhost</code> — v4 Node.js does this automatically.
+                </p>
+              {:else}
+                <p class="bw-server-hint">
+                  Leave blank if you're visiting this page directly from your CrispLens server.
+                  Enter the full URL if you're connecting to a remote instance.
+                </p>
+              {/if}
             </div>
           {/if}
 
@@ -270,10 +292,16 @@
             <div class="bw-error">
               <strong>Error (attempt {attemptCount}):</strong>
               <code>{lastError}</code>
-              {#if lastError.toLowerCase().includes('fetch')}
+              {#if lastError.toLowerCase().includes('fetch') || lastError.toLowerCase().includes('load failed')}
                 <span class="bw-hint">
-                  "Failed to fetch" usually means: wrong URL, network blocked, or CORS.
-                  {#if serverUrl.startsWith('http://')}
+                  {lastError.toLowerCase().includes('load failed') ? '"Load failed"' : '"Failed to fetch"'} usually means: wrong URL, network unreachable, or CORS rejected.
+                  {#if inCapacitor}
+                    <br>• The server must respond with <code>Access-Control-Allow-Origin: capacitor://localhost</code> — v4 Node.js does this automatically; v2 FastAPI may need configuration.
+                    <br>• Use your machine's LAN IP (<code>192.168.x.x</code>), not <code>localhost</code>.
+                    {#if serverUrl.startsWith('http://')}
+                      <br>• HTTP is blocked by iOS by default — see ATS setup below, or use HTTPS.
+                    {/if}
+                  {:else if serverUrl.startsWith('http://')}
                     ⚠ HTTP detected — HTTPS is required for PWA features (and recommended for security).
                   {/if}
                 </span>
