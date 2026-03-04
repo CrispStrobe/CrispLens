@@ -344,13 +344,14 @@ export async function getDatabaseSize() {
 export async function exportDatabase() {
   try {
     console.log(`[LocalDB] Exporting ${DB_NAME} to JSON...`);
-    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+    const db = await getDB();
     
     // Ensure data is flushed to the web store if on web
     const isWeb = window.location.protocol !== 'capacitor:';
-    if (isWeb) await sqlite.saveToStore(DB_NAME);
+    if (isWeb && sqlite) await sqlite.saveToStore(DB_NAME);
 
-    const jsonExport = await sqlite.exportToJson(DB_NAME, 'full');
+    // In v7, exportToJson is available on the database instance
+    const jsonExport = await db.exportToJson('full');
     if (!jsonExport || !jsonExport.export) {
       throw new Error('Export failed: no data returned');
     }
@@ -370,18 +371,20 @@ export async function importDatabase(jsonContent) {
     console.log(`[LocalDB] Importing database from JSON...`);
     if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
     
-    // The plugin expects a string or object. If it's a string, we might need to parse it or pass it.
     const jsonStr = typeof jsonContent === 'string' ? jsonContent : JSON.stringify(jsonContent);
     
-    // We should probably close the current connection first if it exists
+    // We should close the current connection first
     if (_db) {
-      const isOpen = (await _db.isDBOpen()).result;
-      if (isOpen) await _db.close();
+      try {
+        const isOpen = (await _db.isDBOpen()).result;
+        if (isOpen) await _db.close();
+      } catch (e) { /* ignore */ }
       await sqlite.closeConnection(DB_NAME, false);
       _db = null;
     }
 
-    const result = await sqlite.importFromJson(jsonStr);
+    // In Capacitor v7, importFromJson takes an object with jsonstring property
+    const result = await sqlite.importFromJson({ jsonstring: jsonStr });
     console.log('[LocalDB] Import successful, changes:', result.changes);
     
     // Re-initialize the connection
