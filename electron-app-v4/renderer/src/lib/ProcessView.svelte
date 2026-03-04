@@ -356,27 +356,35 @@
 
   // ── Web local inference — onnxruntime-web + Canvas → import-processed ────
   async function startWebLocalInfer() {
+    console.log('[ProcessView] startWebLocalInfer() start');
     const pending = queue.filter(q => q.status === 'pending');
-    if (!pending.length) return;
+    if (!pending.length) {
+      console.warn('[ProcessView] No pending items to process');
+      return;
+    }
+    
     running = true; finished = false; cancelled = false;
     errorCount = 0; queuedCount = 0; doneCount = 0; totalCount = pending.length;
 
     let engine;
     let vlmCfg = {};
     try {
+      console.log('[ProcessView] Initializing web engine...');
       engine = await _getWebEngine();
+      
       // Load current settings to get VLM provider/model
       console.log('[ProcessView] Fetching settings for VLM config...');
       const s = await fetchSettings();
       console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
-      console.log('[ProcessView] VLM config to be used:', vlmCfg);
       
       const modelBase = localMode
         ? (window.location.origin + '/models')
         : ((localStorage.getItem('remote_url') || window.location.origin) + '/models');
+      console.log('[ProcessView] Setting model base URL:', modelBase);
       engine.setModelBaseUrl(modelBase);
     } catch (e) {
+      console.error('[ProcessView] Engine or settings load failed:', e);
       errorCount = pending.length;
       queue = queue.map(q => q.status === 'pending' ? { ...q, status: 'error', error: 'Engine load failed: ' + e.message } : q);
       running = false; finished = true;
@@ -394,6 +402,7 @@
           const blob = await fetch(item.webPath).then(r => r.blob());
           fileObj = new File([blob], item.name || 'photo.jpg', { type: blob.type || 'image/jpeg' });
         } catch (fetchErr) {
+          console.error(`[ProcessView] Could not load photo for ${item.name}:`, fetchErr);
           errorCount++;
           queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'Could not load photo: ' + fetchErr.message } : q);
           doneCount++;
@@ -402,6 +411,7 @@
       }
 
       if (!fileObj) {
+        console.error(`[ProcessView] No file object for ${item.name}`);
         errorCount++;
         queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'No file object — web local inference requires direct file selection' } : q);
         doneCount++;
@@ -409,6 +419,7 @@
       }
       queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
       try {
+        console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
@@ -420,15 +431,22 @@
           vlm_prompt:    $t('vlm_prompt'),
           onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
         });
+        
+        console.log(`[ProcessView] processFile OK for ${item.name}, importing results...`);
         // In local mode, use the native filepath (item.path) so the DB stores the
         // permanent on-device path; the webPath is ephemeral (changes between sessions).
         if (localMode && item.path) faceData.filepath = item.path;
+        
         const resp = await importProcessed(faceData);
+        console.log(`[ProcessView] Import OK for ${item.name}, imageId: ${resp.image_id}`);
+        
         queue = queue.map(q => q.id === item.id
           ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? faceData.faces.length }
           : q);
       } catch (e) {
+        console.error(`[ProcessView] Processing failed for ${item.name}:`, e);
         if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+          console.warn('[ProcessView] Offline, queuing for push later');
           // Offline — queue payload locally; push to server on next reconnect
           await syncManager.queueForPush(faceData).catch(() => {});
           queue = queue.map(q => q.id === item.id
@@ -444,6 +462,7 @@
     }
     webInferMsg = '';
     running = false; finished = true;
+    console.log('[ProcessView] startWebLocalInfer() finished');
     refreshGlobalData();
   }
 
