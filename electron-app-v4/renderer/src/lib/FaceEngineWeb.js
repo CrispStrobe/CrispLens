@@ -22,9 +22,9 @@
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web paths for WASM and worker scripts
-// We copy the entire dist folder to /wasm/ in vite.config.js
+// We copy the entire dist folder to /ort-wasm/ in vite.config.js
 // Use self.location.origin because window is not defined in Workers
-const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/wasm/';
+const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/ort-wasm/';
 ort.env.wasm.wasmPaths = wasmBase;
 
 // Disable proxy (workers) to avoid MIME type 'text/html' errors in some browsers/PWA setups

@@ -19,7 +19,7 @@ export default defineConfig({
       targets: [
         {
           src: 'node_modules/onnxruntime-web/dist/*',
-          dest: 'wasm',
+          dest: 'ort-wasm',
         },
         {
           src: 'node_modules/onnxruntime-web/dist/*.wasm',
@@ -31,7 +31,7 @@ export default defineConfig({
         },
         {
           src: 'node_modules/sql.js/dist/sql-wasm.wasm',
-          dest: 'wasm',
+          dest: 'ort-wasm',
         },
       ],
     }),
@@ -62,10 +62,10 @@ export default defineConfig({
         categories: ['photography', 'productivity', 'utilities'],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
+        globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,mjs}'],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/models\//, /^\/wasm\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/models\//, /^\/ort-wasm\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
@@ -78,7 +78,7 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^\/wasm\//,
+            urlPattern: /^\/ort-wasm\//,
             handler: 'CacheFirst',
             options: {
               cacheName: 'crisplens-wasm-assets',

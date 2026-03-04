@@ -123,6 +123,22 @@ const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist 
 if (uiDist) {
   console.log(`[server] Serving UI from: ${uiDist}`);
   
+  // Explicitly serve the wasm directory if it exists
+  const wasmDir = path.join(uiDist, 'ort-wasm');
+  if (fs.existsSync(wasmDir)) {
+    console.log(`[server] Found WASM directory at: ${wasmDir}`);
+    app.use('/ort-wasm', express.static(wasmDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.mjs') || filePath.endsWith('.js')) {
+          res.setHeader('Content-Type', 'application/javascript');
+        } else if (filePath.endsWith('.wasm')) {
+          res.setHeader('Content-Type', 'application/wasm');
+        }
+        console.log(`[server] Serving WASM asset: ${path.basename(filePath)} as ${res.getHeader('Content-Type')}`);
+      }
+    }));
+  }
+
   // Ensure .mjs files are served with correct MIME type
   express.static.mime.define({ 'application/javascript': ['mjs'] });
   
