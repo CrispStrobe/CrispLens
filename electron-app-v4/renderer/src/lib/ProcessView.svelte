@@ -8,6 +8,8 @@
   // Detect standalone (local SQLite) mode — no server required
   const localMode = isLocalMode();
 
+  let fileInput;
+  let folderInput;
   let serverPickerOpen = false;
   const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
   // Capacitor/mobile: window.Capacitor is injected by the Capacitor runtime
@@ -123,10 +125,9 @@
     } else if (localMode && isMobile) {
       await pickPhotosFromLibrary();
     } else {
-      const input = document.getElementById('pv-file-input');
-      if (input) {
-        console.log('[ProcessView] Triggering click on hidden input');
-        input.click();
+      if (fileInput) {
+        console.log('[ProcessView] Triggering click on fileInput ref');
+        fileInput.click();
       }
     }
   }
@@ -171,10 +172,9 @@
       const folder = await window.electronAPI.openFolderDialog();
       if (folder) addFolderPaths(folder);
     } else {
-      const input = document.getElementById('pv-folder-input');
-      if (input) {
-        console.log('[ProcessView] Triggering click on hidden folder input');
-        input.click();
+      if (folderInput) {
+        console.log('[ProcessView] Triggering click on folderInput ref');
+        folderInput.click();
       }
     }
   }
@@ -734,8 +734,10 @@
   <!-- Hidden file inputs for browser/PWA mode -->
   {#if !inElectron}
     <input type="file" id="pv-file-input" multiple accept="image/*" style="display:none"
+           bind:this={fileInput}
            on:change={e => { addFiles(e.target.files); e.target.value = ''; }} />
     <input type="file" id="pv-folder-input" webkitdirectory accept="image/*" style="display:none"
+           bind:this={folderInput}
            on:change={e => { addFiles(e.target.files); e.target.value = ''; }} />
   {/if}
 

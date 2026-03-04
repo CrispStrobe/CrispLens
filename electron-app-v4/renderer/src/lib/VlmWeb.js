@@ -219,14 +219,14 @@ export class VlmClientWeb {
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: `${prompt}\nIMPORTANT: Your response MUST be a valid JSON object ONLY. Do not include markdown blocks or extra text. Structure: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
+          { type: 'text', text: `${prompt}\nRespond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
         ]
       }]
     };
 
-    // OpenRouter can sometimes fail with response_format if the model doesn't support it
-    if (provider === 'openai') {
+    // OpenRouter and OpenAI both support json_object
+    if (provider === 'openai' || provider === 'openrouter') {
       body.response_format = { type: "json_object" };
     }
 
