@@ -21,10 +21,22 @@
 
 import * as ort from 'onnxruntime-web';
 
-// Point onnxruntime-web at our copied WASM files (see vite.config.js)
-ort.env.wasm.wasmPaths = '/wasm/';
-// Single-threaded — avoids SharedArrayBuffer requirement (COOP/COEP headers)
+// Configure onnxruntime-web paths for WASM and worker scripts
+// We copy these to /wasm/ in vite.config.js
+ort.env.wasm.wasmPaths = {
+  'ort-wasm-simd-threaded.wasm': '/wasm/ort-wasm-simd-threaded.wasm',
+  'ort-wasm-simd.wasm': '/wasm/ort-wasm-simd.wasm',
+  'ort-wasm-threaded.wasm': '/wasm/ort-wasm-threaded.wasm',
+  'ort-wasm.wasm': '/wasm/ort-wasm.wasm',
+  'ort-wasm-simd-threaded.mjs': '/wasm/ort-wasm-simd-threaded.mjs',
+  'ort-wasm-simd.mjs': '/wasm/ort-wasm-simd.mjs',
+  'ort-wasm-threaded.mjs': '/wasm/ort-wasm-threaded.mjs',
+  'ort-wasm.mjs': '/wasm/ort-wasm.mjs',
+};
+
+// Explicitly disable multi-threading to avoid SharedArrayBuffer/COOP/COEP issues in some environments
 ort.env.wasm.numThreads = 1;
+ort.env.wasm.proxy = false; // Run in main thread if needed to avoid worker MIME issues
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -291,7 +303,7 @@ export class FaceEngineWeb {
     this._progress('Loading SCRFD detector…');
     const buf = await this._fetchModelCached('det_10g.onnx');
     this._detSession = await ort.InferenceSession.create(buf, {
-      executionProviders: ['wasm'],
+      executionProviders: ['wasm', 'webgl'],
     });
     this._progress('Detector ready');
   }
@@ -301,7 +313,7 @@ export class FaceEngineWeb {
     this._progress('Loading ArcFace recognizer…');
     const buf = await this._fetchModelCached('w600k_r50.onnx');
     this._recSession = await ort.InferenceSession.create(buf, {
-      executionProviders: ['wasm'],
+      executionProviders: ['wasm', 'webgl'],
     });
     this._progress('Recognizer ready');
   }
