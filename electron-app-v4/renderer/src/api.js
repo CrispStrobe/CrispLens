@@ -17,9 +17,11 @@ export { localThumb };
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
 let _localMode = localStorage.getItem('db_mode') === 'local';
+console.log(`[api] Initializing. localMode=${_localMode}`);
 
 /** Switch to local SQLite mode (standalone Capacitor — no server needed). */
 export function setLocalMode(enabled) {
+  console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
   localStorage.setItem('db_mode', enabled ? 'local' : 'server');
 }
@@ -32,14 +34,25 @@ export function isLocalMode() { return _localMode; }
 let BASE = '/api';
 
 export function setRemoteBase(url) {
-  BASE = url.replace(/\/$/, '') + '/api';
+  const newBase = url.replace(/\/$/, '') + '/api';
+  console.log(`[api] setRemoteBase: ${BASE} → ${newBase}`);
+  BASE = newBase;
+}
+
+/** Helper to block server calls in standalone mode and log them. */
+function _guard(msg, fallback = null) {
+  if (_localMode) {
+    console.log(`[api] Blocked server call in standalone mode: ${msg}`);
+    return Promise.resolve(fallback);
+  }
+  return null;
 }
 
 async function _fetch(method, path, body) {
-  // 'include': always send cookies, even cross-origin.
-  // The Electron main process uses session.webRequest to fix ACAO:* → actual origin so
-  // Chromium accepts cross-origin credentialed responses without server changes.
-  console.log(`[api] ${method} ${path}`, body ? `(body: ${JSON.stringify(body).length} bytes)` : '');
+  if (_localMode) {
+    console.warn(`[api] _fetch(${method}, ${path}) called in local mode!`);
+    throw new Error('Server calls disabled in standalone mode');
+  }
   const opts = {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
@@ -48,7 +61,6 @@ async function _fetch(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   try {
     const res = await fetch(BASE + path, opts);
-    console.log(`[api] ${method} ${path} → ${res.status} ${res.statusText}`);
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
       throw new Error(`${method} ${path} → ${res.status}: ${text}`);
@@ -70,22 +82,18 @@ const del  = (path)        => _fetch('DELETE', path);
 // ── Images ────────────────────────────────────────────────────────────────────
 
 export async function fetchImages(params = {}) {
-  if (_localMode) {
-    console.log('[api] fetchImages (local mode)');
-    return localAdapter.getImages(params);
-  }
+  const g = _guard('fetchImages');
+  if (g) return localAdapter.getImages(params);
+
   const { person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='',
           sort='newest', limit=200, offset=0, unidentified=false, album=0 } = params;
   const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom,
                                    date_to: dateTo, sort, limit, offset, unidentified, album });
   try {
-    console.log(`[api] fetchImages (remote) sort=${sort} limit=${limit}`);
     const data = await get(`/images?${q}`);
     return Array.isArray(data) ? data : (data.images ?? []);
   } catch (e) {
-    console.warn(`[api] fetchImages remote failed: ${e.message}. Online=${navigator.onLine}`);
     if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
-      console.log('[api] fetchImages falling back to syncManager offline cache');
       return syncManager.getImages({ sort, limit, offset, person, tag });
     }
     throw e;
@@ -93,13 +101,11 @@ export async function fetchImages(params = {}) {
 }
 
 export function fetchImage(id) {
-  if (_localMode) return localAdapter.getImage(id);
+  const g = _guard('fetchImage');
+  if (g) return localAdapter.getImage(id);
   return get(`/images/${id}`);
 }
 
-// Snap the requested size to the nearest standard bucket so that small slider
-// movements share a browser-cache entry.  The <img> CSS width/height still uses
-// the real thumbSize, so the browser downscales visually — imperceptibly.
 const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];
 function _snapSize(size) {
   return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
@@ -130,7 +136,8 @@ export function downloadImage(id, filename) {
 }
 
 export function patchMetadata(id, params) {
-  if (_localMode) return localAdapter.patchMetadata(id, params);
+  const g = _guard('patchMetadata');
+  if (g) return localAdapter.patchMetadata(id, params);
   const { description='', scene_type='', tags_csv='' } = params;
   return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv });
 }
@@ -140,14 +147,16 @@ export function renameImage(id, new_filename) {
 }
 
 export function deleteImage(id) {
-  if (_localMode) return localAdapter.deleteImage(id);
+  const g = _guard('deleteImage');
+  if (g) return localAdapter.deleteImage(id);
   return del(`/images/${id}`);
 }
 export function openInOs(id)      { return post(`/images/${id}/open`); }
 export function openFolderInOs(id) { return post(`/images/${id}/open-folder`); }
 export function fetchExif(id)     { return get(`/images/${id}/exif`); }
 export function fetchImageFaces(id) {
-  if (_localMode) return localAdapter.getImageFaces(id);
+  const g = _guard('fetchImageFaces');
+  if (g) return localAdapter.getImageFaces(id);
   return get(`/images/${id}/faces`);
 }
 export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
@@ -164,7 +173,8 @@ export function addManualFace(imageId, bbox, rec_thresh = null) {
 // ── People ────────────────────────────────────────────────────────────────────
 
 export async function fetchPeople() {
-  if (_localMode) return localAdapter.getPeople();
+  const g = _guard('fetchPeople');
+  if (g) return localAdapter.getPeople();
   try {
     return await get('/people');
   } catch (e) {
@@ -174,23 +184,28 @@ export async function fetchPeople() {
   }
 }
 export function fetchPerson(id) {
-  if (_localMode) return localAdapter.getPerson(id);
+  const g = _guard('fetchPerson');
+  if (g) return localAdapter.getPerson(id);
   return get(`/people/${id}`);
 }
 export function renamePerson(id, name) {
-  if (_localMode) return localAdapter.renamePerson(id, name);
+  const g = _guard('renamePerson');
+  if (g) return localAdapter.renamePerson(id, name);
   return put(`/people/${id}`, { name });
 }
 export function mergePeople(source_id, target_id) {
-  if (_localMode) return localAdapter.mergePeople(source_id, target_id);
+  const g = _guard('mergePeople');
+  if (g) return localAdapter.mergePeople(source_id, target_id);
   return post('/people/merge', { source_id, target_id });
 }
 export function reassignFace(face_id, new_name) {
-  if (_localMode) return localAdapter.reassignFace(face_id, new_name);
+  const g = _guard('reassignFace');
+  if (g) return localAdapter.reassignFace(face_id, new_name);
   return post('/people/reassign-face', { face_id, new_name });
 }
 export function deletePerson(id) {
-  if (_localMode) return localAdapter.deletePerson(id);
+  const g = _guard('deletePerson');
+  if (g) return localAdapter.deletePerson(id);
   return del(`/people/${id}`);
 }
 
@@ -220,20 +235,12 @@ export function scanFolder(folder, recursive = true) {
 
 // ── Hybrid ingest ─────────────────────────────────────────────────────────────
 
-/**
- * Mode C: import pre-computed thumbnail + embeddings from local Electron processing.
- * VPS does FAISS person-matching only.
- * In local mode: writes directly to on-device SQLite (no server needed).
- */
 export function importProcessed(data) {
-  if (_localMode) return localAdapter.importProcessed(data);
+  const g = _guard('importProcessed');
+  if (g) return localAdapter.importProcessed(data);
   return post('/ingest/import-processed', data);
 }
 
-/**
- * Mode B: upload a full local image to VPS for processing.
- * Accepts an ArrayBuffer (from IPC readLocalFile) and the original local path.
- */
 export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}, { tagIds = [], newTagNames = [], albumId = null, newAlbumName = null } = {}) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
@@ -262,12 +269,6 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   return res.json();
 }
 
-/**
- * Stream batch processing via Server-Sent Events.
- * Returns an EventSource-like object.
- * onEvent(data) — called for each SSE message
- * Returns the EventSource so caller can close() it.
- */
 export function streamBatchFiles(paths, onEvent) {
   return _streamSSE(`${BASE}/process/batch-files`, { paths }, onEvent);
 }
@@ -277,7 +278,6 @@ export function streamBatch(folder, recursive, onEvent, detParams = {}) {
 }
 
 function _streamSSE(url, body, onEvent) {
-  // SSE via POST body — use fetch + ReadableStream (EventSource only supports GET)
   const ctrl = new AbortController();
   fetch(url, {
     method: 'POST',
@@ -311,20 +311,22 @@ function _streamSSE(url, body, onEvent) {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export function fetchHealth() {
-  if (_localMode) return Promise.resolve(localAdapter.health());
+  const g = _guard('fetchHealth', localAdapter.health());
+  if (g) return g;
   return get('/health');
 }
 
 export function login(username, password) { return post('/auth/login', { username, password }); }
 export function logout()                  { return post('/auth/logout'); }
 export function fetchMe() {
-  if (_localMode) return Promise.resolve(localAdapter.me());
+  const g = _guard('fetchMe', localAdapter.me());
+  if (g) return g;
   return get('/auth/me');
 }
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
-export function listUsers()                         { if (_localMode) return Promise.resolve([]); return get('/users'); }
+export function listUsers()                         { const g = _guard('listUsers', []); if (g) return g; return get('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
   return post('/users', { username, password, role, allowed_folders });
 }
@@ -344,45 +346,40 @@ export function setImageVisibility(imageId, visibility) {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export function fetchSettings() {
-  if (_localMode) return Promise.resolve(localAdapter.settings());
+  const g = _guard('fetchSettings', localAdapter.settings());
+  if (g) return g;
   return get('/settings');
 }
 export function saveSettings(body)                  { return put('/settings', body); }
 export function fetchTranslations(nocache = false) {
-  if (_localMode) return Promise.resolve(localAdapter.i18n());
+  const g = _guard('fetchTranslations', localAdapter.i18n());
+  if (g) return g;
   const q = nocache ? `?t=${Date.now()}` : '';
   return get(`/settings/i18n${q}`);
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
-export function fetchDbStatus()                     { if (_localMode) return Promise.resolve(null); return get('/settings/db-status'); }
-export function fetchEngineStatus()                 { if (_localMode) return Promise.resolve(null); return get('/settings/engine-status'); }
+export function fetchDbStatus()                     { const g = _guard('fetchDbStatus'); if (g) return g; return get('/settings/db-status'); }
+export function fetchEngineStatus()                 { const g = _guard('fetchEngineStatus'); if (g) return g; return get('/settings/engine-status'); }
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
-export function fetchUserVlmPrefs()                 { if (_localMode) return Promise.resolve({ effective: {}, global: {} }); return get('/settings/user-vlm'); }
-export function saveUserVlmPrefs(prefs)             { if (_localMode) return Promise.resolve({}); return put('/settings/user-vlm', prefs); }
-export function fetchUserDetPrefs()                 { if (_localMode) return Promise.resolve({ effective: {}, global: {} }); return get('/settings/user-detection'); }
-export function saveUserDetPrefs(prefs)             { if (_localMode) return Promise.resolve({}); return put('/settings/user-detection', prefs); }
+export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', { effective: {}, global: {} }); if (g) return g; return get('/settings/user-vlm'); }
+export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', {}); if (g) return g; return put('/settings/user-vlm', prefs); }
+export function fetchUserDetPrefs()                 { const g = _guard('fetchUserDetPrefs', { effective: {}, global: {} }); if (g) return g; return get('/settings/user-detection'); }
+export function saveUserDetPrefs(prefs)             { const g = _guard('saveUserDetPrefs', {}); if (g) return g; return put('/settings/user-detection', prefs); }
 export function changePassword(current_password, new_password) {
   return post('/auth/change-password', { current_password, new_password });
 }
 
 // ── Admin operations ──────────────────────────────────────────────────────────
 
-/**
- * Stream the server update (fix_db.sh) output.
- * Returns a native Response whose body is an SSE stream.
- * The caller reads from response.body (ReadableStream).
- */
-// ── Admin debug test endpoints ────────────────────────────────────────────
-
-/** GET plain JSONResponse (does Apache ever deliver JSON body?). */
-export function testAdminJson()       {
-  if (_localMode) return Promise.resolve(new Response('{}', { status: 200 }));
+export function testAdminJson() {
+  const g = _guard('testAdminJson', new Response('{}', { status: 200 }));
+  if (g) return g;
   return fetch(`${BASE}/admin/test-json`, { credentials: 'include' });
 }
 
 export function streamServerUpdate(fix_db_path = '', opts = {}) {
-  if (_localMode) return Promise.resolve(new Response('data: [DONE]\n\n', { status: 200 }));
-  // root_password removed — sudoers NOPASSWD handles auth, UI login is the gate.
+  const g = _guard('streamServerUpdate', new Response('data: [DONE]\n\n', { status: 200 }));
+  if (g) return g;
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -392,24 +389,22 @@ export function streamServerUpdate(fix_db_path = '', opts = {}) {
   });
 }
 
-/**
- * Return last N lines of the server application log via SSE.
- */
 export function fetchServerLogs(lines = 50, opts = {}) {
-  if (_localMode) return Promise.resolve(new Response('data: [DONE]\n\n', { status: 200 }));
+  const g = _guard('fetchServerLogs', new Response('data: [DONE]\n\n', { status: 200 }));
+  if (g) return g;
   return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include', ...opts });
 }
 
-/** Fallback: Get logs as a single JSON object (non-streaming). */
 export function fetchServerLogsJson(lines = 50) {
-  if (_localMode) return Promise.resolve({ lines: [] });
+  const g = _guard('fetchServerLogsJson', { lines: [] });
+  if (g) return g;
   return fetch(`${BASE}/admin/logs-json?lines=${lines}`, { credentials: 'include' }).then(r => r.json());
 }
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
-export function fetchProviders()              { if (_localMode) return Promise.resolve({}); return get('/api-keys/providers'); }
-export function fetchKeyStatus()              { if (_localMode) return Promise.resolve({}); return get('/api-keys/status'); }
+export function fetchProviders()              { const g = _guard('fetchProviders', {}); if (g) return g; return get('/api-keys/providers'); }
+export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', {}); if (g) return g; return get('/api-keys/status'); }
 export async function fetchVlmModels(provider) { const d = await get(`/api-keys/models/${provider}`); return d.models ?? d; }
 export function saveApiKey(provider, api_key, scope = 'system') {
   return post('/api-keys', { provider, key_value: api_key, scope });
@@ -422,7 +417,8 @@ export function testApiKey(provider) { return post(`/api-keys/test/${provider}`,
 // ── Tags & Stats ──────────────────────────────────────────────────────────────
 
 export function fetchTags() {
-  if (_localMode) return localAdapter.getTags();
+  const g = _guard('fetchTags');
+  if (g) return localAdapter.getTags();
   return get('/tags');
 }
 export function fetchTagsStats()  { return get('/tags/stats'); }
@@ -430,7 +426,8 @@ export function fetchDatesStats() { return get('/dates/stats'); }
 export function fetchFoldersStats() { return get('/folders/stats'); }
 export function fetchSceneTypes() { return get('/scene-types'); }
 export function fetchStats() {
-  if (_localMode) return localAdapter.getStats();
+  const g = _guard('fetchStats');
+  if (g) return localAdapter.getStats();
   return get('/stats');
 }
 
@@ -461,7 +458,6 @@ export function scanPhash(onEvent) {
     credentials: 'include',
     signal: ctrl.signal,
   }).then(async res => {
-    // Non-streaming response (imagehash not available)
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {
       const data = await res.json();
@@ -490,12 +486,6 @@ export function scanPhash(onEvent) {
   return { close: () => ctrl.abort() };
 }
 
-/**
- * Request a cleanup script from the server and trigger a browser download.
- * files: [{origin_path, server_path, kept_origin_path, filename}]
- * format: 'bash' | 'powershell' | 'json'
- * action: 'trash' | 'delete' | 'symlink'
- */
 export async function downloadCleanupScript(files, format = 'bash', action = 'trash') {
   const resp = await fetch(`${BASE}/duplicates/cleanup-script`, {
     method:      'POST',
@@ -504,7 +494,7 @@ export async function downloadCleanupScript(files, format = 'bash', action = 'tr
     body:         JSON.stringify({ files, format, action }),
   });
   if (!resp.ok) {
-    const text = await resp.text().catch(() => resp.statusText);
+    const text = await resp.text().catch(() => res.statusText);
     throw new Error(`cleanup-script → ${resp.status}: ${text}`);
   }
   const blob = await resp.blob();
@@ -551,35 +541,20 @@ export function scanHashes(onEvent) {
 // ── Cloud drives ──────────────────────────────────────────────────────────────
 
 export function fetchCloudDrives() { return get('/cloud-drives'); }
-
 export function getCloudDriveConfig(id) { return get(`/cloud-drives/${id}/config`); }
-
 export function browseCloudDrive(id, path = '/') {
   const q = new URLSearchParams({ path });
   return get(`/cloud-drives/${id}/browse?${q}`);
 }
-
-/**
- * Ingest (download + process) files from a cloud drive via SSE.
- * paths: string[]  (paths within the drive)
- * Returns { close() } to abort.
- */
 export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
-  return _streamSSE(
-    `${BASE}/cloud-drives/${driveId}/ingest`,
-    { paths, recursive, visibility },
-    onEvent,
-  );
+  return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
-
 export function renameCloudDriveItem(driveId, path, newName) {
   return post(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
 }
-
 export function trashCloudDriveItem(driveId, path) {
   return post(`/cloud-drives/${driveId}/trash`, { path });
 }
-
 export function deleteCloudDriveItem(driveId, path) {
   return fetch(`${BASE}/cloud-drives/${driveId}/item`, {
     method: 'DELETE',
@@ -595,14 +570,6 @@ export function browseFilesystem(path = '') {
   const q = new URLSearchParams({ path });
   return get(`/filesystem/browse?${q}`);
 }
-
-/**
- * Add filesystem paths to the DB via SSE (same pattern as streamBatch).
- * paths: string[]  (files or directories)
- * recursive: bool
- * onEvent(data) called per SSE message.
- * Returns { close() } to abort.
- */
 export function addToDb(paths, recursive, onEvent, visibility = 'shared', detParams = {}) {
   const ctrl = new AbortController();
   fetch(`${BASE}/filesystem/add`, {
@@ -637,40 +604,21 @@ export function addToDb(paths, recursive, onEvent, visibility = 'shared', detPar
 // ── Editing (crop / convert) ──────────────────────────────────────────────────
 
 export function fetchEditFormats() { return get('/edit/formats'); }
-
 export function cropImage(image_id, x, y, width, height, saveAs = 'replace', newFilename = null) {
   return post('/edit/crop', { image_id, x, y, width, height, save_as: saveAs, new_filename: newFilename });
 }
-
-export function convertImages(params) {
-  return post('/edit/convert', params);
-}
-
-export function adjustImage(params) {
-  return post('/edit/adjust', params);
-}
+export function convertImages(params) { return post('/edit/convert', params); }
+export function adjustImage(params) { return post('/edit/adjust', params); }
 
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 
-// register=false by default → file saved to disk, NOT added to DB.
-// Call registerBflFile() later to add to DB when the user explicitly requests it.
 export function outpaintImage(params)  { return post('/bfl/outpaint',  { register_in_db: false, ...params }); }
 export function inpaintImage(params)   { return post('/bfl/inpaint',   { register_in_db: false, ...params }); }
 export function aiEditImage(params)    { return post('/bfl/edit',      { register_in_db: false, ...params }); }
 export function generateImage(params)  { return post('/bfl/generate',  { register_in_db: false, ...params }); }
 export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
-
-/** URL to preview a generated file by server path (requires credentials). */
-export function bflPreviewUrl(filepath) {
-  return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`;
-}
-
-/** Register a previously-generated file in the images DB. Returns { new_image_id }. */
-export function registerBflFile(filepath) {
-  return post('/bfl/register', { filepath });
-}
-
-/** Download a generated file (fetches with auth, triggers browser download). */
+export function bflPreviewUrl(filepath) { return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`; }
+export function registerBflFile(filepath) { return post('/bfl/register', { filepath }); }
 export async function downloadBflFile(filepath, filename) {
   const url = bflPreviewUrl(filepath);
   const resp = await fetch(url, { credentials: 'include' });
@@ -685,7 +633,6 @@ export async function downloadBflFile(filepath, filename) {
   document.body.removeChild(a);
   URL.revokeObjectURL(objectUrl);
 }
-
 export function convertBatch(params, onEvent) {
   const ctrl = new AbortController();
   fetch(`${BASE}/edit/convert-batch`, {
@@ -726,19 +673,13 @@ export function fetchEvents(gapHours = 4, limit = 200) {
 
 // ── Face clusters ─────────────────────────────────────────────────────────────
 
-export function fetchUnidentifiedFaces(limit = 500) {
-  return get(`/faces/unidentified?limit=${limit}`);
-}
+export function fetchUnidentifiedFaces(limit = 500) { return get(`/faces/unidentified?limit=${limit}`); }
 export function fetchFaceClusters(threshold = 0.55, limit = 500, includeIdentified = false) {
   const q = new URLSearchParams({ threshold, limit, include_identified: includeIdentified });
   return get(`/faces/clusters?${q}`);
 }
-export function faceCropUrl(imageId, faceId, size = 128) {
-  return `${BASE}/faces/face-crop?image_id=${imageId}&face_id=${faceId}&size=${size}`;
-}
-export function assignCluster(faceIds, personName) {
-  return post('/faces/assign-cluster', { face_ids: faceIds, person_name: personName });
-}
+export function faceCropUrl(imageId, faceId, size = 128) { return `${BASE}/faces/face-crop?image_id=${imageId}&face_id=${faceId}&size=${size}`; }
+export function assignCluster(faceIds, personName) { return post('/faces/assign-cluster', { face_ids: faceIds, person_name: personName }); }
 
 // ── Ratings, flags, rotation ──────────────────────────────────────────────────
 
@@ -752,19 +693,12 @@ export function fetchAlbums() { return get('/albums'); }
 export function createAlbum(name, description = '') { return post('/albums', { name, description }); }
 export function updateAlbum(id, data) { return put(`/albums/${id}`, data); }
 export function deleteAlbum(id) { return del(`/albums/${id}`); }
-
 export function fetchAlbumImages(id, { sort = 'sort_order', limit = 500, offset = 0 } = {}) {
   const q = new URLSearchParams({ sort, limit, offset });
   return get(`/albums/${id}/images?${q}`);
 }
-
-export function addToAlbum(albumId, imageIds) {
-  return post(`/albums/${albumId}/images`, { image_ids: imageIds });
-}
-
-export function removeFromAlbum(albumId, imageIds) {
-  return _fetch('DELETE', `/albums/${albumId}/images`, { image_ids: imageIds });
-}
+export function addToAlbum(albumId, imageIds) { return post(`/albums/${albumId}/images`, { image_ids: imageIds }); }
+export function removeFromAlbum(albumId, imageIds) { return _fetch('DELETE', `/albums/${albumId}/images`, { image_ids: imageIds }); }
 
 // ── Watch folders ─────────────────────────────────────────────────────────────
 
@@ -772,11 +706,6 @@ export function fetchWatchFolders()        { return get('/watchfolders'); }
 export function addWatchFolder(data)       { return post('/watchfolders', data); }
 export function updateWatchFolder(id, data){ return put(`/watchfolders/${id}`, data); }
 export function deleteWatchFolder(id)      { return del(`/watchfolders/${id}`); }
-
-/**
- * Trigger a scan of a watch folder via SSE.
- * Returns { close() } to abort.
- */
 export function scanWatchFolder(id, onEvent) {
   const ctrl = new AbortController();
   fetch(`${BASE}/watchfolders/${id}/scan`, {
@@ -817,14 +746,7 @@ export function cancelBatchJob(id)          { return post(`/batch-jobs/${id}/can
 export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
   return get(`/batch-jobs/${id}/logs?limit=${limit}&offset=${offset}`);
 }
-
-export function addFileToBatchJob(jobId, data) {
-  return post(`/batch-jobs/${jobId}/add-file`, data);
-}
-
-/**
- * Upload a single file for a persistent batch job.
- */
+export function addFileToBatchJob(jobId, data) { return post(`/batch-jobs/${jobId}/add-file`, data); }
 export async function uploadBatchFile(buffer, localPath) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
@@ -837,11 +759,6 @@ export async function uploadBatchFile(buffer, localPath) {
   if (!res.ok) throw new Error(`uploadBatchFile → ${res.status}`);
   return res.json();
 }
-
-/**
- * Start or resume a batch job via SSE.
- * onEvent(jobData) called each poll; returns { close() }.
- */
 export function startBatchJob(id, onEvent, retry = false) {
   const q = retry ? '?retry=true' : '';
   return _streamSSE(`${BASE}/batch-jobs/${id}/start${q}`, {}, onEvent);
