@@ -101,6 +101,14 @@ const SCHEMA = `
 let _initPromise = null;
 let _initFailed = false;
 
+/** Force-reset the initialization state to allow a retry. */
+export function resetInit() {
+  console.log('[LocalDB] Resetting init state...');
+  _initFailed = false;
+  _initPromise = null;
+  _db = null;
+}
+
 async function _waitForJeepSqlite() {
   if (window.location.protocol === 'capacitor:') return;
   if (typeof document === 'undefined') {

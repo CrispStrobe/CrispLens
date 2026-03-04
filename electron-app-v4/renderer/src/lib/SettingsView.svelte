@@ -251,6 +251,9 @@
     : 'server';
 
   function switchDbMode(mode) {
+    if (mode === 'local') {
+      import('./LocalDB.js').then(m => m.resetInit()).catch(() => {});
+    }
     setLocalMode(mode === 'local');
     dbMode = mode;
     // Reload so the new mode takes effect immediately

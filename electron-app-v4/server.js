@@ -65,8 +65,28 @@ if (uiDist) {
 }
 
 app.use(cors({
-  origin:      true,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'capacitor://localhost',
+      'http://localhost',
+      'http://localhost:5173', // Vite dev
+      'http://localhost:7861'  // Self
+    ];
+    
+    if (allowedOrigins.includes(origin) || origin.startsWith('http://192.168.') || origin.startsWith('http://10.')) {
+      callback(null, true);
+    } else {
+      // For development, we can be lenient or strict. 
+      // Using true here allows any origin but with credentials support.
+      callback(null, true); 
+    }
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
 }));
 app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
