@@ -324,7 +324,7 @@ export function fetchMe() {
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
-export function listUsers()                         { return get('/users'); }
+export function listUsers()                         { if (_localMode) return Promise.resolve([]); return get('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
   return post('/users', { username, password, role, allowed_folders });
 }
@@ -354,10 +354,16 @@ export function fetchTranslations(nocache = false) {
   return get(`/settings/i18n${q}`);
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
-export function fetchDbStatus()                     { return get('/settings/db-status'); }
-export function fetchEngineStatus()                 { return get('/settings/engine-status'); }
+export function fetchDbStatus()                     { if (_localMode) return Promise.resolve(null); return get('/settings/db-status'); }
+export function fetchEngineStatus()                 { if (_localMode) return Promise.resolve(null); return get('/settings/engine-status'); }
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
-export function fetchUserVlmPrefs()                 { return get('/settings/user-vlm'); }
+export function fetchUserVlmPrefs()                 { if (_localMode) return Promise.resolve({ effective: {}, global: {} }); return get('/settings/user-vlm'); }
+export function saveUserVlmPrefs(prefs)             { if (_localMode) return Promise.resolve({}); return put('/settings/user-vlm', prefs); }
+export function fetchUserDetPrefs()                 { if (_localMode) return Promise.resolve({ effective: {}, global: {} }); return get('/settings/user-detection'); }
+export function saveUserDetPrefs(prefs)             { if (_localMode) return Promise.resolve({}); return put('/settings/user-detection', prefs); }
+export function changePassword(current_password, new_password) {
+  return post('/auth/change-password', { current_password, new_password });
+}
 
 // ── Admin operations ──────────────────────────────────────────────────────────
 
@@ -369,9 +375,13 @@ export function fetchUserVlmPrefs()                 { return get('/settings/user
 // ── Admin debug test endpoints ────────────────────────────────────────────
 
 /** GET plain JSONResponse (does Apache ever deliver JSON body?). */
-export function testAdminJson()       { return fetch(`${BASE}/admin/test-json`,         { credentials: 'include' }); }
+export function testAdminJson()       {
+  if (_localMode) return Promise.resolve(new Response('{}', { status: 200 }));
+  return fetch(`${BASE}/admin/test-json`, { credentials: 'include' });
+}
 
 export function streamServerUpdate(fix_db_path = '', opts = {}) {
+  if (_localMode) return Promise.resolve(new Response('data: [DONE]\n\n', { status: 200 }));
   // root_password removed — sudoers NOPASSWD handles auth, UI login is the gate.
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
@@ -384,38 +394,22 @@ export function streamServerUpdate(fix_db_path = '', opts = {}) {
 
 /**
  * Return last N lines of the server application log via SSE.
- *
- * Protocol:
- *   data: [PATH]/path/to/logfile   ← first event
- *   data: <log line>               ← one per line
- *   data: [DONE]                   ← end marker
- *   data: [ERROR]<message>         ← on failure
- */
-/**
- * Return last N lines of the server application log via SSE.
- * Returns the raw fetch Promise (resolving to Response) so the UI can 
- * read the stream directly, exactly like the SSE test buttons.
  */
 export function fetchServerLogs(lines = 50, opts = {}) {
+  if (_localMode) return Promise.resolve(new Response('data: [DONE]\n\n', { status: 200 }));
   return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include', ...opts });
 }
 
 /** Fallback: Get logs as a single JSON object (non-streaming). */
 export function fetchServerLogsJson(lines = 50) {
+  if (_localMode) return Promise.resolve({ lines: [] });
   return fetch(`${BASE}/admin/logs-json?lines=${lines}`, { credentials: 'include' }).then(r => r.json());
-}
-
-export function saveUserVlmPrefs(prefs)             { return put('/settings/user-vlm', prefs); }
-export function fetchUserDetPrefs()                 { return get('/settings/user-detection'); }
-export function saveUserDetPrefs(prefs)             { return put('/settings/user-detection', prefs); }
-export function changePassword(current_password, new_password) {
-  return post('/auth/change-password', { current_password, new_password });
 }
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
-export function fetchProviders()              { return get('/api-keys/providers'); }
-export function fetchKeyStatus()              { return get('/api-keys/status'); }
+export function fetchProviders()              { if (_localMode) return Promise.resolve({}); return get('/api-keys/providers'); }
+export function fetchKeyStatus()              { if (_localMode) return Promise.resolve({}); return get('/api-keys/status'); }
 export async function fetchVlmModels(provider) { const d = await get(`/api-keys/models/${provider}`); return d.models ?? d; }
 export function saveApiKey(provider, api_key, scope = 'system') {
   return post('/api-keys', { provider, key_value: api_key, scope });

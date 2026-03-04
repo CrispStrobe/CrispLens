@@ -207,7 +207,7 @@ export class FaceEngineWeb {
   async _fetchModelCached(filename) {
     // Use a canonical key (just the filename) so models downloaded from a server
     // are reusable in standalone/local mode regardless of base URL changes.
-    const canonicalKey = `onnx-model://${filename}`;
+    const canonicalKey = `http://onnx-model.local/${filename}`;
     const fetchUrl = `${this.modelBaseUrl}/${filename}`;
     
     // Direct download fallbacks (Hugging Face LFS mirrors)

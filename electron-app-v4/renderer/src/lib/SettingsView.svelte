@@ -120,7 +120,7 @@
     }
   }
 
-  $: if ($currentUser?.role === 'admin' && $backendReady && users.length === 0 && !usersLoading) {
+  $: if ($currentUser?.role === 'admin' && $backendReady && !usersLoaded && !usersLoading) {
     loadUsers();
   }
 
@@ -363,6 +363,7 @@
   // ── User management state (admin only) ───────────────────────────────────
   let users          = [];
   let usersLoading   = false;
+  let usersLoaded    = false;
   let usersMsg       = '';
   let newUserName    = '';
   let newUserPass    = '';
@@ -635,6 +636,7 @@
       usersMsg = '✗ ' + e.message;
     } finally {
       usersLoading = false;
+      usersLoaded = true;
     }
   }
 
