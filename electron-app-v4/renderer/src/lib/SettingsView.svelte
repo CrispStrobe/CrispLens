@@ -271,8 +271,8 @@
   async function checkModelStatus() {
     try {
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
-      const remoteBase = localStorage.getItem('remote_url') || window.location.origin;
-      faceEngineWeb.setModelBaseUrl(remoteBase + '/models');
+      // Always use /ort-wasm for local models
+      faceEngineWeb.setModelBaseUrl('/ort-wasm');
       modelStatus = await faceEngineWeb.getModelCacheStatus();
     } catch { /* ignore */ }
   }
@@ -283,9 +283,7 @@
     modelDownloadMsg = '';
     try {
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
-      const remoteUrl = localStorage.getItem('remote_url');
-      const remoteBase = remoteUrl || window.location.origin;
-      faceEngineWeb.setModelBaseUrl(remoteBase + '/models');
+      faceEngineWeb.setModelBaseUrl('/ort-wasm');
       const results = await faceEngineWeb.downloadModels(
         (msg) => { modelDownloadMsg = msg; }
       );

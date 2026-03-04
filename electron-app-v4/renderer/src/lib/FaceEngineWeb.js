@@ -25,6 +25,7 @@ import * as ort from 'onnxruntime-web';
 // We copy the entire dist folder to /ort-wasm/ in vite.config.js
 // Use self.location.origin because window is not defined in Workers
 const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/ort-wasm/';
+console.log(`[FaceEngineWeb] Setting wasmPaths to: ${wasmBase}`);
 ort.env.wasm.wasmPaths = wasmBase;
 
 // Disable proxy (workers) to avoid MIME type 'text/html' errors in some browsers/PWA setups
@@ -33,6 +34,24 @@ ort.env.wasm.proxy = false;
 
 // Disable SIMD to reduce memory usage and avoid "Out of memory" errors in WASM
 ort.env.wasm.simd = false;
+
+// Trace onnxruntime-web backend selection
+const _originalCreate = ort.InferenceSession.create;
+ort.InferenceSession.create = async function(modelData, options) {
+  console.log('[FaceEngineWeb] InferenceSession.create called', { 
+    options, 
+    wasmPaths: ort.env.wasm.wasmPaths,
+    proxy: ort.env.wasm.proxy 
+  });
+  try {
+    const session = await _originalCreate.apply(this, arguments);
+    console.log('[FaceEngineWeb] InferenceSession.create SUCCESS');
+    return session;
+  } catch (err) {
+    console.error('[FaceEngineWeb] InferenceSession.create FAILED:', err);
+    throw err;
+  }
+};
 
 
 // ── Constants ─────────────────────────────────────────────────────────────────

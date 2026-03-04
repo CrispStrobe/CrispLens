@@ -196,6 +196,43 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
     facesStored++;
   }
 
+  // ── VLM Enrichment ─────────────────────────────────────────────────────────
+  if (!opts.skip_vlm) {
+    try {
+      const { loadFlat } = require('./routes/settings');
+      const flat = loadFlat();
+      
+      if (flat.vlm_enabled && flat.vlm_provider) {
+        console.log(`[processor] Starting VLM enrichment for image ${imageId} (${flat.vlm_provider})...`);
+        const { vlmClient } = require('../core/vlm-providers');
+        
+        // Load keys from DB
+        const keyRows = db.prepare('SELECT provider, key_value FROM api_keys').all();
+        const keys = {};
+        for (const r of keyRows) keys[r.provider] = r.key_value;
+        vlmClient.setKeys(keys);
+
+        const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, 'Describe this image in detail.');
+        console.log(`[processor] VLM success for image ${imageId}`);
+
+        db.prepare(`
+          UPDATE images SET ai_description=?, ai_scene_type=? WHERE id=?
+        `).run(vlmResult.description || null, vlmResult.scene_type || null, imageId);
+
+        // Store tags
+        if (vlmResult.tags && vlmResult.tags.length > 0) {
+          for (const name of vlmResult.tags) {
+            db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+            const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+            db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(imageId, tag.id);
+          }
+        }
+      }
+    } catch (vlmErr) {
+      console.warn(`[processor] VLM enrichment failed for image ${imageId}:`, vlmErr.message);
+    }
+  }
+
   db.prepare(`
     UPDATE images SET face_count=?, processed=1, processed_at=CURRENT_TIMESTAMP WHERE id=?
   `).run(facesStored, imageId);

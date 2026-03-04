@@ -379,7 +379,7 @@
       vlmCfg = s?.vlm || {};
       
       const modelBase = localMode
-        ? (window.location.origin + '/models')
+        ? '/ort-wasm'
         : ((localStorage.getItem('remote_url') || window.location.origin) + '/models');
       console.log('[ProcessView] Setting model base URL:', modelBase);
       engine.setModelBaseUrl(modelBase);
