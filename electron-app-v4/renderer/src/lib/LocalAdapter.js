@@ -236,7 +236,12 @@ export const localAdapter = {
   },
 
   async testApiKey(provider) {
-    return { ok: true, message: `Key exists for ${provider} (direct Cloud API call enabled)` };
+    const { vlmClientWeb } = await import('./VlmWeb.js');
+    const keys = await this.getVlmKeys();
+    const key = keys[provider];
+    if (!key) throw new Error(`No key found for ${provider}`);
+    
+    return vlmClientWeb.testKey(provider, key);
   },
 
   async getVlmKeys() {
