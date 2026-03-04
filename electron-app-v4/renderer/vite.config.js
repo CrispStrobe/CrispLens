@@ -13,12 +13,16 @@ export default defineConfig({
       },
     }),
 
-    // Copy onnxruntime-web WASM files so they're served at /wasm/*.wasm
-    // Required for client-side ONNX inference (mobile / PWA local inference)
+    // Copy onnxruntime-web and SQLite WASM files
+    // Required for client-side inference and local SQLite in browser
     viteStaticCopy({
       targets: [
         {
           src: 'node_modules/onnxruntime-web/dist/ort-wasm*.wasm',
+          dest: 'wasm',
+        },
+        {
+          src: 'node_modules/sql.js/dist/sql-wasm.wasm',
           dest: 'wasm',
         },
       ],

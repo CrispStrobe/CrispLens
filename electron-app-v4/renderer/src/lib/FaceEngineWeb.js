@@ -571,6 +571,28 @@ export class FaceEngineWeb {
     const file_hash  = Array.from(new Uint8Array(hashBuffer))
       .map(b => b.toString(16).padStart(2, '0')).join('');
 
+    // ── VLM Enrichment (Standalone mode) ──────────────────────────────────────
+    let vlmResult = null;
+    if (opts.vlm_enabled) {
+      try {
+        this._progress('AI Enrichment (VLM)…');
+        const { vlmClientWeb } = await import('./VlmWeb.js');
+        const { localAdapter } = await import('./LocalAdapter.js');
+        const keys = await localAdapter.getVlmKeys();
+        vlmClientWeb.setKeys(keys);
+        
+        const prompt = opts.vlm_prompt || 'Describe this image in detail.';
+        const provider = opts.vlm_provider || 'anthropic';
+        const model = opts.vlm_model || '';
+        
+        vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
+        this._progress('AI Enrichment done');
+      } catch (e) {
+        console.warn('[FaceEngineWeb] VLM enrichment failed:', e);
+        this._progress('AI Enrichment failed (skipped)');
+      }
+    }
+
     this._progress('Done');
 
     return {
@@ -584,6 +606,9 @@ export class FaceEngineWeb {
       local_model:   'buffalo_l',
       faces:         facePayloads,
       visibility:    opts.visibility || 'shared',
+      description:   vlmResult?.description || null,
+      scene_type:    vlmResult?.scene_type || null,
+      tags:          vlmResult?.tags || [],
     };
   }
 }

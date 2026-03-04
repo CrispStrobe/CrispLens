@@ -212,6 +212,8 @@ export function deletePerson(id) {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 export function searchImages(q, limit = 50) {
+  const g = _guard('searchImages');
+  if (g) return localAdapter.searchImages(q, limit);
   return get(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
@@ -350,7 +352,11 @@ export function fetchSettings() {
   if (g) return g;
   return get('/settings');
 }
-export function saveSettings(body)                  { return put('/settings', body); }
+export function saveSettings(body) {
+  const g = _guard('saveSettings', localAdapter.saveSettings(body));
+  if (g) return g;
+  return put('/settings', body);
+}
 export function fetchTranslations(nocache = false) {
   const g = _guard('fetchTranslations', localAdapter.i18n());
   if (g) return g;
@@ -358,8 +364,8 @@ export function fetchTranslations(nocache = false) {
   return get(`/settings/i18n${q}`);
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
-export function fetchDbStatus()                     { const g = _guard('fetchDbStatus'); if (g) return g; return get('/settings/db-status'); }
-export function fetchEngineStatus()                 { const g = _guard('fetchEngineStatus'); if (g) return g; return get('/settings/engine-status'); }
+export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
+export function fetchEngineStatus()                 { const g = _guard('fetchEngineStatus', null); if (g) return g; return get('/settings/engine-status'); }
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
 export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', { effective: {}, global: {} }); if (g) return g; return get('/settings/user-vlm'); }
 export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', {}); if (g) return g; return put('/settings/user-vlm', prefs); }
@@ -403,16 +409,24 @@ export function fetchServerLogsJson(lines = 50) {
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
-export function fetchProviders()              { const g = _guard('fetchProviders', {}); if (g) return g; return get('/api-keys/providers'); }
-export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', {}); if (g) return g; return get('/api-keys/status'); }
+export function fetchProviders()              { const g = _guard('fetchProviders', localAdapter.getProviders()); if (g) return g; return get('/api-keys/providers'); }
+export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', localAdapter.getKeyStatus()); if (g) return g; return get('/api-keys/status'); }
 export async function fetchVlmModels(provider) { const d = await get(`/api-keys/models/${provider}`); return d.models ?? d; }
 export function saveApiKey(provider, api_key, scope = 'system') {
+  const g = _guard('saveApiKey', localAdapter.saveApiKey(provider, api_key));
+  if (g) return g;
   return post('/api-keys', { provider, key_value: api_key, scope });
 }
 export function deleteApiKey(provider, scope = 'system') {
+  const g = _guard('deleteApiKey', localAdapter.deleteApiKey(provider));
+  if (g) return g;
   return del(`/api-keys/${provider}?scope=${scope}`);
 }
-export function testApiKey(provider) { return post(`/api-keys/test/${provider}`, {}); }
+export function testApiKey(provider) {
+  const g = _guard('testApiKey', localAdapter.testApiKey(provider));
+  if (g) return g;
+  return post(`/api-keys/test/${provider}`, {});
+}
 
 // ── Tags & Stats ──────────────────────────────────────────────────────────────
 
@@ -494,7 +508,7 @@ export async function downloadCleanupScript(files, format = 'bash', action = 'tr
     body:         JSON.stringify({ files, format, action }),
   });
   if (!resp.ok) {
-    const text = await resp.text().catch(() => res.statusText);
+    const text = await res.text().catch(() => res.statusText);
     throw new Error(`cleanup-script → ${resp.status}: ${text}`);
   }
   const blob = await resp.blob();

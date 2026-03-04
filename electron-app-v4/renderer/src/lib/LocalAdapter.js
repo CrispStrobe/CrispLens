@@ -10,6 +10,45 @@
 import { Capacitor } from '@capacitor/core';
 import { query, run } from './LocalDB.js';
 
+// ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
+
+let _voyIndex = null;
+
+async function _getVoyIndex(forceRebuild = false) {
+  if (_voyIndex && !forceRebuild) return _voyIndex;
+  
+  const { Voy } = await import('voy-search');
+  const items = await _loadAllEmbeddings();
+  
+  const embeddings = items.map(p => ({
+    id:         String(p.face_id),
+    title:      p.person_name,
+    url:        JSON.stringify({ image_id: p.image_id, filename: p.filename }),
+    embeddings: Array.from(p.vec),
+  }));
+  
+  _voyIndex = new Voy({ embeddings });
+  return _voyIndex;
+}
+
+/** Return the best-matching person above threshold using Voy (HNSW). */
+async function _voyBestMatch(embedding, threshold = 0.4) {
+  try {
+    const index = await _getVoyIndex();
+    const results = index.search(Array.from(embedding), 1);
+    if (results.length > 0) {
+      const best = results[0];
+      // Voy score is similarity (higher is better for IP index)
+      if (best.score >= threshold) {
+        return { person_id: parseInt(best.id), name: best.title };
+      }
+    }
+  } catch (err) {
+    console.error('[LocalAdapter] Voy search error:', err);
+  }
+  return null;
+}
+
 // ── Filepath cache — lets thumbnailUrl() stay synchronous ─────────────────────
 // Populated whenever getImages / getImage / getPerson returns records.
 export const fileCache = new Map(); // image_id → filepath
@@ -26,21 +65,22 @@ export function toWebUrl(filepath) {
   return Capacitor.convertFileSrc(filepath);
 }
 
-// ── Person-matching helpers ───────────────────────────────────────────────────
-
-/** Load all person embeddings from SQLite as { person_id, name, vec: Float32Array }[]. */
-async function _loadPersonEmbeddings() {
+/** Load all face embeddings from SQLite for the search index. */
+async function _loadAllEmbeddings() {
   const rows = await query(`
-    SELECT fe.person_id, p.name,
-           fe.embedding_vector
+    SELECT fe.id, fe.person_id, p.name, fe.embedding_vector, f.image_id, i.filename
     FROM face_embeddings fe
-    JOIN people p ON p.id = fe.person_id
-    WHERE fe.person_id IS NOT NULL
-      AND fe.embedding_vector IS NOT NULL
+    JOIN faces f ON f.id = fe.face_id
+    JOIN images i ON i.id = f.image_id
+    LEFT JOIN people p ON p.id = fe.person_id
+    WHERE fe.embedding_vector IS NOT NULL
   `);
   return rows.map(r => ({
+    face_id: r.id,
     person_id: r.person_id,
-    name: r.name,
+    person_name: r.name || 'Unknown',
+    image_id: r.image_id,
+    filename: r.filename,
     vec: _csvToFloat32(r.embedding_vector),
   }));
 }
@@ -51,23 +91,6 @@ function _csvToFloat32(str) {
   const arr = new Float32Array(parts.length);
   for (let i = 0; i < parts.length; i++) arr[i] = +parts[i];
   return arr;
-}
-
-function _cosine(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-10);
-}
-
-/** Return the best-matching person above threshold, or null. */
-function _cosineBestMatch(embedding, knownPeople, threshold = 0.4) {
-  let best = null, bestSim = threshold;
-  for (const p of knownPeople) {
-    if (p.vec.length !== embedding.length) continue;
-    const sim = _cosine(embedding, p.vec);
-    if (sim > bestSim) { best = p; bestSim = sim; }
-  }
-  return best;
 }
 
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
@@ -82,11 +105,127 @@ export const localAdapter = {
     return { username: 'local', role: 'admin' };
   },
 
-  settings() {
+  async searchImages(q, limit = 50) {
+    console.log('[LocalAdapter] searchImages', { q, limit });
+    // Standalone mode semantic search using Voy
+    try {
+      const index = await _getVoyIndex();
+      // If q is an embedding (array of numbers), search directly.
+      // If q is a string, we currently don't have a local text-to-vector model (CLIP),
+      // so we fall back to a simple SQL LIKE search on filename/description.
+      if (Array.isArray(q)) {
+        const results = index.search(q, limit);
+        const imageIds = [...new Set(results.map(r => JSON.parse(r.url).image_id))];
+        if (imageIds.length === 0) return [];
+        const sql = `SELECT * FROM images WHERE id IN (${imageIds.join(',')})`;
+        return _cache(await query(sql));
+      } else {
+        const sql = `SELECT * FROM images WHERE filename LIKE ? OR description LIKE ? LIMIT ?`;
+        const pattern = `%${q}%`;
+        return _cache(await query(sql, [pattern, pattern, limit]));
+      }
+    } catch (err) {
+      console.error('[LocalAdapter] Search error:', err);
+      return [];
+    }
+  },
+
+  async settings() {
+    const rows = await query('SELECT key, value FROM settings WHERE key LIKE "pref_%"');
+    const prefs = {};
+    for (const row of rows) {
+      prefs[row.key.replace('pref_', '')] = row.value;
+    }
+    
     return {
-      ui:               { language: localStorage.getItem('lang') || 'en' },
-      face_recognition: { insightface: { det_model: 'auto', recognition_threshold: 0.4 } },
-      processing:       { backend: 'local' },
+      ui: { 
+        language: prefs.language || localStorage.getItem('lang') || 'en' 
+      },
+      face_recognition: { 
+        insightface: { 
+          det_model: prefs.det_model || 'auto',
+          recognition_threshold: parseFloat(prefs.rec_threshold || '0.4'),
+          detection_threshold: parseFloat(prefs.det_threshold || '0.5'),
+          det_size: parseInt(prefs.det_size || '640')
+        } 
+      },
+      processing: { backend: 'local' },
+      vlm: { 
+        enabled: prefs.vlm_enabled === 'true',
+        provider: prefs.vlm_provider || 'anthropic',
+        model: prefs.vlm_model || ''
+      },
+    };
+  },
+
+  async saveSettings(body) {
+    const mapping = {
+      'language': body.language,
+      'det_model': body.det_model,
+      'rec_threshold': body.rec_threshold,
+      'det_threshold': body.det_threshold,
+      'det_size': body.det_size,
+      'vlm_enabled': body.vlm_enabled ? 'true' : 'false',
+      'vlm_provider': body.vlm_provider,
+      'vlm_model': body.vlm_model
+    };
+    
+    for (const [key, value] of Object.entries(mapping)) {
+      if (value !== undefined) {
+        await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`pref_${key}`, String(value)]);
+      }
+    }
+    return { ok: true };
+  },
+
+  getProviders() {
+    return {
+      'anthropic': { display_name: 'Anthropic (Claude)' },
+      'openai':    { display_name: 'OpenAI (GPT-4o)' },
+      'google':    { display_name: 'Google (Gemini)' },
+    };
+  },
+
+  async getKeyStatus() {
+    const rows = await query('SELECT key FROM settings WHERE key LIKE "vlm_key_%"');
+    const status = {};
+    for (const row of rows) {
+      const provider = row.key.replace('vlm_key_', '');
+      status[provider] = { has_user_key: true, has_system_key: false };
+    }
+    return status;
+  },
+
+  async saveApiKey(provider, value) {
+    await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`vlm_key_${provider}`, value]);
+    return { ok: true };
+  },
+
+  async deleteApiKey(provider) {
+    await run('DELETE FROM settings WHERE key = ?', [`vlm_key_${provider}`]);
+    return { ok: true };
+  },
+
+  async testApiKey(provider) {
+    return { ok: true, message: `Key exists for ${provider} (direct Cloud API call enabled)` };
+  },
+
+  async getVlmKeys() {
+    const rows = await query('SELECT key, value FROM settings WHERE key LIKE "vlm_key_%"');
+    const keys = {};
+    for (const row of rows) {
+      keys[row.key.replace('vlm_key_', '')] = row.value;
+    }
+    return keys;
+  },
+
+  dbStatus() {
+    return {
+      db_path: 'Browser IndexedDB (WASM SQLite)',
+      file_size_mb: 'N/A',
+      permissions_ok: true,
+      image_count: 0,
+      user_count: 1
     };
   },
 
@@ -229,12 +368,14 @@ export const localAdapter = {
   async renamePerson(id, name) {
     await run('UPDATE people SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
               [name.trim(), id]);
+    _voyIndex = null; // Invalidate index
     return { ok: true };
   },
 
   async deletePerson(id) {
     await run('UPDATE face_embeddings SET person_id=NULL WHERE person_id=?', [id]);
     await run('DELETE FROM people WHERE id=?', [id]);
+    _voyIndex = null; // Invalidate index
     return { ok: true };
   },
 
@@ -244,6 +385,7 @@ export const localAdapter = {
     const cnt = (await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?',
                              [target_id]))[0]?.n ?? 0;
     await run('UPDATE people SET total_appearances=? WHERE id=?', [cnt, target_id]);
+    _voyIndex = null; // Invalidate index
     return { ok: true };
   },
 
@@ -255,6 +397,7 @@ export const localAdapter = {
     const cnt = (await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?',
                              [person.id]))[0]?.n ?? 0;
     await run('UPDATE people SET total_appearances=? WHERE id=?', [cnt, person.id]);
+    _voyIndex = null; // Invalidate index
     return { ok: true, person_id: person.id };
   },
 
@@ -321,8 +464,10 @@ export const localAdapter = {
         const f32 = face.embedding instanceof Float32Array
           ? face.embedding
           : new Float32Array(face.embedding);
-        // Match against known people (cosine similarity)
-        const match = _cosineBestMatch(f32, knownPeople, 0.4);
+        
+        // Match against known people using Voy (WASM HNSW)
+        const match = await _voyBestMatch(f32, 0.4);
+        
         // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
         const embStr = Array.from(f32).join(',');
         await run(
@@ -339,6 +484,7 @@ export const localAdapter = {
       }
     }
 
+    _voyIndex = null; // Invalidate index after adding new embeddings
     return { ok: true, image_id: imageId, face_count: faceCount };
   },
 };

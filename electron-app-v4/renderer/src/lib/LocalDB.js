@@ -73,6 +73,10 @@ const SCHEMA = `
     album_id INTEGER NOT NULL,
     PRIMARY KEY (image_id, album_id)
   );
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
 `;
 
 // ── Public API ────────────────────────────────────────────────────────────────

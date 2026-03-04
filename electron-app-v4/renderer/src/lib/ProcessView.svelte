@@ -352,10 +352,13 @@
     errorCount = 0; queuedCount = 0; doneCount = 0; totalCount = pending.length;
 
     let engine;
+    let vlmCfg = {};
     try {
       engine = await _getWebEngine();
-      // In local/standalone mode, models are bundled and served from capacitor://localhost/models.
-      // In server mode, models are served from the connected API server.
+      // Load current settings to get VLM provider/model
+      const s = await fetchSettings();
+      vlmCfg = s?.vlm || {};
+      
       const modelBase = localMode
         ? (window.location.origin + '/models')
         : ((localStorage.getItem('remote_url') || window.location.origin) + '/models');
@@ -397,6 +400,10 @@
           min_face_size: detParams.min_face_size,
           det_model:     detParams.det_model,
           visibility,
+          vlm_enabled:   !detParams.skip_vlm && vlmCfg.enabled,
+          vlm_provider:  vlmCfg.provider,
+          vlm_model:     vlmCfg.model,
+          vlm_prompt:    $t('vlm_prompt'),
           onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
         });
         // In local mode, use the native filepath (item.path) so the DB stores the
