@@ -29,20 +29,13 @@ process.env.DB_PATH = DB_PATH;
 
 const app = express();
 
-app.use(cors({
-  origin:      true,
-  credentials: true,
-}));
-app.use(cookieParser());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
 // ── Consolidate UI path resolution ────────────────────────────────────────────
 const v4dist = path.join(__dirname, 'renderer', 'dist');
 const v2dist = path.join(__dirname, '..', 'electron-app-v2', 'renderer', 'dist');
 const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist : null);
 
-// ── Strict Static Assets (WASM/MJS) ──────────────────────────────────────────
+// ── Strict Static Assets (WASM/MJS/Assets) ───────────────────────────────────
+// These MUST be handled first to prevent any middleware or SPA fallback from interfering.
 if (uiDist) {
   console.log(`[server] UI distribution found at: ${uiDist}`);
   express.static.mime.define({ 'application/javascript': ['mjs'], 'application/wasm': ['wasm'] });
@@ -63,14 +56,21 @@ if (uiDist) {
       
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      console.log(`[server] MANUAL SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
+      console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
       return res.sendFile(filePath);
     }
-    console.warn(`[server] MANUAL SERVE NOT FOUND: ${filePath}`);
-    // If it looks like an asset but wasn't found, return 404 instead of SPA fallback
+    console.warn(`[server] PRIORITY ASSET NOT FOUND: ${filePath}`);
     res.status(404).send('Asset not found');
   });
 }
+
+app.use(cors({
+  origin:      true,
+  credentials: true,
+}));
+app.use(cookieParser());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ── Request logging ───────────────────────────────────────────────────────────
 
