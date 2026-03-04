@@ -8,7 +8,7 @@
  */
 
 import { Capacitor } from '@capacitor/core';
-import { query, run } from './LocalDB.js';
+import { query, run, exportDatabase, importDatabase, getDatabaseSize, clearDatabase } from './LocalDB.js';
 import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
@@ -354,13 +354,28 @@ export const localAdapter = {
     const [img] = await query('SELECT COUNT(*) AS n FROM images');
     const [ppl] = await query('SELECT COUNT(*) AS n FROM people');
     const [usr] = await query('SELECT COUNT(*) AS n FROM users');
+    const sizeMb = await getDatabaseSize();
     return {
       db_path: 'Browser IndexedDB (WASM SQLite)',
-      file_size_mb: 'N/A',
+      file_size_mb: sizeMb ?? 'N/A',
       permissions_ok: true,
       image_count: img?.n ?? 0,
-      user_count: usr?.n ?? 0
+      user_count: usr?.n ?? 0,
+      can_export: true,
+      can_import: true,
     };
+  },
+
+  async exportDB() {
+    return await exportDatabase();
+  },
+
+  async importDB(json) {
+    return await importDatabase(json);
+  },
+
+  async clearDB() {
+    return await clearDatabase();
   },
 
   i18n() {

@@ -9,7 +9,7 @@
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
-    isLocalMode, setLocalMode,
+    isLocalMode, setLocalMode, exportDB, importDB, clearDB,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
   import syncManager, { loadSyncSettings, saveSyncSettings } from './SyncManager.js';
@@ -941,6 +941,65 @@
     }
   }
 
+  // ── Standalone DB Export/Import ──────────────────────────────────────────
+  let exporting = false;
+  let importing = false;
+  let dbMsg = '';
+
+  async function doExportDB() {
+    exporting = true;
+    dbMsg = 'Exporting...';
+    try {
+      const json = await exportDB();
+      const blob = new Blob([JSON.stringify(json)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `face_rec_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      dbMsg = '✓ ' + $t('success');
+    } catch (e) {
+      dbMsg = '✗ ' + e.message;
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleImportChange(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (!confirm($t('settings_db_import_confirm'))) return;
+    
+    importing = true;
+    dbMsg = $t('please_wait');
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      await importDB(json);
+      dbMsg = '✓ ' + $t('success') + '. Reloading...';
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e) {
+      dbMsg = '✗ ' + e.message;
+    } finally {
+      importing = false;
+      event.target.value = ''; // Reset input
+    }
+  }
+
+  async function doClearDB() {
+    if (!confirm($t('settings_db_clear_confirm'))) return;
+    try {
+      await clearDB();
+      dbMsg = '✓ ' + $t('success') + '. Reloading...';
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e) {
+      dbMsg = '✗ ' + e.message;
+    }
+  }
+
   // ── Debug test stream helpers ─────────────────────────────────────────────
   async function _runSseTest(label, fetchFn) {
     testLabel   = label;
@@ -1612,6 +1671,32 @@
     </div>
     {#if credCheckMsg}
       <div class="save-msg" class:error-msg={credCheckMsg.startsWith('✗')}>{credCheckMsg}</div>
+    {/if}
+
+    {#if isLocalMode()}
+      <div class="field-row" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+        <div class="hint" style="margin-bottom: 8px; width: 100%;">
+          <strong>{$t('settings_db_backup_title')}</strong><br/>
+          {$t('settings_db_backup_hint')}
+        </div>
+        <button class="small primary" on:click={doExportDB} disabled={exporting}>
+          {exporting ? '…' : '📥 ' + $t('settings_db_export')}
+        </button>
+        <div style="position: relative; display: inline-block;">
+          <button class="small" disabled={importing}>
+            {importing ? '…' : '📤 ' + $t('settings_db_import')}
+          </button>
+          <input type="file" accept=".json" on:change={handleImportChange} 
+            style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;"
+            disabled={importing} />
+        </div>
+        <button class="small danger" style="margin-left: auto;" on:click={doClearDB}>
+          🗑 {$t('settings_db_clear')}
+        </button>
+      </div>
+      {#if dbMsg}
+        <div class="save-msg" class:error-msg={dbMsg.startsWith('✗')}>{dbMsg}</div>
+      {/if}
     {/if}
   </section>
   {/if}

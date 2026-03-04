@@ -305,6 +305,125 @@ export async function isAvailable() {
   }
 }
 
+/**
+ * Estimate the size of the database in MB.
+ */
+export async function getDatabaseSize() {
+  try {
+    const isWeb = window.location.protocol !== 'capacitor:';
+    if (isWeb) {
+      // On Web, we can try to get the size from the IndexedDB
+      if ('storage' in navigator && 'estimate' in navigator.storage) {
+        const estimate = await navigator.storage.estimate();
+        // This is the total usage for the origin, but it's a good hint
+        // if the app is mostly the database.
+        // For a more precise measure, we'd need to check the specific IDB entry.
+        // jeep-sqlite usually stores data in 'keyvaluepairs' store in 'jeepSqliteStore' DB.
+      }
+      
+      // Better way: use the plugin's export method to get the actual data size
+      // but that's expensive. 
+      // Let's just return 'N/A' or try a simple SQL query if we have a table with blobs.
+      const [res] = await query("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size();");
+      if (res && res.size) {
+        return (res.size / (1024 * 1024)).toFixed(2);
+      }
+    } else {
+      // On Native, we might be able to get the file size via Capacitor Filesystem
+      // but we need the path.
+    }
+  } catch (err) {
+    console.warn('[LocalDB] Failed to get DB size:', err);
+  }
+  return null;
+}
+
+/**
+ * Export the entire database as a JSON object (compatible with @capacitor-community/sqlite).
+ */
+export async function exportDatabase() {
+  try {
+    console.log(`[LocalDB] Exporting ${DB_NAME} to JSON...`);
+    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+    
+    // Ensure data is flushed to the web store if on web
+    const isWeb = window.location.protocol !== 'capacitor:';
+    if (isWeb) await sqlite.saveToStore(DB_NAME);
+
+    const jsonExport = await sqlite.exportToJson(DB_NAME, 'full');
+    if (!jsonExport || !jsonExport.export) {
+      throw new Error('Export failed: no data returned');
+    }
+    return jsonExport.export;
+  } catch (err) {
+    console.error('[LocalDB] Export failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Import a database from a JSON object.
+ * WARNING: This will overwrite/merge with existing data.
+ */
+export async function importDatabase(jsonContent) {
+  try {
+    console.log(`[LocalDB] Importing database from JSON...`);
+    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+    
+    // The plugin expects a string or object. If it's a string, we might need to parse it or pass it.
+    const jsonStr = typeof jsonContent === 'string' ? jsonContent : JSON.stringify(jsonContent);
+    
+    // We should probably close the current connection first if it exists
+    if (_db) {
+      const isOpen = (await _db.isDBOpen()).result;
+      if (isOpen) await _db.close();
+      await sqlite.closeConnection(DB_NAME, false);
+      _db = null;
+    }
+
+    const result = await sqlite.importFromJson(jsonStr);
+    console.log('[LocalDB] Import successful, changes:', result.changes);
+    
+    // Re-initialize the connection
+    await getDB();
+    
+    return result;
+  } catch (err) {
+    console.error('[LocalDB] Import failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Completely reset the database (drop and re-create all tables).
+ */
+export async function clearDatabase() {
+  try {
+    console.warn('[LocalDB] Resetting database...');
+    if (!_db) await getDB();
+    
+    // We'll drop all tables. 
+    // Alternatively, we could delete the database file using the plugin's deleteDatabase method.
+    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+    
+    if (_db) {
+      await _db.close();
+      await sqlite.closeConnection(DB_NAME, false);
+      _db = null;
+    }
+    
+    await sqlite.deleteDatabase(DB_NAME, false);
+    
+    // Re-initialize with the schema
+    await getDB();
+    
+    return { ok: true };
+  } catch (err) {
+    console.error('[LocalDB] Reset failed:', err);
+    throw err;
+  }
+}
+
 /** 
  * Diagnostic: Run a simple SQL test to prove the engine works.
  */
