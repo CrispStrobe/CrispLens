@@ -1019,8 +1019,8 @@
       </button>
     </div>
     {#if dbMode === 'local'}
-      <p class="hint" style="margin-top:10px;color:#c09030;">
-        ⚠ Standalone mode: face recognition runs on-device (ONNX). Some features (VLM descriptions, admin panel, cloud drives) are not available without a server.
+      <p class="hint" style="margin-top:10px;color:#a0a060;">
+        ⚡ Standalone mode active. All processing, including VLM API calls and user management, happens locally on this device. Ensure you have downloaded the ONNX models below.
       </p>
       <!-- ONNX model cache status + download -->
       <div class="model-cache-section">

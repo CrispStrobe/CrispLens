@@ -23,7 +23,7 @@ export default defineConfig({
         },
         {
           src: 'node_modules/sql.js/dist/sql-wasm.wasm',
-          dest: 'wasm',
+          dest: 'assets',
         },
       ],
     }),
