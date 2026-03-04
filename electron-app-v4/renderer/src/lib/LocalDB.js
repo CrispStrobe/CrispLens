@@ -94,6 +94,10 @@ let _initFailed = false;
 
 async function _waitForJeepSqlite() {
   if (window.location.protocol === 'capacitor:') return;
+  if (typeof document === 'undefined') {
+    console.log('[LocalDB] Running in worker, skipping jeep-sqlite DOM check');
+    return;
+  }
   
   console.log('[LocalDB] Checking for jeep-sqlite component...');
   const el = document.querySelector('jeep-sqlite');

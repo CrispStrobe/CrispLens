@@ -116,13 +116,18 @@
   }
 
   async function pickFiles() {
+    console.log('[ProcessView] pickFiles() clicked');
     if (inElectron) {
       const paths = await window.electronAPI.openFileDialog({ multiple: true });
       if (paths?.length) addPaths(paths);
     } else if (localMode && isMobile) {
       await pickPhotosFromLibrary();
     } else {
-      document.getElementById('pv-file-input').click();
+      const input = document.getElementById('pv-file-input');
+      if (input) {
+        console.log('[ProcessView] Triggering click on hidden input');
+        input.click();
+      }
     }
   }
 
@@ -161,11 +166,16 @@
   }
 
   async function pickFolder() {
+    console.log('[ProcessView] pickFolder() clicked');
     if (inElectron) {
       const folder = await window.electronAPI.openFolderDialog();
       if (folder) addFolderPaths(folder);
     } else {
-      document.getElementById('pv-folder-input').click();
+      const input = document.getElementById('pv-folder-input');
+      if (input) {
+        console.log('[ProcessView] Triggering click on hidden folder input');
+        input.click();
+      }
     }
   }
 

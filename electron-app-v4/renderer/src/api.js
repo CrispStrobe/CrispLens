@@ -133,7 +133,10 @@ function _snapSize(size) {
 export function thumbnailUrl(id, size = 200) {
   if (_localMode) {
     const b64 = thumbCache.get(id);
-    if (b64) return `data:image/jpeg;base64,${b64}`;
+    if (b64) {
+      if (b64.startsWith('data:')) return b64;
+      return `data:image/jpeg;base64,${b64}`;
+    }
     return toWebUrl(fileCache.get(id) || '');
   }
   return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`;
@@ -141,7 +144,10 @@ export function thumbnailUrl(id, size = 200) {
 export function previewUrl(id) {
   if (_localMode) {
     const b64 = thumbCache.get(id);
-    if (b64) return `data:image/jpeg;base64,${b64}`;
+    if (b64) {
+      if (b64.startsWith('data:')) return b64;
+      return `data:image/jpeg;base64,${b64}`;
+    }
     return toWebUrl(fileCache.get(id) || '');
   }
   return `${BASE}/images/${id}/preview`;
@@ -149,7 +155,10 @@ export function previewUrl(id) {
 export function fullUrl(id) {
   if (_localMode) {
     const b64 = thumbCache.get(id);
-    if (b64) return `data:image/jpeg;base64,${b64}`;
+    if (b64) {
+      if (b64.startsWith('data:')) return b64;
+      return `data:image/jpeg;base64,${b64}`;
+    }
     return toWebUrl(fileCache.get(id) || '');
   }
   return `${BASE}/images/${id}/full`;
@@ -823,7 +832,11 @@ export function rotateImage(id, direction) { return patch(`/images/${id}/rotate`
 
 // ── Albums ────────────────────────────────────────────────────────────────────
 
-export function fetchAlbums() { return get('/albums'); }
+export function fetchAlbums() {
+  const g = _guard('fetchAlbums', () => localAdapter.getAlbums());
+  if (g) return g;
+  return get('/albums');
+}
 export function createAlbum(name, description = '') { return post('/albums', { name, description }); }
 export function updateAlbum(id, data) { return put(`/albums/${id}`, data); }
 export function deleteAlbum(id) { return del(`/albums/${id}`); }

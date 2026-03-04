@@ -17,6 +17,8 @@
            testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
+  import { VLM_MODELS } from './VlmData.js';
+  import { DEFAULT_MODELS } from './VlmWeb.js';
 
   // ── Config state ──────────────────────────────────────────────────────────
   let cfg = null;
@@ -164,10 +166,7 @@
       console.error('[SettingsView] fetchVlmModels failed:', e);
       vlmFetchMsg = '✗ Live fetch failed — using defaults';
       // Fallback: at least show the hardcoded models if we know them
-      try {
-        const m = await import('./VlmData.js');
-        vlmModels = m.VLM_MODELS[vlmProvider] || [];
-      } catch (err) { console.error('[SettingsView] Failed to load VlmData.js:', err); }
+      vlmModels = VLM_MODELS[vlmProvider] || [];
     } finally {
       clearTimeout(safetyTimer);
       fetchingModels = false;
@@ -176,15 +175,12 @@
   }
 
   // Get the display name for the default model of current provider
-  async function getDefaultModelName(provider) {
-    try {
-      const { DEFAULT_MODELS } = await import('./VlmWeb.js');
-      return DEFAULT_MODELS[provider] || 'Default';
-    } catch { return 'Default'; }
+  function getDefaultModelName(provider) {
+    return DEFAULT_MODELS[provider] || 'Default';
   }
   let defaultModelLabel = 'Default';
   $: if (vlmProvider) {
-    getDefaultModelName(vlmProvider).then(name => defaultModelLabel = `Default (${name})`);
+    defaultModelLabel = `Default (${getDefaultModelName(vlmProvider)})`;
   }
 
   // ── API keys state ─────────────────────────────────────────────────────────

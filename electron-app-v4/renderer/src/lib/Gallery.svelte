@@ -226,23 +226,13 @@
                 on:contextmenu={(e) => onContextMenu(e, img)}
                 title={img.filename}
               >
-                {#if localMode && img.filepath}
-                  {#await localThumb(img.filepath, $thumbSize)}
-                    <img src={thumbnailUrl(img.id, $thumbSize)} alt={img.filename}
-                         loading="lazy" width={$thumbSize} height={$thumbSize} />
-                  {:then src}
-                    <img {src} alt={img.filename}
-                         loading="lazy" width={$thumbSize} height={$thumbSize} />
-                  {/await}
-                {:else}
-                  <img
-                    src={thumbnailUrl(img.id, $thumbSize)}
-                    alt={img.filename}
-                    loading="lazy"
-                    width={$thumbSize}
-                    height={$thumbSize}
-                  />
-                {/if}
+                <img
+                  src={thumbnailUrl(img.id, $thumbSize)}
+                  alt={img.filename}
+                  loading="lazy"
+                  width={$thumbSize}
+                  height={$thumbSize}
+                />
                 {#if img.face_count > 0}
                   <span class="face-badge">{img.face_count}</span>
                 {/if}

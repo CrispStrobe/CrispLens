@@ -336,6 +336,10 @@ export const localAdapter = {
     });
   },
 
+  async getAlbums() {
+    return query('SELECT * FROM albums ORDER BY name');
+  },
+
   async dbStatus() {
     const [img] = await query('SELECT COUNT(*) AS n FROM images');
     const [ppl] = await query('SELECT COUNT(*) AS n FROM people');
