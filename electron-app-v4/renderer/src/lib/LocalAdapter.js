@@ -508,9 +508,6 @@ export const localAdapter = {
     for (const tag of tags)
       await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
 
-    // Load all known person embeddings once for matching this image's faces
-    const knownPeople = await _loadPersonEmbeddings();
-
     // Faces + embeddings
     let faceCount = 0;
     for (const face of faces) {
