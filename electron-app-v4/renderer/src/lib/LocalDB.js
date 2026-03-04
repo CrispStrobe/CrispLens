@@ -212,6 +212,23 @@ export async function getDB() {
 
       console.log('[LocalDB] Step 8: Executing schema...');
       await _db.execute(SCHEMA);
+
+      // ── Migration: ensure thumbnail_blob exists ──────────────────────────
+      try {
+        const tableInfo = await _db.query("PRAGMA table_info(images);");
+        const hasThumb = tableInfo.values?.some(c => c.name === 'thumbnail_blob');
+        if (!hasThumb) {
+          console.log('[LocalDB] Migrating: Adding thumbnail_blob to images table...');
+          await _db.execute("ALTER TABLE images ADD COLUMN thumbnail_blob BLOB;");
+          console.log('[LocalDB] Migration OK');
+          
+          // Persist the migration
+          if (isWeb && sqlite) await sqlite.saveToStore(DB_NAME);
+        }
+      } catch (migErr) {
+        console.warn('[LocalDB] Migration check failed (non-critical):', migErr.message);
+      }
+
       console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 
       return _db;
