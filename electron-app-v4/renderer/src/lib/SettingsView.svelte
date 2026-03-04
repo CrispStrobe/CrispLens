@@ -459,6 +459,9 @@
       }
       try { providers = await fetchProviders(); } catch { /* ignore */ }
       try { keyStatus = await fetchKeyStatus(); } catch { /* ignore */ }
+      
+      // Ensure models are loaded for the current provider
+      if (vlmProvider) doFetchModels();
     }
   });
 

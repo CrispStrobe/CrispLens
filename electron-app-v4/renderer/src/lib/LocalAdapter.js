@@ -192,7 +192,7 @@ export const localAdapter = {
     };
   },
 
-  getVlmModels(provider) {
+  async getVlmModels(provider) {
     const models = {
       'anthropic':  ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
       'openai':     ['gpt-4o', 'gpt-4o-mini'],

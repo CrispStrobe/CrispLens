@@ -31,7 +31,12 @@ export function isLocalMode() { return _localMode; }
 // ── Server base URL ───────────────────────────────────────────────────────────
 // On Desktop, we use relative paths (/api).
 // On Mobile pointing at a remote server, we need the full URL.
-let BASE = '/api';
+let BASE = (localStorage.getItem('remote_url') || '').replace(/\/$/, '') + '/api';
+if (BASE === '/api') {
+  // If no remote URL, use relative or absolute origin
+  BASE = window.location.origin + '/api';
+}
+console.log(`[api] BASE set to: ${BASE}`);
 
 export function setRemoteBase(url) {
   const newBase = url.replace(/\/$/, '') + '/api';
@@ -42,7 +47,7 @@ export function setRemoteBase(url) {
 /** Helper to block server calls in standalone mode and log them. */
 function _guard(msg, fallback = null) {
   if (_localMode) {
-    console.log(`[api] Blocked server call in standalone mode: ${msg}`);
+    console.log(`[api] Standalone mode: intercepting call to ${msg}. Returning local fallback.`);
     return Promise.resolve(fallback);
   }
   return null;
@@ -453,10 +458,26 @@ export function fetchTags() {
   if (g) return localAdapter.getTags();
   return get('/tags');
 }
-export function fetchTagsStats()  { return get('/tags/stats'); }
-export function fetchDatesStats() { return get('/dates/stats'); }
-export function fetchFoldersStats() { return get('/folders/stats'); }
-export function fetchSceneTypes() { return get('/scene-types'); }
+export function fetchTagsStats()  {
+  const g = _guard('fetchTagsStats', []);
+  if (g) return g;
+  return get('/tags/stats');
+}
+export function fetchDatesStats() {
+  const g = _guard('fetchDatesStats', []);
+  if (g) return g;
+  return get('/dates/stats');
+}
+export function fetchFoldersStats() {
+  const g = _guard('fetchFoldersStats', []);
+  if (g) return g;
+  return get('/folders/stats');
+}
+export function fetchSceneTypes() {
+  const g = _guard('fetchSceneTypes', []);
+  if (g) return g;
+  return get('/scene-types');
+}
 export function fetchStats() {
   const g = _guard('fetchStats');
   if (g) return localAdapter.getStats();

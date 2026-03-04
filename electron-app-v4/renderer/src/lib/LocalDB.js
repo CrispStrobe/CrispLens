@@ -8,7 +8,7 @@
 import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
 
 const DB_NAME = 'face_recognition';
-const sqlite  = new SQLiteConnection(CapacitorSQLite);
+let   sqlite  = null;
 let   _db     = null;
 
 // ── Schema — mirrors server/db.js CREATE TABLE IF NOT EXISTS statements ────────
@@ -102,6 +102,16 @@ export async function getDB() {
   _initPromise = (async () => {
     console.log('[LocalDB] Initializing database...');
     try {
+      if (!sqlite) {
+        sqlite = new SQLiteConnection(CapacitorSQLite);
+      }
+      
+      const isWeb = window.location.protocol !== 'capacitor:';
+      if (isWeb) {
+        console.log('[LocalDB] Initializing web store...');
+        await sqlite.initWebStore();
+      }
+
       const isConn = (await sqlite.isConnection(DB_NAME, false)).result;
       console.log(`[LocalDB] Connection exists: ${isConn}`);
 
