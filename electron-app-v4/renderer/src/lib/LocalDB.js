@@ -73,6 +73,15 @@ const SCHEMA = `
     key   TEXT PRIMARY KEY,
     value TEXT
   );
+  -- Default settings for standalone mode
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_enabled', 'false');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_provider', 'openrouter');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_model', 'qwen/qwen3-vl-8b-thinking');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_model', 'auto');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_threshold', '0.5');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_rec_threshold', '0.4');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_language', 'en');
+
   CREATE TABLE IF NOT EXISTS users (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     username              TEXT NOT NULL UNIQUE,
@@ -371,8 +380,9 @@ export async function importDatabase(jsonContent) {
     console.log(`[LocalDB] Importing database from JSON...`);
     if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
     
-    // Ensure we have a parsed object, not a string
-    const data = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
+    // The SQLiteConnection.importFromJson wrapper specifically expects a STRING.
+    // If we pass an object, it stringifies to "[object Object]", which causes the JSON parse error.
+    const jsonStr = typeof jsonContent === 'string' ? jsonContent : JSON.stringify(jsonContent);
     
     // We should close the current connection first
     if (_db) {
@@ -386,8 +396,8 @@ export async function importDatabase(jsonContent) {
       _db = null;
     }
 
-    // In v7, importFromJson takes the JsonSQLite object directly
-    const result = await sqlite.importFromJson(data);
+    // Pass the raw string directly to the wrapper
+    const result = await sqlite.importFromJson(jsonStr);
     console.log('[LocalDB] Import successful, changes:', result.changes);
     
     // Re-initialize the connection
