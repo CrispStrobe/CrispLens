@@ -429,6 +429,14 @@ export const localAdapter = {
     return rows[0] ?? null;
   },
 
+  async fetchThumbnail(id) {
+    if (thumbCache.has(id)) return thumbCache.get(id);
+    const rows = await query('SELECT thumbnail_blob FROM images WHERE id=?', [id]);
+    const b64 = rows[0]?.thumbnail_blob;
+    if (b64) thumbCache.set(id, b64);
+    return b64;
+  },
+
   async deleteImage(id) {
     await run('DELETE FROM images WHERE id=?', [id]);
     fileCache.delete(id);
