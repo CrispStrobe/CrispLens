@@ -531,11 +531,12 @@
       if ($currentUser?.role !== 'admin') {
         try {
           const p = await fetchUserVlmPrefs();
+          console.log('[SettingsView] fetchUserVlmPrefs result:', p);
           vlmEnabled  = p.effective.vlm_enabled  ?? false;
-          vlmProvider = p.effective.vlm_provider ?? 'anthropic';
-          vlmModel    = p.effective.vlm_model    ?? '';
+          if (p.effective.vlm_provider) vlmProvider = p.effective.vlm_provider;
+          if (p.effective.vlm_model) vlmModel = p.effective.vlm_model;
           globalVlmHint = p.global;
-        } catch { /* ignore */ }
+        } catch (err) { console.warn('[SettingsView] fetchUserVlmPrefs failed:', err); }
         try {
           const dp = await fetchUserDetPrefs();
           detModel = dp.effective?.det_model ?? 'auto';

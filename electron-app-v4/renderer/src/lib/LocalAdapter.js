@@ -58,7 +58,10 @@ export const thumbCache = new Map(); // image_id → base64 jpeg string
 function _cache(images) {
   for (const img of images) {
     if (img?.id && img?.filepath) fileCache.set(img.id, img.filepath);
-    if (img?.id && img?.thumbnail_blob) thumbCache.set(img.id, img.thumbnail_blob);
+    if (img?.id && img?.thumbnail_blob) {
+      console.log(`[LocalAdapter] Caching thumbnail for image ${img.id}`);
+      thumbCache.set(img.id, img.thumbnail_blob);
+    }
   }
   return images;
 }
@@ -66,6 +69,8 @@ function _cache(images) {
 /** Convert a native filesystem path to a URL WKWebView can load. */
 export function toWebUrl(filepath) {
   if (!filepath) return '';
+  // In pure standalone web mode, native file paths cannot be loaded directly.
+  // We rely on the thumbnail_blob data URL fallback in api.js.
   return Capacitor.convertFileSrc(filepath);
 }
 
@@ -293,6 +298,44 @@ export const localAdapter = {
     return { ok: true };
   },
 
+  async fetchUserVlmPrefs() {
+    const s = await this.settings();
+    return { 
+      effective: { 
+        vlm_enabled: s.vlm.enabled, 
+        vlm_provider: s.vlm.provider, 
+        vlm_model: s.vlm.model 
+      }, 
+      global: { 
+        vlm_enabled: s.vlm.enabled, 
+        vlm_provider: s.vlm.provider, 
+        vlm_model: s.vlm.model 
+      } 
+    };
+  },
+
+  async fetchUserDetPrefs() {
+    const s = await this.settings();
+    return { 
+      effective: { det_model: s.face_recognition.insightface.det_model }, 
+      global: { det_model: s.face_recognition.insightface.det_model } 
+    };
+  },
+
+  async saveUserVlmPrefs(prefs) {
+    return this.saveSettings({
+      vlm_enabled: prefs.vlm_enabled,
+      vlm_provider: prefs.vlm_provider,
+      vlm_model: prefs.vlm_model
+    });
+  },
+
+  async saveUserDetPrefs(prefs) {
+    return this.saveSettings({
+      det_model: prefs.det_model
+    });
+  },
+
   async dbStatus() {
     const [img] = await query('SELECT COUNT(*) AS n FROM images');
     const [ppl] = await query('SELECT COUNT(*) AS n FROM people');
@@ -316,7 +359,8 @@ export const localAdapter = {
                     dateFrom='', dateTo='', sort='newest',
                     limit=200, offset=0, unidentified=false, album=0 } = {}) {
     console.log('[LocalAdapter] getImages', { person, tag, scene, folder, path, dateFrom, dateTo, sort, limit, offset, unidentified, album });
-    let sql    = 'SELECT * FROM images WHERE 1=1';
+    // Specifically include thumbnail_blob in the selection
+    let sql    = 'SELECT *, thumbnail_blob FROM images WHERE 1=1';
     const params = [];
 
     if (person) {
@@ -509,12 +553,23 @@ export const localAdapter = {
                           thumbnail_b64, embedding_dim = 512 }) {
     const fname = filename || filepath.split('/').pop();
 
+    console.log(`[LocalAdapter] importProcessed: saving image ${fname} with VLM results:`, { description, scene_type, tagsCount: tags?.length });
+
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
                (filename, filepath, width, height, date_taken, description, scene_type, thumbnail_blob)
                VALUES(?,?,?,?,?,?,?,?)`,
               [fname, filepath, width ?? null, height ?? null,
                date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
+    
+    // If INSERT OR IGNORE skipped, we might need to UPDATE to store VLM results
+    await run(`UPDATE images SET 
+               description = COALESCE(description, ?), 
+               scene_type = COALESCE(scene_type, ?),
+               thumbnail_blob = COALESCE(thumbnail_blob, ?)
+               WHERE filepath = ?`,
+              [description ?? null, scene_type ?? null, thumbnail_b64 || null, filepath]);
+
     const imgRows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
     const imageId = imgRows[0]?.id;
     if (!imageId) throw new Error('Failed to insert image record');
@@ -522,8 +577,11 @@ export const localAdapter = {
     if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
 
     // Tags
-    for (const tag of tags)
-      await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
+    if (tags && tags.length > 0) {
+      console.log(`[LocalAdapter] Saving ${tags.length} tags for image ${imageId}`);
+      for (const tag of tags)
+        await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
+    }
 
     // Faces + embeddings
     let faceCount = 0;

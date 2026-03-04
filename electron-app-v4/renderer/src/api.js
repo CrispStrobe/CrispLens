@@ -427,16 +427,16 @@ export function fetchTranslations(nocache = false) {
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', () => localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
-export function fetchEngineStatus()                 {
+export function fetchEngineStatus() {
   const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
   if (g) return g;
   return get('/settings/engine-status');
 }
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
-export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', () => ({ effective: {}, global: {} })); if (g) return g; return get('/settings/user-vlm'); }
-export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', () => ({})); if (g) return g; return put('/settings/user-vlm', prefs); }
-export function fetchUserDetPrefs()                 { const g = _guard('fetchUserDetPrefs', () => ({ effective: {}, global: {} })); if (g) return g; return get('/settings/user-detection'); }
-export function saveUserDetPrefs(prefs)             { const g = _guard('saveUserDetPrefs', () => ({})); if (g) return g; return put('/settings/user-detection', prefs); }
+export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', () => localAdapter.fetchUserVlmPrefs()); if (g) return g; return get('/settings/user-vlm'); }
+export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', () => localAdapter.saveUserVlmPrefs(prefs)); if (g) return g; return put('/settings/user-vlm', prefs); }
+export function fetchUserDetPrefs()                 { const g = _guard('fetchUserDetPrefs', () => localAdapter.fetchUserDetPrefs()); if (g) return g; return get('/settings/user-detection'); }
+export function saveUserDetPrefs(prefs)             { const g = _guard('saveUserDetPrefs', () => localAdapter.saveUserDetPrefs(prefs)); if (g) return g; return put('/settings/user-detection', prefs); }
 export function changePassword(current_password, new_password) {
   return post('/auth/change-password', { current_password, new_password });
 }
