@@ -356,8 +356,11 @@
     try {
       engine = await _getWebEngine();
       // Load current settings to get VLM provider/model
+      console.log('[ProcessView] Fetching settings for VLM config...');
       const s = await fetchSettings();
+      console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
+      console.log('[ProcessView] VLM config to be used:', vlmCfg);
       
       const modelBase = localMode
         ? (window.location.origin + '/models')

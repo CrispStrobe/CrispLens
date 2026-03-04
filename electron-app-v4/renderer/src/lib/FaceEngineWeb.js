@@ -576,24 +576,37 @@ export class FaceEngineWeb {
 
     // ── VLM Enrichment (Standalone mode) ──────────────────────────────────────
     let vlmResult = null;
+    console.log('[FaceEngineWeb] VLM check:', { 
+      vlm_enabled: opts.vlm_enabled, 
+      provider: opts.vlm_provider, 
+      model: opts.vlm_model 
+    });
+
     if (opts.vlm_enabled) {
       try {
         this._progress('AI Enrichment (VLM)…');
+        console.log('[FaceEngineWeb] Starting VLM enrichment...');
         const { vlmClientWeb } = await import('./VlmWeb.js');
         const { localAdapter } = await import('./LocalAdapter.js');
+        
         const keys = await localAdapter.getVlmKeys();
+        console.log('[FaceEngineWeb] Keys available for:', Object.keys(keys));
         vlmClientWeb.setKeys(keys);
         
         const prompt = opts.vlm_prompt || 'Describe this image in detail.';
         const provider = opts.vlm_provider || 'anthropic';
         const model = opts.vlm_model || '';
         
+        console.log(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage with ${provider} / ${model || 'default'}`);
         vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
+        console.log('[FaceEngineWeb] VLM enrichment success:', vlmResult);
         this._progress('AI Enrichment done');
       } catch (e) {
-        console.warn('[FaceEngineWeb] VLM enrichment failed:', e);
-        this._progress('AI Enrichment failed (skipped)');
+        console.error('[FaceEngineWeb] VLM enrichment failed error:', e);
+        this._progress(`AI Enrichment failed: ${e.message}`);
       }
+    } else {
+      console.log('[FaceEngineWeb] VLM enrichment skipped (not enabled in opts)');
     }
 
     this._progress('Done');

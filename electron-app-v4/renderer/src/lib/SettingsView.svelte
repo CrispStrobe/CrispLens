@@ -501,7 +501,9 @@
 
     if ($backendReady) {
       try {
+        console.log('[SettingsView] onMount: fetching initial settings...');
         cfg = await fetchSettings();
+        console.log('[SettingsView] onMount: cfg loaded:', cfg);
         language     = cfg?.ui?.language ?? 'de';
         backend      = cfg?.face_recognition?.backend ?? 'insightface';
         model        = cfg?.face_recognition?.insightface?.model ?? 'buffalo_l';
@@ -510,17 +512,22 @@
         const ds = cfg?.face_recognition?.insightface?.det_size ?? [640, 640];
         detSize = Array.isArray(ds) ? ds[0] : ds;
           if ($currentUser?.role === 'admin') {
+          console.log('[SettingsView] onMount: user is admin, setting VLM fields');
           vlmEnabled  = cfg?.vlm?.enabled ?? false;
           vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
           vlmModel    = cfg?.vlm?.model ?? '';
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
+          console.log(`[SettingsView] onMount: VLM initialized: enabled=${vlmEnabled}, provider=${vlmProvider}, model=${vlmModel}`);
           procBackend  = cfg?.processing?.backend         ?? 'local';
           remoteV2Url  = cfg?.processing?.remote_v2?.url  ?? '';
           remoteV2User = cfg?.processing?.remote_v2?.user ?? '';
           remoteV2Mode = cfg?.processing?.remote_v2?.mode ?? 'upload_bytes';
           processingBackend.set(procBackend);
         }
-      } catch (e) { saveMsg = '⚠ Could not load server settings: ' + e.message; }
+      } catch (e) { 
+        console.error('[SettingsView] onMount: settings fetch error:', e);
+        saveMsg = '⚠ Could not load server settings: ' + e.message; 
+      }
       if ($currentUser?.role !== 'admin') {
         try {
           const p = await fetchUserVlmPrefs();

@@ -135,13 +135,16 @@ export const localAdapter = {
   },
 
   async settings() {
+    console.log('[LocalAdapter] Loading settings from SQLite...');
     const rows = await query('SELECT key, value FROM settings WHERE key LIKE "pref_%"');
+    console.log(`[LocalAdapter] Found ${rows.length} preference rows`);
     const prefs = {};
     for (const row of rows) {
       prefs[row.key.replace('pref_', '')] = row.value;
     }
+    console.log('[LocalAdapter] Parsed prefs:', prefs);
     
-    return {
+    const result = {
       ui: { 
         language: prefs.language || localStorage.getItem('pwa_language') || 'en' 
       },
@@ -160,9 +163,12 @@ export const localAdapter = {
         model: prefs.vlm_model || ''
       },
     };
+    console.log('[LocalAdapter] Returning settings object:', result);
+    return result;
   },
 
   async saveSettings(body) {
+    console.log('[LocalAdapter] saveSettings incoming body:', body);
     const mapping = {
       'language': body.language,
       'det_model': body.det_model,
@@ -174,11 +180,13 @@ export const localAdapter = {
       'vlm_model': body.vlm_model
     };
     
+    console.log('[LocalAdapter] Saving mapped preferences to SQLite:', mapping);
     for (const [key, value] of Object.entries(mapping)) {
       if (value !== undefined) {
         await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`pref_${key}`, String(value)]);
       }
     }
+    console.log('[LocalAdapter] saveSettings complete');
     return { ok: true };
   },
 
