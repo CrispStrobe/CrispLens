@@ -328,7 +328,7 @@ export function fetchMe() {
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
-export function listUsers()                         { const g = _guard('listUsers', []); if (g) return g; return get('/users'); }
+export function listUsers()                         { const g = _guard('listUsers', localAdapter.listUsers()); if (g) return g; return get('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
   return post('/users', { username, password, role, allowed_folders });
 }
@@ -411,7 +411,11 @@ export function fetchServerLogsJson(lines = 50) {
 
 export function fetchProviders()              { const g = _guard('fetchProviders', localAdapter.getProviders()); if (g) return g; return get('/api-keys/providers'); }
 export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', localAdapter.getKeyStatus()); if (g) return g; return get('/api-keys/status'); }
-export async function fetchVlmModels(provider) { const d = await get(`/api-keys/models/${provider}`); return d.models ?? d; }
+export async function fetchVlmModels(provider) {
+  const g = _guard('fetchVlmModels', localAdapter.getVlmModels(provider));
+  if (g) return g;
+  const d = await get(`/api-keys/models/${provider}`); return d.models ?? d;
+}
 export function saveApiKey(provider, api_key, scope = 'system') {
   const g = _guard('saveApiKey', localAdapter.saveApiKey(provider, api_key));
   if (g) return g;

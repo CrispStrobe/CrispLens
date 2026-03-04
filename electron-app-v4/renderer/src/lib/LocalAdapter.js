@@ -180,10 +180,31 @@ export const localAdapter = {
 
   getProviders() {
     return {
-      'anthropic': { display_name: 'Anthropic (Claude)' },
-      'openai':    { display_name: 'OpenAI (GPT-4o)' },
-      'google':    { display_name: 'Google (Gemini)' },
+      'anthropic':  { display_name: 'Anthropic (Claude)', is_eu: false },
+      'openai':     { display_name: 'OpenAI (GPT-4o)',    is_eu: false },
+      'nebius':     { display_name: 'Nebius (Qwen2-VL)',  is_eu: true  },
+      'scaleway':   { display_name: 'Scaleway (Pixtral)', is_eu: true  },
+      'openrouter': { display_name: 'OpenRouter',         is_eu: false },
+      'mistral':    { display_name: 'Mistral AI',         is_eu: true  },
+      'groq':       { display_name: 'Groq',               is_eu: false },
+      'poe':        { display_name: 'Poe (Quora)',        is_eu: false },
+      'google':     { display_name: 'Google Gemini',      is_eu: false },
     };
+  },
+
+  getVlmModels(provider) {
+    const models = {
+      'anthropic':  ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+      'openai':     ['gpt-4o', 'gpt-4o-mini'],
+      'nebius':     ['Qwen/Qwen2-VL-72B-Instruct', 'Qwen/Qwen2-VL-7B-Instruct'],
+      'scaleway':   ['pixtral-12b-2409'],
+      'openrouter': ['anthropic/claude-3.5-sonnet', 'google/gemini-pro-1.5', 'openai/gpt-4o'],
+      'mistral':    ['ministral-14b-2512', 'mistral-large-latest'],
+      'groq':       ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-11b-vision-preview'],
+      'poe':        ['claude-3-5-sonnet', 'gpt-4o'],
+      'google':     ['gemini-1.5-flash', 'gemini-1.5-pro'],
+    };
+    return models[provider] || [];
   },
 
   async getKeyStatus() {
@@ -219,12 +240,25 @@ export const localAdapter = {
     return keys;
   },
 
-  dbStatus() {
+  async listUsers() {
+    return [{
+      id: 1,
+      username: 'Local Admin',
+      role: 'admin',
+      is_active: true,
+      last_login: new Date().toISOString(),
+      failed_login_attempts: 0
+    }];
+  },
+
+  async dbStatus() {
+    const [img] = await query('SELECT COUNT(*) AS n FROM images');
+    const [ppl] = await query('SELECT COUNT(*) AS n FROM people');
     return {
       db_path: 'Browser IndexedDB (WASM SQLite)',
       file_size_mb: 'N/A',
       permissions_ok: true,
-      image_count: 0,
+      image_count: img?.n ?? 0,
       user_count: 1
     };
   },

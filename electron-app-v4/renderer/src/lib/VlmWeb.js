@@ -1,9 +1,31 @@
 /**
- * VlmClientWeb.js — Direct Cloud VLM access from the browser/mobile app.
+ * VlmWeb.js — Direct Cloud VLM access from the browser/mobile app.
  * 
- * This allows Standalone (Local) mode to generate image descriptions and tags
- * by calling provider APIs directly using locally-stored API keys.
+ * This is a faithful port of vlm_providers.py, allowing Standalone (Local) mode
+ * to generate image descriptions and tags by calling provider APIs directly.
  */
+
+const OPENAI_COMPATIBLE = {
+  'openai':     'https://api.openai.com/v1',
+  'nebius':     'https://api.tokenfactory.nebius.com/v1',
+  'scaleway':   'https://api.scaleway.ai/v1',
+  'openrouter': 'https://openrouter.ai/api/v1',
+  'mistral':    'https://api.mistral.ai/v1',
+  'groq':       'https://api.groq.com/openai/v1',
+  'poe':        'https://api.poe.com/v1',
+};
+
+const DEFAULT_MODELS = {
+  'anthropic':  'claude-3-5-sonnet-20241022',
+  'openai':     'gpt-4o',
+  'nebius':     'Qwen/Qwen2-VL-72B-Instruct',
+  'scaleway':   'pixtral-12b-2409',
+  'openrouter': 'anthropic/claude-3.5-sonnet',
+  'mistral':    'ministral-14b-2512',
+  'groq':       'meta-llama/llama-4-scout-17b-16e-instruct',
+  'poe':        'claude-3-5-sonnet',
+  'google':     'gemini-1.5-flash'
+};
 
 export class VlmClientWeb {
   constructor() {
@@ -16,26 +38,22 @@ export class VlmClientWeb {
 
   /**
    * Enrich an image using a Cloud VLM.
-   * @param {Blob|string} image - image blob or base64 data
-   * @param {string} provider - 'anthropic' | 'openai' | 'google' | 'groq'
-   * @param {string} model - specific model ID
-   * @param {string} prompt - the analysis prompt
    */
   async enrichImage(image, provider, model, prompt) {
     const key = this.keys[provider];
     if (!key) throw new Error(`API key for ${provider} not found in local storage.`);
 
     const base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
+    const modelId = model || DEFAULT_MODELS[provider];
 
-    switch (provider) {
-      case 'anthropic':
-        return this._callAnthropic(key, model || 'claude-3-5-sonnet-20240620', base64, prompt);
-      case 'openai':
-        return this._callOpenAI(key, model || 'gpt-4o-mini', base64, prompt);
-      case 'google':
-        return this._callGemini(key, model || 'gemini-1.5-flash', base64, prompt);
-      default:
-        throw new Error(`Provider ${provider} not yet supported in Standalone web mode.`);
+    if (provider === 'anthropic') {
+      return this._callAnthropic(key, modelId, base64, prompt);
+    } else if (provider === 'google') {
+      return this._callGemini(key, modelId, base64, prompt);
+    } else if (OPENAI_COMPATIBLE[provider]) {
+      return this._callOpenAICompatible(provider, key, modelId, base64, prompt);
+    } else {
+      throw new Error(`Provider ${provider} not yet supported in Standalone web mode.`);
     }
   }
 
@@ -74,8 +92,9 @@ export class VlmClientWeb {
     return this._parseJson(data.content[0].text);
   }
 
-  async _callOpenAI(key, model, base64, prompt) {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  async _callOpenAICompatible(provider, key, model, base64, prompt) {
+    const baseUrl = OPENAI_COMPATIBLE[provider];
+    const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${key}`,
@@ -94,7 +113,7 @@ export class VlmClientWeb {
       })
     });
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
     return JSON.parse(data.choices[0].message.content);
   }
 
