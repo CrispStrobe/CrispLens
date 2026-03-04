@@ -370,11 +370,22 @@
             {#if inElectron}
               <button on:click={() => sidebarView.set('settings')}>Open Settings</button>
             {/if}
-            <button class="danger" on:click={() => { 
-              if (confirm('Reset app state? This will clear local server URL and mode preferences.')) {
+            <button class="danger" on:click={async () => { 
+              if (confirm('Reset app state? This will clear local server URL, mode preferences, and PWA cache.')) {
                 localStorage.removeItem('remote_url');
                 localStorage.removeItem('db_mode');
                 localStorage.removeItem('pwa_language');
+                
+                // Clear PWA caches and unregister service workers
+                if ('caches' in window) {
+                  const names = await caches.keys();
+                  for (const name of names) await caches.delete(name);
+                }
+                if ('serviceWorker' in navigator) {
+                  const regs = await navigator.serviceWorker.getRegistrations();
+                  for (const r of regs) await r.unregister();
+                }
+                
                 window.location.reload();
               }
             }}>Reset App State</button>

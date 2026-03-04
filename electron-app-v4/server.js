@@ -124,19 +124,20 @@ if (uiDist) {
   console.log(`[server] Serving UI from: ${uiDist}`);
   
   // Explicitly serve the wasm directory if it exists
-  const wasmDir = path.join(uiDist, 'ort-wasm');
-  if (fs.existsSync(wasmDir)) {
-    console.log(`[server] Found WASM directory at: ${wasmDir}`);
-    app.use('/ort-wasm', express.static(wasmDir, {
+  const ortWasmDir = path.join(uiDist, 'ort-wasm');
+  if (fs.existsSync(ortWasmDir)) {
+    console.log(`[server] Found ORT WASM directory at: ${ortWasmDir}`);
+    const serveWasm = express.static(ortWasmDir, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mjs') || filePath.endsWith('.js')) {
           res.setHeader('Content-Type', 'application/javascript');
         } else if (filePath.endsWith('.wasm')) {
           res.setHeader('Content-Type', 'application/wasm');
         }
-        console.log(`[server] Serving WASM asset: ${path.basename(filePath)} as ${res.getHeader('Content-Type')}`);
       }
-    }));
+    });
+    app.use('/ort-wasm', serveWasm);
+    app.use('/wasm', serveWasm); // Compatibility for old cached bundles
   }
 
   // Ensure .mjs files are served with correct MIME type
