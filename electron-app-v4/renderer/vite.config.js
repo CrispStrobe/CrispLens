@@ -18,7 +18,7 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: 'node_modules/onnxruntime-web/dist/*.{wasm,mjs}',
+          src: 'node_modules/onnxruntime-web/dist/*',
           dest: 'wasm',
         },
         {
@@ -55,6 +55,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/models\//],
         cleanupOutdatedCaches: true,

@@ -22,21 +22,12 @@
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web paths for WASM and worker scripts
-// We copy these to /wasm/ in vite.config.js
-ort.env.wasm.wasmPaths = {
-  'ort-wasm-simd-threaded.wasm': '/wasm/ort-wasm-simd-threaded.wasm',
-  'ort-wasm-simd.wasm': '/wasm/ort-wasm-simd.wasm',
-  'ort-wasm-threaded.wasm': '/wasm/ort-wasm-threaded.wasm',
-  'ort-wasm.wasm': '/wasm/ort-wasm.wasm',
-  'ort-wasm-simd-threaded.mjs': '/wasm/ort-wasm-simd-threaded.mjs',
-  'ort-wasm-simd.mjs': '/wasm/ort-wasm-simd.mjs',
-  'ort-wasm-threaded.mjs': '/wasm/ort-wasm-threaded.mjs',
-  'ort-wasm.mjs': '/wasm/ort-wasm.mjs',
-};
+// We copy the entire dist folder to /wasm/ in vite.config.js
+ort.env.wasm.wasmPaths = '/wasm/';
 
 // Explicitly disable multi-threading to avoid SharedArrayBuffer/COOP/COEP issues in some environments
 ort.env.wasm.numThreads = 1;
-ort.env.wasm.proxy = false; // Run in main thread if needed to avoid worker MIME issues
+ort.env.wasm.proxy = true; // Use workers for better UI responsiveness now that paths are fixed
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

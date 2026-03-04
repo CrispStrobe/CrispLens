@@ -79,6 +79,65 @@ export class VlmClientWeb {
   }
 
   /**
+   * Actual validation of an API key by making a minimal request.
+   */
+  async testKey(provider, key) {
+    if (!key) throw new Error('No key provided');
+    
+    try {
+      if (provider === 'google') {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message || 'Invalid Key');
+        return { ok: true, message: 'Google API key is valid' };
+      }
+
+      if (provider === 'anthropic') {
+        // Minimal messages call with 1 token limit
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'dangerously-allow-browser': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'Hi' }]
+          })
+        });
+        const data = await res.json();
+        if (data.error) {
+          if (data.error.type === 'authentication_error') throw new Error('Invalid API Key');
+          // Other errors (rate limit, etc) usually mean the key is at least valid
+          return { ok: true, message: `Key accepted, but provider returned: ${data.error.message}` };
+        }
+        return { ok: true, message: 'Anthropic API key is valid' };
+      }
+
+      const baseUrl = OPENAI_COMPATIBLE[provider];
+      if (baseUrl) {
+        // Test by fetching models list — usually requires valid auth
+        const res = await fetch(`${baseUrl}/models`, {
+          headers: { 'Authorization': `Bearer ${key}` }
+        });
+        const data = await res.json();
+        if (res.status === 401 || data.error) {
+          throw new Error(data.error?.message || 'Authentication failed');
+        }
+        return { ok: true, message: `${provider} API key is valid` };
+      }
+
+      return { ok: true, message: `Key stored for ${provider} (actual validation not implemented for this provider)` };
+    } catch (err) {
+      console.error(`[VlmWeb] Validation failed for ${provider}:`, err);
+      throw err;
+    }
+  }
+
+  /**
    * Enrich an image using a Cloud VLM.
    */
   async enrichImage(image, provider, model, prompt) {
