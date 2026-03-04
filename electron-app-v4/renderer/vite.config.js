@@ -22,8 +22,16 @@ export default defineConfig({
           dest: 'wasm',
         },
         {
+          src: 'node_modules/onnxruntime-web/dist/*.wasm',
+          dest: 'assets',
+        },
+        {
           src: 'node_modules/sql.js/dist/sql-wasm.wasm',
           dest: 'assets',
+        },
+        {
+          src: 'node_modules/sql.js/dist/sql-wasm.wasm',
+          dest: 'wasm',
         },
       ],
     }),
@@ -67,6 +75,14 @@ export default defineConfig({
             options: {
               cacheName: 'crisplens-thumbnails',
               expiration: { maxEntries: 5000, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            },
+          },
+          {
+            urlPattern: /^\/wasm\//,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'crisplens-wasm-assets',
+              expiration: { maxEntries: 50 },
             },
           },
           { urlPattern: /^\/api\//, handler: 'NetworkOnly' },
