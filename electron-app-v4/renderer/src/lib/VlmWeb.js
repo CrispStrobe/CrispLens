@@ -219,14 +219,14 @@ export class VlmClientWeb {
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: `${prompt}\nRespond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
+          { type: 'text', text: `${prompt}\nIMPORTANT: Your response MUST be a valid JSON object ONLY. Do not include markdown blocks or extra text. Structure: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
         ]
       }]
     };
 
-    // Some providers don't like response_format
-    if (provider === 'openai' || provider === 'openrouter') {
+    // OpenRouter can sometimes fail with response_format if the model doesn't support it
+    if (provider === 'openai') {
       body.response_format = { type: "json_object" };
     }
 
@@ -282,10 +282,25 @@ export class VlmClientWeb {
 
   _parseJson(text) {
     try {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) return JSON.parse(match[0]);
-      return { description: text, scene_type: 'unknown', tags: [] };
-    } catch {
+      console.log('[VlmWeb] Attempting to parse JSON from:', text.slice(0, 100) + '...');
+      // Clean up common VLM artifacts like ```json ... ```
+      let clean = text.trim();
+      if (clean.includes('```')) {
+        const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (match) clean = match[1];
+      }
+      
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) clean = match[0];
+
+      const parsed = JSON.parse(clean);
+      return {
+        description: parsed.description || parsed.caption || parsed.text || '',
+        scene_type:  parsed.scene_type || parsed.category || 'unknown',
+        tags:        Array.isArray(parsed.tags) ? parsed.tags : []
+      };
+    } catch (e) {
+      console.warn('[VlmWeb] JSON parse failed, falling back to raw:', e.message);
       return { description: text, scene_type: 'unknown', tags: [] };
     }
   }

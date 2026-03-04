@@ -385,6 +385,7 @@
 
     for (const item of pending) {
       if (cancelled) break;
+      console.log(`[ProcessView] Processing item ${doneCount + 1}/${totalCount}: ${item.name} (${item.path})`);
 
       // Resolve the File object — from browser File, or by fetching a Capacitor webPath
       let fileObj = item.file;
