@@ -89,15 +89,21 @@ const SCHEMA = `
 // ── Public API ────────────────────────────────────────────────────────────────
 
 let _initPromise = null;
+let _initFailed = false;
 
 async function _waitForJeepSqlite() {
   if (window.location.protocol === 'capacitor:') return;
   const el = document.querySelector('jeep-sqlite');
-  if (el && el.shadowRoot) return; // already ready
+  if (el && el.shadowRoot) return; 
   
-  console.log('[LocalDB] Waiting for jeep-sqlite element...');
+  console.log('[LocalDB] Waiting for jeep-sqlite component...');
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('jeep-sqlite timed out')), 5000);
+    // 3 second timeout — don't hang the app forever
+    const timeout = setTimeout(() => {
+      _initFailed = true;
+      reject(new Error('jeep-sqlite initialization timed out. Standalone mode will be restricted.'));
+    }, 3000);
+
     customElements.whenDefined('jeep-sqlite').then(() => {
       clearTimeout(timeout);
       resolve();
@@ -106,11 +112,12 @@ async function _waitForJeepSqlite() {
 }
 
 export async function getDB() {
+  if (_initFailed) throw new Error('Database initialization previously failed.');
   if (_db && (await _db.isDBOpen()).result) return _db;
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
-    console.log('[LocalDB] Initializing database...');
+    console.log('[LocalDB] Opening face_recognition database...');
     try {
       await _waitForJeepSqlite();
       
@@ -120,7 +127,6 @@ export async function getDB() {
       
       const isWeb = window.location.protocol !== 'capacitor:';
       if (isWeb) {
-        console.log('[LocalDB] Initializing web store...');
         await sqlite.initWebStore();
       }
 
@@ -133,17 +139,17 @@ export async function getDB() {
 
       const isOpen = (await _db.isDBOpen()).result;
       if (!isOpen) {
-        console.log('[LocalDB] Opening DB...');
         await _db.open();
       }
 
       await _db.execute(SCHEMA);
-      console.log('[LocalDB] Database ready.');
+      console.log('[LocalDB] Database is ready for queries');
       _initPromise = null; 
       return _db;
     } catch (err) {
       console.error('[LocalDB] Initialization error:', err);
-      _initPromise = null;
+      _initPromise = null; 
+      _initFailed = true;
       throw err;
     }
   })();
@@ -157,8 +163,8 @@ export async function query(sql, params = []) {
     const result = await db.query(sql, params);
     return result.values ?? [];
   } catch (err) {
-    console.error('[LocalDB] Query error:', err);
-    throw err;
+    console.error(`[LocalDB] Query failed: ${sql}`, err);
+    return []; // Return empty instead of hanging
   }
 }
 
@@ -167,15 +173,16 @@ export async function run(sql, params = []) {
     const db = await getDB();
     return await db.run(sql, params);
   } catch (err) {
-    console.error('[LocalDB] Run error:', err);
+    console.error(`[LocalDB] Run failed: ${sql}`, err);
     throw err;
   }
 }
 
 export async function isAvailable() {
+  if (_initFailed) return false;
   try {
-    const r = await sqlite.checkConnectionsConsistency();
-    return true;
+    const db = await getDB();
+    return !!db;
   } catch {
     return false;
   }

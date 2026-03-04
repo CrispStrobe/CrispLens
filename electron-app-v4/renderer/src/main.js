@@ -8,25 +8,29 @@ async function init() {
   if (isWeb) {
     console.log('[main] Web platform detected. Initializing jeep-sqlite...');
     try {
+      // 1. Define custom elements
       defineCustomElements(window);
       
-      // Ensure jeep-sqlite is in the DOM
+      // 2. Ensure the element exists in the DOM
       let jeepSqlite = document.querySelector('jeep-sqlite');
       if (!jeepSqlite) {
-        console.log('[main] Creating jeep-sqlite element...');
+        console.log('[main] Creating and appending jeep-sqlite element...');
         jeepSqlite = document.createElement('jeep-sqlite');
         jeepSqlite.setAttribute('auto-save', 'true');
         document.body.appendChild(jeepSqlite);
       }
       
-      console.log('[main] Waiting for custom elements to be defined...');
+      // 3. Wait for the component to be defined AND upgraded
       await customElements.whenDefined('jeep-sqlite');
       
-      // Critical: wait for the component to be fully ready
-      // CapacitorSQLite web implementation relies on this.
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Small delay to allow the Stencil component to initialize its internal shadow DOM
+      await new Promise(resolve => setTimeout(resolve, 300));
       
-      console.log('[main] jeep-sqlite is ready in DOM');
+      if (jeepSqlite.shadowRoot) {
+        console.log('[main] jeep-sqlite is fully upgraded and ready');
+      } else {
+        console.warn('[main] jeep-sqlite element defined but shadowRoot missing. Persistence might be limited.');
+      }
     } catch (err) {
       console.error('[main] jeep-sqlite initialization failed:', err);
     }
@@ -36,7 +40,7 @@ async function init() {
   const app = new App({ target: document.getElementById('app') });
 }
 
-// Start initialization when DOM is ready
+// Ensure init runs after the DOM is fully interactive
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {

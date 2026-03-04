@@ -137,16 +137,19 @@
   async function doFetchModels() {
     if (!vlmProvider || fetchingModels) return;
     fetchingModels = true;
-    console.log('[SettingsView] doFetchModels starting for:', vlmProvider);
+    console.log('[SettingsView] Fetching models for:', vlmProvider);
     try {
       vlmModels = await fetchVlmModels(vlmProvider);
-      console.log(`[SettingsView] Fetched ${vlmModels.length} models for ${vlmProvider}`);
+      console.log(`[SettingsView] Found ${vlmModels.length} models for ${vlmProvider}`);
+      
       // Auto-select first model if current one is blank or not in the list
       if (vlmModels.length > 0 && (!vlmModel || !vlmModels.includes(vlmModel))) {
         vlmModel = vlmModels[0];
       }
     } catch (e) {
-      console.error('[SettingsView] Error fetching models:', e);
+      console.error('[SettingsView] fetchVlmModels failed:', e);
+      // Fallback: at least show the default model if we know it
+      vlmModels = [];
     } finally {
       fetchingModels = false;
     }
