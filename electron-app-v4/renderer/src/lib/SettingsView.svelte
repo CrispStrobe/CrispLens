@@ -202,13 +202,9 @@
     if (modelDownloading) return;
     modelDownloading = true;
     modelDownloadMsg = '';
-    const inCapacitor = typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
     try {
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
       const remoteUrl = localStorage.getItem('remote_url');
-      if (inCapacitor && !remoteUrl) {
-        throw new Error('Please configure a server URL (in Server mode) before downloading models for offline use.');
-      }
       const remoteBase = remoteUrl || window.location.origin;
       faceEngineWeb.setModelBaseUrl(remoteBase + '/models');
       const results = await faceEngineWeb.downloadModels(

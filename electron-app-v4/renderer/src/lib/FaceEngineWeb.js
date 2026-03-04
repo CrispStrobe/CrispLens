@@ -209,7 +209,14 @@ export class FaceEngineWeb {
     // are reusable in standalone/local mode regardless of base URL changes.
     const canonicalKey = `onnx-model://${filename}`;
     const fetchUrl = `${this.modelBaseUrl}/${filename}`;
-    const fallbackUrl = `https://github.com/christianstrobele/face-rec-models/releases/download/v0.1/${filename}`;
+    
+    // Direct download fallbacks (Hugging Face LFS mirrors)
+    const fallbackUrls = {
+      'det_10g.onnx':  'https://huggingface.co/lithiumice/insightface/resolve/main/models/buffalo_l/det_10g.onnx',
+      'w600k_r50.onnx': 'https://huggingface.co/lithiumice/insightface/resolve/main/models/buffalo_l/w600k_r50.onnx',
+      'face_detection_yunet_2023mar.onnx': 'https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx'
+    };
+    const fallbackUrl = fallbackUrls[filename];
 
     if ('caches' in globalThis) {
       const cache = await caches.open(MODEL_CACHE_NAME);
@@ -222,12 +229,17 @@ export class FaceEngineWeb {
       if (!resp) {
         this._progress(`Downloading ${filename}…`);
         try {
+          // Attempt server fetch first
           resp = await fetch(fetchUrl);
           if (!resp.ok) throw new Error(`Server fetch failed: ${resp.status}`);
         } catch (e) {
-          this._progress(`Server fetch failed, trying direct download for ${filename}…`);
-          resp = await fetch(fallbackUrl);
-          if (!resp.ok) throw new Error(`Model download failed from both server and mirror: ${resp.status}`);
+          if (fallbackUrl) {
+            this._progress(`Server fetch failed, trying direct download for ${filename}…`);
+            resp = await fetch(fallbackUrl);
+            if (!resp.ok) throw new Error(`Model download failed from both server and mirror: ${resp.status}`);
+          } else {
+            throw new Error(`Model download failed: ${e.message}`);
+          }
         }
         // Store under canonical key so the cache survives base URL changes
         await cache.put(canonicalKey, resp.clone());
@@ -240,9 +252,11 @@ export class FaceEngineWeb {
       const resp = await fetch(fetchUrl);
       if (resp.ok) return resp.arrayBuffer();
     } catch (e) {}
-    const resp = await fetch(fallbackUrl);
-    if (!resp.ok) throw new Error(`Model fetch failed: ${resp.status} ${fetchUrl}`);
-    return resp.arrayBuffer();
+    if (fallbackUrl) {
+      const resp = await fetch(fallbackUrl);
+      if (resp.ok) return resp.arrayBuffer();
+    }
+    throw new Error(`Model fetch failed: ${filename}`);
   }
 
   /** Pre-download both ONNX models and store in Cache API. Call from SettingsView. */
