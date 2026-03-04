@@ -37,6 +37,41 @@ app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// ── Consolidate UI path resolution ────────────────────────────────────────────
+const v4dist = path.join(__dirname, 'renderer', 'dist');
+const v2dist = path.join(__dirname, '..', 'electron-app-v2', 'renderer', 'dist');
+const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist : null);
+
+// ── Strict Static Assets (WASM/MJS) ──────────────────────────────────────────
+if (uiDist) {
+  console.log(`[server] UI distribution found at: ${uiDist}`);
+  express.static.mime.define({ 'application/javascript': ['mjs'], 'application/wasm': ['wasm'] });
+
+  // MANUAL ROUTE for WASM/MJS/Assets to guarantee MIME types and avoid any catch-all interference
+  app.get(['/ort-wasm/:file', '/wasm/:file', '/assets/:file'], (req, res, next) => {
+    const fileName = req.params.file;
+    const ext = path.extname(fileName).toLowerCase();
+    
+    // Determine source folder based on route
+    const folder = req.path.startsWith('/assets') ? 'assets' : 'ort-wasm';
+    const filePath = path.join(uiDist, folder, fileName);
+    
+    if (fs.existsSync(filePath)) {
+      if (ext === '.mjs' || ext === '.js') res.setHeader('Content-Type', 'application/javascript');
+      else if (ext === '.wasm') res.setHeader('Content-Type', 'application/wasm');
+      else if (ext === '.css') res.setHeader('Content-Type', 'text/css');
+      
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      console.log(`[server] MANUAL SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
+      return res.sendFile(filePath);
+    }
+    console.warn(`[server] MANUAL SERVE NOT FOUND: ${filePath}`);
+    // If it looks like an asset but wasn't found, return 404 instead of SPA fallback
+    res.status(404).send('Asset not found');
+  });
+}
+
 // ── Request logging ───────────────────────────────────────────────────────────
 
 app.use((req, res, next) => {
@@ -115,33 +150,8 @@ app.use('/api',            miscRouter);
 
 // ── Serve Svelte UI ───────────────────────────────────────────────────────────
 
-// Try v4's own renderer/dist first, then v2's renderer/dist
-const v4dist = path.join(__dirname, 'renderer', 'dist');
-const v2dist = path.join(__dirname, '..', 'electron-app-v2', 'renderer', 'dist');
-const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist : null);
-
 if (uiDist) {
-  console.log(`[server] Serving UI from: ${uiDist}`);
-  
-  // Explicitly serve the wasm directory if it exists
-  const ortWasmDir = path.join(uiDist, 'ort-wasm');
-  if (fs.existsSync(ortWasmDir)) {
-    console.log(`[server] Found ORT WASM directory at: ${ortWasmDir}`);
-    const serveWasm = express.static(ortWasmDir, {
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.mjs') || filePath.endsWith('.js')) {
-          res.setHeader('Content-Type', 'application/javascript');
-        } else if (filePath.endsWith('.wasm')) {
-          res.setHeader('Content-Type', 'application/wasm');
-        }
-      }
-    });
-    app.use('/ort-wasm', serveWasm);
-    app.use('/wasm', serveWasm); // Compatibility for old cached bundles
-  }
-
-  // Ensure .mjs files are served with correct MIME type
-  express.static.mime.define({ 'application/javascript': ['mjs'] });
+  console.log(`[server] Serving static UI from: ${uiDist}`);
   
   app.use(express.static(uiDist, {
     setHeaders: (res, filePath) => {
@@ -150,9 +160,27 @@ if (uiDist) {
       }
     }
   }));
-  // SPA: send index.html for non-API routes
+
+  // SPA: send index.html for non-API, non-asset routes
   app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) return;
+    const p = req.path;
+    
+    // 1. Skip SPA fallback for known API/Asset paths
+    if (p.startsWith('/api') || p.startsWith('/models') || 
+        p.startsWith('/ort-wasm') || p.startsWith('/wasm') || p.startsWith('/assets')) {
+      console.log(`[server] 404 for asset/API: ${p}`);
+      return res.status(404).send('Not found');
+    }
+
+    // 2. Skip SPA fallback for anything with a file extension (likely a missing asset)
+    const ext = path.extname(p).toLowerCase();
+    const assetExts = ['.js', '.mjs', '.wasm', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.map'];
+    if (ext && assetExts.includes(ext)) {
+      console.log(`[server] 404 for missing asset: ${p}`);
+      return res.status(404).send('Not found');
+    }
+
+    console.log(`[server] SPA fallback: ${p}`);
     res.sendFile(path.join(uiDist, 'index.html'));
   });
 } else {

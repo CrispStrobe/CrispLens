@@ -259,6 +259,14 @@ export class FaceEngineWeb {
         try {
           // Attempt server fetch first
           resp = await fetch(fetchUrl);
+          
+          // CRITICAL: Manual MIME type check to fail early with clear message
+          const ct = resp.headers.get('content-type') || '';
+          if (ct.includes('text/html')) {
+            console.error(`[FaceEngineWeb] Server returned HTML for ${fetchUrl} - likely SPA fallback error.`);
+            throw new Error(`Server returned HTML instead of ${filename}. Check server MIME type config.`);
+          }
+          
           if (!resp.ok) throw new Error(`Server fetch failed: ${resp.status}`);
         } catch (e) {
           if (fallbackUrl) {

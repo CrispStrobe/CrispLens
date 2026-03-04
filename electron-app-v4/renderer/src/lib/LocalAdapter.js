@@ -55,12 +55,22 @@ async function _voyBestMatch(embedding, threshold = 0.4) {
 export const fileCache = new Map(); // image_id → filepath
 export const thumbCache = new Map(); // image_id → base64 jpeg string
 
+function uint8ToBase64(u8) {
+  let b = '';
+  for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]);
+  return btoa(b);
+}
+
 function _cache(images) {
   for (const img of images) {
     if (img?.id && img?.filepath) fileCache.set(String(img.id), img.filepath);
     if (img?.id && img?.thumbnail_blob) {
-      console.log(`[LocalAdapter] Caching thumbnail for image ${img.id}`);
-      thumbCache.set(String(img.id), img.thumbnail_blob);
+      let b64 = img.thumbnail_blob;
+      if (b64 instanceof Uint8Array) {
+        console.log(`[LocalAdapter] Converting binary thumb for image ${img.id}`);
+        b64 = uint8ToBase64(b64);
+      }
+      thumbCache.set(String(img.id), b64);
     }
   }
   return images;
@@ -483,10 +493,12 @@ export const localAdapter = {
   },
 
   async fetchThumbnail(id) {
-    if (thumbCache.has(id)) return thumbCache.get(id);
+    const sid = String(id);
+    if (thumbCache.has(sid)) return thumbCache.get(sid);
     const rows = await query('SELECT thumbnail_blob FROM images WHERE id=?', [id]);
-    const b64 = rows[0]?.thumbnail_blob;
-    if (b64) thumbCache.set(id, b64);
+    let b64 = rows[0]?.thumbnail_blob;
+    if (b64 instanceof Uint8Array) b64 = uint8ToBase64(b64);
+    if (b64) thumbCache.set(sid, b64);
     return b64;
   },
 
