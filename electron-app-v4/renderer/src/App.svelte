@@ -130,12 +130,19 @@
   }
 
   async function loadAll() {
+    console.log('[App] Starting loadAll...');
     // Try to restore existing session
-    try { currentUser.set(await fetchMe()); } catch { /* not logged in */ }
+    try {
+      console.log('[App] Fetching current user...');
+      currentUser.set(await fetchMe());
+    } catch (e) {
+      console.warn('[App] fetchMe failed (not logged in):', e.message);
+    }
     sessionChecked = true;   // show login screen now if still null
 
     // Load i18n — apply language from backend settings
     try {
+      console.log('[App] Fetching translations...');
       const data = await fetchTranslations(true);
       const language = data.language ?? data.lang ?? 'en';
       lang.set(language);
@@ -147,18 +154,31 @@
       if (Object.keys(merged).length > 0)
         translations.update(cur => ({ ...cur, ...merged }));
       sessionStorage.setItem('i18n_cache', JSON.stringify({ ...data, language, lang: language }));
-    } catch (e) { console.error('i18n load error:', e); }
+      console.log(`[App] Translations loaded for: ${language}`);
+    } catch (e) { console.error('[App] i18n load error:', e); }
 
     // Load initial data
-    try { stats.set(await fetchStats()); } catch { /* ignore */ }
-    try { allTags.set(await fetchTags()); } catch { /* ignore */ }
-    try { allPeople.set(await fetchPeople()); } catch { /* ignore */ }
-    try { allAlbums.set(await fetchAlbums()); } catch { /* ignore */ }
-    // Load processing backend preference
     try {
-      const s = await fetchSettings();
-      processingBackend.set(s?.processing?.backend ?? 'local');
-    } catch { /* ignore */ }
+      console.log('[App] Fetching initial data (stats, tags, people, albums, settings)...');
+      const [sStats, sTags, sPeople, sAlbums, sSettings] = await Promise.all([
+        fetchStats().catch(e => { console.error('[App] fetchStats error:', e); return {}; }),
+        fetchTags().catch(e => { console.error('[App] fetchTags error:', e); return []; }),
+        fetchPeople().catch(e => { console.error('[App] fetchPeople error:', e); return []; }),
+        fetchAlbums().catch(e => { console.error('[App] fetchAlbums error:', e); return []; }),
+        fetchSettings().catch(e => { console.error('[App] fetchSettings error:', e); return null; })
+      ]);
+
+      stats.set(sStats);
+      allTags.set(sTags);
+      allPeople.set(sPeople);
+      allAlbums.set(sAlbums);
+      if (sSettings) {
+        processingBackend.set(sSettings?.processing?.backend ?? 'local');
+      }
+      console.log('[App] Initial data loaded.');
+    } catch (e) {
+      console.error('[App] General data load error:', e);
+    }
   }
 
   function applyServerUrl(url) {

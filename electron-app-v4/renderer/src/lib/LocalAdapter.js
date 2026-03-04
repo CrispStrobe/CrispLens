@@ -99,6 +99,7 @@ export const localAdapter = {
   async getImages({ person='', tag='', scene='', folder='', path='',
                     dateFrom='', dateTo='', sort='newest',
                     limit=200, offset=0, unidentified=false, album=0 } = {}) {
+    console.log('[LocalAdapter] getImages', { person, tag, scene, folder, path, dateFrom, dateTo, sort, limit, offset, unidentified, album });
     let sql    = 'SELECT * FROM images WHERE 1=1';
     const params = [];
 
@@ -152,7 +153,14 @@ export const localAdapter = {
     sql += ` ORDER BY ${orderMap[sort] ?? 'id DESC'} LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
-    return _cache(await query(sql, params));
+    try {
+      const results = await query(sql, params);
+      console.log(`[LocalAdapter] SQL: ${sql} | Params: ${JSON.stringify(params)} | Results: ${results.length}`);
+      return _cache(results);
+    } catch (err) {
+      console.error('[LocalAdapter] getImages error:', err);
+      throw err;
+    }
   },
 
   async getImage(id) {

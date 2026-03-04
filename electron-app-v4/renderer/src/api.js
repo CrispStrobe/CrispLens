@@ -39,19 +39,26 @@ async function _fetch(method, path, body) {
   // 'include': always send cookies, even cross-origin.
   // The Electron main process uses session.webRequest to fix ACAO:* → actual origin so
   // Chromium accepts cross-origin credentialed responses without server changes.
+  console.log(`[api] ${method} ${path}`, body ? `(body: ${JSON.stringify(body).length} bytes)` : '');
   const opts = {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
     credentials: 'include',
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(BASE + path, opts);
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+  try {
+    const res = await fetch(BASE + path, opts);
+    console.log(`[api] ${method} ${path} → ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+    }
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('application/json') ? res.json() : res.text();
+  } catch (err) {
+    console.error(`[api] ${method} ${path} error:`, err);
+    throw err;
   }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('application/json') ? res.json() : res.text();
 }
 
 const get  = (path)        => _fetch('GET',    path);
@@ -63,17 +70,24 @@ const del  = (path)        => _fetch('DELETE', path);
 // ── Images ────────────────────────────────────────────────────────────────────
 
 export async function fetchImages(params = {}) {
-  if (_localMode) return localAdapter.getImages(params);
+  if (_localMode) {
+    console.log('[api] fetchImages (local mode)');
+    return localAdapter.getImages(params);
+  }
   const { person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='',
           sort='newest', limit=200, offset=0, unidentified=false, album=0 } = params;
   const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom,
                                    date_to: dateTo, sort, limit, offset, unidentified, album });
   try {
+    console.log(`[api] fetchImages (remote) sort=${sort} limit=${limit}`);
     const data = await get(`/images?${q}`);
     return Array.isArray(data) ? data : (data.images ?? []);
   } catch (e) {
-    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message))
+    console.warn(`[api] fetchImages remote failed: ${e.message}. Online=${navigator.onLine}`);
+    if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+      console.log('[api] fetchImages falling back to syncManager offline cache');
       return syncManager.getImages({ sort, limit, offset, person, tag });
+    }
     throw e;
   }
 }

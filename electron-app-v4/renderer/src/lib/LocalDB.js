@@ -77,15 +77,47 @@ const SCHEMA = `
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+let _initPromise = null;
+
 export async function getDB() {
   if (_db) return _db;
-  const isConn = (await sqlite.isConnection(DB_NAME, false)).result;
-  _db = isConn
-    ? await sqlite.retrieveConnection(DB_NAME, false)
-    : await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
-  await _db.open();
-  await _db.execute(SCHEMA);
-  return _db;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    console.log('[LocalDB] Initializing database...');
+    try {
+      const isConn = (await sqlite.isConnection(DB_NAME, false)).result;
+      console.log(`[LocalDB] Connection exists: ${isConn}`);
+
+      if (isConn) {
+        console.log('[LocalDB] Retrieving existing connection...');
+        _db = await sqlite.retrieveConnection(DB_NAME, false);
+      } else {
+        console.log('[LocalDB] Creating new connection...');
+        _db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
+      }
+
+      console.log('[LocalDB] Checking if DB is open...');
+      const isOpen = (await _db.isDBOpen()).result;
+      console.log(`[LocalDB] DB open: ${isOpen}`);
+
+      if (!isOpen) {
+        console.log('[LocalDB] Opening DB...');
+        await _db.open();
+      }
+
+      console.log('[LocalDB] Executing schema...');
+      await _db.execute(SCHEMA);
+      console.log('[LocalDB] Database ready.');
+      return _db;
+    } catch (err) {
+      console.error('[LocalDB] Initialization error:', err);
+      _initPromise = null;
+      throw err;
+    }
+  })();
+
+  return _initPromise;
 }
 
 export async function query(sql, params = []) {

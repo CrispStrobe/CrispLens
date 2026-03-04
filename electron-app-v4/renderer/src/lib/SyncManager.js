@@ -294,34 +294,43 @@ class SyncManager {
 
   /** Get images from IndexedDB. Supports sort=newest|oldest and basic pagination. */
   async getImages({ sort = 'newest', limit = 200, offset = 0, person = '', tag = '' } = {}) {
-    const db    = await this._getDB();
-    const store = db.transaction('images', 'readonly').objectStore('images');
-    let all     = await _req(store.getAll());
+    console.log('[SyncManager] getImages offline fallback', { sort, limit, offset, person, tag });
+    try {
+      const db    = await this._getDB();
+      const store = db.transaction('images', 'readonly').objectStore('images');
+      let all     = await _req(store.getAll());
+      console.log(`[SyncManager] Retrieved ${all.length} total images from IndexedDB`);
 
-    // Sort
-    if (sort === 'newest' || sort === 'date_taken_desc') {
-      all.sort((a, b) => b.id - a.id);
-    } else {
-      all.sort((a, b) => a.id - b.id);
+      // Sort
+      if (sort === 'newest' || sort === 'date_taken_desc') {
+        all.sort((a, b) => b.id - a.id);
+      } else {
+        all.sort((a, b) => a.id - b.id);
+      }
+
+      // Basic person filter (match against stored people array)
+      if (person) {
+        const lp = person.toLowerCase();
+        all = all.filter(img =>
+          (img.people ?? []).some(p => (p.name ?? '').toLowerCase().includes(lp))
+        );
+      }
+
+      // Basic tag filter
+      if (tag) {
+        const lt = tag.toLowerCase();
+        all = all.filter(img =>
+          (img.tags ?? []).some(t => (t.name ?? t ?? '').toLowerCase().includes(lt))
+        );
+      }
+
+      const slice = all.slice(offset, offset + limit);
+      console.log(`[SyncManager] Returning ${slice.length} images after filter/sort`);
+      return slice;
+    } catch (err) {
+      console.error('[SyncManager] getImages error:', err);
+      throw err;
     }
-
-    // Basic person filter (match against stored people array)
-    if (person) {
-      const lp = person.toLowerCase();
-      all = all.filter(img =>
-        (img.people ?? []).some(p => (p.name ?? '').toLowerCase().includes(lp))
-      );
-    }
-
-    // Basic tag filter
-    if (tag) {
-      const lt = tag.toLowerCase();
-      all = all.filter(img =>
-        (img.tags ?? []).some(t => (t.name ?? t ?? '').toLowerCase().includes(lt))
-      );
-    }
-
-    return all.slice(offset, offset + limit);
   }
 
   /** Get all people from IndexedDB. */
