@@ -58,5 +58,7 @@
 	<string>CrispLens may save processed images to your photo library.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>CrispLens can use the camera to capture photos for face recognition.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>CrispLens needs access to your local network to connect to your CrispLens server for syncing and processing.</string>
 </dict>
 </plist>

@@ -209,6 +209,7 @@ export class FaceEngineWeb {
     // are reusable in standalone/local mode regardless of base URL changes.
     const canonicalKey = `onnx-model://${filename}`;
     const fetchUrl = `${this.modelBaseUrl}/${filename}`;
+    const fallbackUrl = `https://github.com/christianstrobele/face-rec-models/releases/download/v0.1/${filename}`;
 
     if ('caches' in globalThis) {
       const cache = await caches.open(MODEL_CACHE_NAME);
@@ -220,8 +221,14 @@ export class FaceEngineWeb {
       }
       if (!resp) {
         this._progress(`Downloading ${filename}…`);
-        resp = await fetch(fetchUrl);
-        if (!resp.ok) throw new Error(`Model download failed: ${resp.status} ${fetchUrl}`);
+        try {
+          resp = await fetch(fetchUrl);
+          if (!resp.ok) throw new Error(`Server fetch failed: ${resp.status}`);
+        } catch (e) {
+          this._progress(`Server fetch failed, trying direct download for ${filename}…`);
+          resp = await fetch(fallbackUrl);
+          if (!resp.ok) throw new Error(`Model download failed from both server and mirror: ${resp.status}`);
+        }
         // Store under canonical key so the cache survives base URL changes
         await cache.put(canonicalKey, resp.clone());
       }
@@ -229,7 +236,11 @@ export class FaceEngineWeb {
     }
     // Fallback: plain fetch (no caching)
     this._progress(`Fetching ${filename}…`);
-    const resp = await fetch(fetchUrl);
+    try {
+      const resp = await fetch(fetchUrl);
+      if (resp.ok) return resp.arrayBuffer();
+    } catch (e) {}
+    const resp = await fetch(fallbackUrl);
     if (!resp.ok) throw new Error(`Model fetch failed: ${resp.status} ${fetchUrl}`);
     return resp.arrayBuffer();
   }

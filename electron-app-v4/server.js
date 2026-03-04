@@ -180,7 +180,7 @@ if (require.main === module) {
   });
 } else {
   // Required by electron-main.js — start listening on the configured PORT
-  _httpServer = app.listen(PORT, '127.0.0.1', () => {
+  _httpServer = app.listen(PORT, '0.0.0.0', () => {
     // Quiet start for Electron mode
   });
 }
