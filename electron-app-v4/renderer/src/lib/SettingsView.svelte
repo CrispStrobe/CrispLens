@@ -147,7 +147,9 @@
     if (!vlmProvider || fetchingModels) return;
     fetchingModels = true;
     vlmFetchMsg = 'Fetching…';
-    console.log('[SettingsView] doFetchModels for:', vlmProvider);
+    const currentProvider = vlmProvider;
+    const currentModel = vlmModel;
+    console.log('[SettingsView] doFetchModels for:', currentProvider);
     
     // Safety timeout to prevent permanent hang
     const safetyTimer = setTimeout(() => {
@@ -159,14 +161,23 @@
     }, 15000);
 
     try {
-      vlmModels = await fetchVlmModels(vlmProvider);
+      const models = await fetchVlmModels(currentProvider);
+      vlmModels = models;
       vlmFetchMsg = vlmModels.length > 0 ? `✓ ${vlmModels.length} models found` : '✓ Using local defaults';
-      console.log(`[SettingsView] Found ${vlmModels.length} models for ${vlmProvider}`);
+      console.log(`[SettingsView] Found ${vlmModels.length} models for ${currentProvider}`);
+      
+      // If the previously selected model is in the new list, keep it
+      if (currentModel && vlmModels.includes(currentModel)) {
+        vlmModel = currentModel;
+      }
     } catch (e) {
       console.error('[SettingsView] fetchVlmModels failed:', e);
       vlmFetchMsg = '✗ Live fetch failed — using defaults';
       // Fallback: at least show the hardcoded models if we know them
-      vlmModels = VLM_MODELS[vlmProvider] || [];
+      vlmModels = VLM_MODELS[currentProvider] || [];
+      if (currentModel && vlmModels.includes(currentModel)) {
+        vlmModel = currentModel;
+      }
     } finally {
       clearTimeout(safetyTimer);
       fetchingModels = false;
@@ -890,6 +901,10 @@
 
     if (isLocalMode()) {
       localStorage.setItem('pwa_language', newLang);
+      // Also save to SQLite via LocalAdapter
+      try {
+        await saveSettings({ language: newLang });
+      } catch (e) { console.warn('[SettingsView] Failed to save language to SQLite:', e); }
     }
 
     // Then sync with server (also persists config.yaml on save)

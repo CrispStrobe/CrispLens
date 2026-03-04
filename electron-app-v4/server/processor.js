@@ -197,10 +197,12 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
   }
 
   // ── VLM Enrichment ─────────────────────────────────────────────────────────
+  console.log(`[processor] VLM check for image ${imageId}: skip_vlm=${!!opts.skip_vlm}`);
   if (!opts.skip_vlm) {
     try {
       const { loadFlat } = require('./routes/settings');
       const flat = loadFlat();
+      console.log(`[processor] VLM config: enabled=${flat.vlm_enabled}, provider=${flat.vlm_provider}`);
       
       if (flat.vlm_enabled && flat.vlm_provider) {
         console.log(`[processor] Starting VLM enrichment for image ${imageId} (${flat.vlm_provider})...`);
@@ -229,7 +231,7 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
         }
       }
     } catch (vlmErr) {
-      console.warn(`[processor] VLM enrichment failed for image ${imageId}:`, vlmErr.message);
+      console.error(`[processor] VLM enrichment failed for image ${imageId}:`, vlmErr.message, vlmErr.stack);
     }
   }
 

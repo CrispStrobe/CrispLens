@@ -48,6 +48,7 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
     const result = await processImageIntoDb(req.file.path, null, {
       local_path, visibility, rec_thresh,
       skip_recognition: skip_faces,
+      skip_vlm,
       owner_id, det_model, det_thresh, min_face_size, max_size,
     });
     res.json({

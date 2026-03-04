@@ -628,7 +628,8 @@ export class FaceEngineWeb {
         this._progress('AI Enrichment done');
       } catch (e) {
         console.error('[FaceEngineWeb] VLM enrichment failed error:', e);
-        this._progress(`AI Enrichment failed: ${e.message}`);
+        this._progress(`AI Enrichment failed (${opts.vlm_provider}): ${e.message}`);
+        // We don't throw here so the image still gets imported even if VLM fails
       }
     } else {
       console.log('[FaceEngineWeb] VLM enrichment skipped (not enabled in opts)');

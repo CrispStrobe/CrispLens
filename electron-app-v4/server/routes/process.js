@@ -24,13 +24,20 @@ function sseSend(res, data) {
 // ── POST /process/single ──────────────────────────────────────────────────────
 
 router.post('/single', requireAuth, async (req, res) => {
-  const { filepath, force = false, skip_faces = false, rec_thresh = 0.40 } = req.body || {};
+  const { filepath, force = false, skip_faces = false, skip_vlm = false, rec_thresh = 0.40, det_model = 'auto' } = req.body || {};
   if (!filepath) return res.status(400).json({ detail: 'filepath required' });
   if (!fs.existsSync(filepath)) return res.status(404).json({ detail: 'File not found' });
 
   try {
-    const result = await processImageIntoDb(filepath, null, { force, skip_recognition: skip_faces, rec_thresh });
-    res.json({ ok: true, image_id: result.imageId, faces_found: result.facesFound });
+    const result = await processImageIntoDb(filepath, null, { force, skip_recognition: skip_faces, skip_vlm, rec_thresh, det_model });
+    const db = require('../db').getDb();
+    const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
+    res.json({ 
+      ok: true, 
+      image_id: result.imageId, 
+      faces_found: result.facesFound,
+      vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type }
+    });
   } catch (err) {
     res.status(500).json({ detail: err.message });
   }
@@ -39,7 +46,7 @@ router.post('/single', requireAuth, async (req, res) => {
 // ── POST /process/batch — SSE stream ─────────────────────────────────────────
 
 router.post('/batch', requireAuth, async (req, res) => {
-  const { folder, recursive = true, force = false, rec_thresh = 0.40 } = req.body || {};
+  const { folder, recursive = true, force = false, rec_thresh = 0.40, skip_vlm = false, det_model = 'auto' } = req.body || {};
   if (!folder) return res.status(400).json({ detail: 'folder required' });
   if (!fs.existsSync(folder)) return res.status(404).json({ detail: 'Folder not found' });
 
@@ -48,17 +55,24 @@ router.post('/batch', requireAuth, async (req, res) => {
   const files = collectImages(folder, recursive);
   sseSend(res, { total: files.length, started: true });
 
+  const db = require('../db').getDb();
   let done = 0, errors = 0;
   for (const fp of files) {
     try {
-      const result = await processImageIntoDb(fp, null, { force, rec_thresh });
+      const result = await processImageIntoDb(fp, null, { force, rec_thresh, skip_vlm, det_model });
+      const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
       done++;
       sseSend(res, {
         index:    done,
         total:    files.length,
         path:     fp,
         image_id: result.imageId,
-        result:   { faces_detected: result.facesFound, people: [], scene_type: null, vlm: null },
+        result:   { 
+          faces_detected: result.facesFound, 
+          people: [], 
+          scene_type: enriched?.ai_scene_type, 
+          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type } 
+        },
       });
     } catch (err) {
       errors++;
@@ -73,7 +87,7 @@ router.post('/batch', requireAuth, async (req, res) => {
 // ── POST /process/batch-files — SSE stream (list of file paths) ──────────────
 
 router.post('/batch-files', requireAuth, async (req, res) => {
-  const { paths = [], force = false, rec_thresh = 0.40 } = req.body || {};
+  const { paths = [], force = false, rec_thresh = 0.40, skip_vlm = false, det_model = 'auto' } = req.body || {};
   if (!paths.length) return res.status(400).json({ detail: 'paths required' });
 
   sseHeaders(res);
@@ -81,17 +95,24 @@ router.post('/batch-files', requireAuth, async (req, res) => {
   const files = paths.filter(p => fs.existsSync(p));
   sseSend(res, { total: files.length, started: true });
 
+  const db = require('../db').getDb();
   let done = 0, errors = 0;
   for (const fp of files) {
     try {
-      const result = await processImageIntoDb(fp, null, { force, rec_thresh });
+      const result = await processImageIntoDb(fp, null, { force, rec_thresh, skip_vlm, det_model });
+      const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
       done++;
       sseSend(res, {
         index:    done,
         total:    files.length,
         path:     fp,
         image_id: result.imageId,
-        result:   { faces_detected: result.facesFound, people: [], scene_type: null, vlm: null },
+        result:   { 
+          faces_detected: result.facesFound, 
+          people: [], 
+          scene_type: enriched?.ai_scene_type,
+          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type }
+        },
       });
     } catch (err) {
       errors++;
