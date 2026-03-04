@@ -140,7 +140,7 @@ export const localAdapter = {
     
     return {
       ui: { 
-        language: prefs.language || localStorage.getItem('lang') || 'en' 
+        language: prefs.language || localStorage.getItem('pwa_language') || 'en' 
       },
       face_recognition: { 
         insightface: { 
@@ -291,7 +291,7 @@ export const localAdapter = {
   },
 
   i18n() {
-    return { language: localStorage.getItem('lang') || 'en', translations: {} };
+    return { language: localStorage.getItem('pwa_language') || 'en', translations: {} };
   },
 
   // ── Images ─────────────────────────────────────────────────────────────────

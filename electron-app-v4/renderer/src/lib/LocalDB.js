@@ -239,9 +239,36 @@ export async function query(sql, params = []) {
 export async function run(sql, params = []) {
   try {
     const db = await getDB();
-    return await db.run(sql, params);
+    const result = await db.run(sql, params);
+    
+    // On Web, we MUST save to store to persist in IndexedDB
+    const isWeb = window.location.protocol !== 'capacitor:';
+    if (isWeb && sqlite) {
+      console.log(`[LocalDB] Saving ${DB_NAME} to WebStore...`);
+      await sqlite.saveToStore(DB_NAME);
+    }
+    
+    return result;
   } catch (err) {
     console.error(`[LocalDB] Run failed: ${sql}`, err);
+    throw err;
+  }
+}
+
+export async function execute(sql) {
+  try {
+    const db = await getDB();
+    const result = await db.execute(sql);
+    
+    const isWeb = window.location.protocol !== 'capacitor:';
+    if (isWeb && sqlite) {
+      console.log(`[LocalDB] Saving ${DB_NAME} to WebStore (after execute)...`);
+      await sqlite.saveToStore(DB_NAME);
+    }
+    
+    return result;
+  } catch (err) {
+    console.error(`[LocalDB] Execute failed`, err);
     throw err;
   }
 }

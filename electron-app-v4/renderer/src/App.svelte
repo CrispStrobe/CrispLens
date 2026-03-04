@@ -372,7 +372,9 @@
             {/if}
             <button class="danger" on:click={() => { 
               if (confirm('Reset app state? This will clear local server URL and mode preferences.')) {
-                localStorage.clear();
+                localStorage.removeItem('remote_url');
+                localStorage.removeItem('db_mode');
+                localStorage.removeItem('pwa_language');
                 window.location.reload();
               }
             }}>Reset App State</button>

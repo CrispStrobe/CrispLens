@@ -885,8 +885,13 @@
       translations.set({ ...base, ...local });
       sessionStorage.removeItem('i18n_cache');
     }
+
+    if (isLocalMode()) {
+      localStorage.setItem('pwa_language', newLang);
+    }
+
     // Then sync with server (also persists config.yaml on save)
-    if ($backendReady) {
+    if ($backendReady && !isLocalMode()) {
       try {
         const data = await fetchTranslations();
         lang.set(data.lang);
