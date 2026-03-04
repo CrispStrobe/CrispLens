@@ -93,61 +93,129 @@ let _initFailed = false;
 
 async function _waitForJeepSqlite() {
   if (window.location.protocol === 'capacitor:') return;
-  const el = document.querySelector('jeep-sqlite');
-  if (el && el.shadowRoot) return; 
   
-  console.log('[LocalDB] Waiting for jeep-sqlite component...');
+  console.log('[LocalDB] Checking for jeep-sqlite component...');
+  const el = document.querySelector('jeep-sqlite');
+  if (el && el.shadowRoot) {
+    console.log('[LocalDB] jeep-sqlite already ready');
+    return;
+  }
+  
   return new Promise((resolve, reject) => {
-    // 3 second timeout — don't hang the app forever
+    console.log('[LocalDB] Waiting for customElements.whenDefined(jeep-sqlite)...');
+    
+    // 3 second timeout — standalone mode should be fast or fail fast
     const timeout = setTimeout(() => {
       _initFailed = true;
-      reject(new Error('jeep-sqlite initialization timed out. Standalone mode will be restricted.'));
+      console.error('[LocalDB] jeep-sqlite component TIMEOUT');
+      reject(new Error('jeep-sqlite initialization timed out. SQLite WASM failed to load.'));
     }, 3000);
 
-    customElements.whenDefined('jeep-sqlite').then(() => {
-      clearTimeout(timeout);
-      resolve();
+    // Listen for global errors that might indicate WASM LinkError
+    const errorListener = (event) => {
+      if (event.message && (event.message.includes('LinkError') || event.message.includes('wasm'))) {
+        console.error('[LocalDB] Detected WASM error during initialization:', event.message);
+        _initFailed = true;
+        clearTimeout(timeout);
+        window.removeEventListener('error', errorListener);
+        reject(new Error(`SQLite WASM Error: ${event.message}`));
+      }
+    };
+    window.addEventListener('error', errorListener);
+
+    customElements.whenDefined('jeep-sqlite').then(async () => {
+      console.log('[LocalDB] jeep-sqlite defined, checking shadowRoot...');
+      
+      let attempts = 0;
+      const checkShadow = setInterval(() => {
+        const jeep = document.querySelector('jeep-sqlite');
+        if (jeep && jeep.shadowRoot) {
+          console.log('[LocalDB] jeep-sqlite shadowRoot found');
+          clearTimeout(timeout);
+          clearInterval(checkShadow);
+          window.removeEventListener('error', errorListener);
+          resolve();
+        }
+        if (++attempts > 10) { // 1 second of checking shadowRoot
+          clearTimeout(timeout);
+          clearInterval(checkShadow);
+          window.removeEventListener('error', errorListener);
+          console.warn('[LocalDB] jeep-sqlite shadowRoot missing after 1s');
+          resolve(); // Try anyway
+        }
+      }, 100);
     });
   });
 }
 
 export async function getDB() {
-  if (_initFailed) throw new Error('Database initialization previously failed.');
-  if (_db && (await _db.isDBOpen()).result) return _db;
-  if (_initPromise) return _initPromise;
+  if (_initFailed) {
+    console.error('[LocalDB] getDB() called but initialization previously failed.');
+    throw new Error('Database initialization previously failed.');
+  }
+  
+  if (_db) {
+    try {
+      const isOpen = (await _db.isDBOpen()).result;
+      if (isOpen) return _db;
+    } catch (e) {
+      console.warn('[LocalDB] _db instance exists but isDBOpen check failed:', e.message);
+      _db = null; // Re-create
+    }
+  }
+  
+  if (_initPromise) {
+    console.log('[LocalDB] getDB() returning existing initPromise');
+    return _initPromise;
+  }
 
   _initPromise = (async () => {
     console.log('[LocalDB] Opening face_recognition database...');
     try {
+      console.log('[LocalDB] Step 1: Waiting for jeep-sqlite...');
       await _waitForJeepSqlite();
       
+      console.log('[LocalDB] Step 2: Creating SQLiteConnection...');
       if (!sqlite) {
         sqlite = new SQLiteConnection(CapacitorSQLite);
       }
       
       const isWeb = window.location.protocol !== 'capacitor:';
       if (isWeb) {
+        console.log('[LocalDB] Step 3: Initializing WebStore (indexedDB)...');
         await sqlite.initWebStore();
+        console.log('[LocalDB] WebStore initialized');
       }
 
+      console.log(`[LocalDB] Step 4: Checking for connection: ${DB_NAME}`);
       const isConn = (await sqlite.isConnection(DB_NAME, false)).result;
+      console.log(`[LocalDB] Connection exists: ${isConn}`);
+      
       if (isConn) {
+        console.log('[LocalDB] Step 5a: Retrieving existing connection...');
         _db = await sqlite.retrieveConnection(DB_NAME, false);
       } else {
+        console.log('[LocalDB] Step 5b: Creating new connection...');
         _db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
       }
 
+      console.log('[LocalDB] Step 6: Checking if DB is open...');
       const isOpen = (await _db.isDBOpen()).result;
+      console.log(`[LocalDB] DB is open: ${isOpen}`);
+      
       if (!isOpen) {
+        console.log('[LocalDB] Step 7: Opening database...');
         await _db.open();
+        console.log('[LocalDB] Database opened');
       }
 
+      console.log('[LocalDB] Step 8: Executing schema...');
       await _db.execute(SCHEMA);
-      console.log('[LocalDB] Database is ready for queries');
+      console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 
       return _db;
     } catch (err) {
-      console.error('[LocalDB] Initialization error:', err);
+      console.error('[LocalDB] CRITICAL Initialization error at some step:', err);
       _initPromise = null; 
       _initFailed = true;
       throw err;

@@ -210,6 +210,7 @@
   }
 
   onMount(async () => {
+    console.log('[App] onMount start');
     // Restore i18n from session cache immediately (don't wait for backend)
     try {
       const cached = sessionStorage.getItem('i18n_cache');
@@ -220,11 +221,13 @@
         const localStrings = language !== 'en' ? (TRANSLATIONS[language] ?? {}) : {};
         if (Object.keys(localStrings).length > 0)
           translations.update(cur => ({ ...cur, ...localStrings }));
+        console.log(`[App] i18n restored from cache: ${language}`);
       }
     } catch { /* ignore */ }
 
     // ── Local (standalone) mode: no server needed ──────────────────────────
     if (isLocalMode()) {
+      console.log('[App] Standalone mode detected, skipping backend check');
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;
@@ -232,29 +235,42 @@
       return;
     }
 
+    console.log('[App] Server mode, checking backend connectivity...');
     // Configure remote base URL (Electron or browser/PWA)
     if (inElectron) {
+      console.log('[App] Running in Electron');
       try {
         const s = await window.electronAPI.getSettings();
         const client = s?.client || {};
         if (client.connectTo === 'remote' && client.remoteUrl) {
+          console.log(`[App] Connecting to remote: ${client.remoteUrl}`);
           applyServerUrl(client.remoteUrl);
         } else if (s?.mode === 'remote' && s.remoteUrl) {
+          console.log(`[App] Connecting to remote (legacy): ${s.remoteUrl}`);
           applyServerUrl(s.remoteUrl);
         } else {
           // Local mode — get the actual port assigned to Python
           try {
             const port = await window.electronAPI.getPort();
+            console.log(`[App] Local server port: ${port}`);
             applyServerUrl(port ? `http://127.0.0.1:${port}` : '');
-          } catch { applyServerUrl(''); }
+          } catch { 
+            console.warn('[App] Failed to get port via IPC');
+            applyServerUrl(''); 
+          }
         }
-      } catch { applyServerUrl(''); }
+      } catch (err) { 
+        console.error('[App] Failed to get settings via IPC:', err);
+        applyServerUrl(''); 
+      }
     } else {
       // Browser / PWA — restore saved remote URL (empty = same origin)
       const saved = localStorage.getItem('remote_url') || '';
+      console.log(`[App] Browser mode, saved remote_url: ${saved}`);
       if (inCapacitor && !saved) {
         // First run in Capacitor with no saved server URL.
         // Don't poll capacitor://localhost — just show the connect screen.
+        console.log('[App] First run in Capacitor, showing connect screen');
         editableServerUrl = '';
         sessionChecked = true;  // prevent login flash
         return;
@@ -262,6 +278,7 @@
       applyServerUrl(saved);
     }
 
+    console.log(`[App] Final serverUrl: ${serverUrl}`);
     checkBackend();
     checkTimer = setInterval(checkBackend, 5000);
   });
@@ -353,6 +370,12 @@
             {#if inElectron}
               <button on:click={() => sidebarView.set('settings')}>Open Settings</button>
             {/if}
+            <button class="danger" on:click={() => { 
+              if (confirm('Reset app state? This will clear local server URL and mode preferences.')) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}>Reset App State</button>
           </div>
         </div>
       {:else if sessionChecked && !$currentUser && !$isOffline}

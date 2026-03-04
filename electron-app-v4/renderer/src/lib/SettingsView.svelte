@@ -218,6 +218,8 @@
   let connectionMode = 'local';
   let remoteUrl = '';
   let localPort = 7865;
+  let isStandaloneBroken = false;
+  let standaloneError = '';
 
   // ── Storage mode: 'server' (HTTP) vs 'local' (on-device SQLite) ─────────
   let dbMode = typeof window !== 'undefined'
@@ -230,6 +232,23 @@
     // Reload so the new mode takes effect immediately
     setTimeout(() => { window.location.reload(); }, 300);
   }
+
+  // Check standalone availability
+  onMount(async () => {
+    if (dbMode === 'local') {
+      try {
+        const { isAvailable } = await import('./LocalDB.js');
+        const ok = await isAvailable();
+        if (!ok) {
+          isStandaloneBroken = true;
+          standaloneError = 'SQLite engine failed to initialize (WASM error).';
+        }
+      } catch (e) {
+        isStandaloneBroken = true;
+        standaloneError = e.message;
+      }
+    }
+  });
 
   // ── ONNX model download (for standalone/local mode) ─────────────────────
   let modelStatus = { det_10g: false, w600k_r50: false };
@@ -687,6 +706,16 @@
   async function loadUsers() {
     console.log('[SettingsView] loadUsers() start');
     usersLoading = true;
+    
+    // 10s safety timeout
+    const safety = setTimeout(() => {
+      if (usersLoading) {
+        console.warn('[SettingsView] loadUsers() safety timeout');
+        usersLoading = false;
+        usersMsg = '✗ Request timed out (SQLite error?)';
+      }
+    }, 10000);
+
     try {
       users = await listUsers();
       console.log(`[SettingsView] loadUsers() success: ${Array.isArray(users) ? users.length : 'non-array'} users found`);
@@ -694,6 +723,7 @@
       console.error('[SettingsView] loadUsers() failed:', e);
       usersMsg = '✗ ' + e.message;
     } finally {
+      clearTimeout(safety);
       usersLoading = false;
       usersLoaded = true;
       console.log('[SettingsView] loadUsers() finished');
@@ -1061,6 +1091,15 @@
       </button>
     </div>
     {#if dbMode === 'local'}
+      {#if isStandaloneBroken}
+        <div class="card error-notice" style="margin-top:10px; background:#2a1a1a; border-color:#5a2a2a;">
+          <p style="color:#e08080; font-weight:600; font-size:12px;">⚠ Standalone Mode Error</p>
+          <p style="color:#c08080; font-size:11px; margin-top:4px;">{standaloneError}</p>
+          <button class="small" style="margin-top:10px; align-self:flex-start;" on:click={() => switchDbMode('server')}>
+            Switch back to Server Mode
+          </button>
+        </div>
+      {/if}
       <p class="hint" style="margin-top:10px;color:#a0a060;">
         ⚡ Standalone mode active. All processing, including VLM API calls and user management, happens locally on this device. Ensure you have downloaded the ONNX models below.
       </p>

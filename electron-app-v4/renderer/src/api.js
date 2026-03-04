@@ -17,7 +17,12 @@ export { localThumb };
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
 let _localMode = localStorage.getItem('db_mode') === 'local';
-console.log(`[api] Initializing. localMode=${_localMode}`);
+// Default to server mode if no mode is stored
+if (localStorage.getItem('db_mode') === null) {
+  _localMode = false;
+  localStorage.setItem('db_mode', 'server');
+}
+console.log(`[api] Initializing. localMode=${_localMode} (db_mode=${localStorage.getItem('db_mode')})`);
 
 /** Switch to local SQLite mode (standalone Capacitor — no server needed). */
 export function setLocalMode(enabled) {
