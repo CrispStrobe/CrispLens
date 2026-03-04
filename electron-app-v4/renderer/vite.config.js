@@ -38,6 +38,7 @@ export default defineConfig({
 
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: 'inline',
       includeAssets: ['favicon.png', 'icons/*.png'],
       manifest: {
         name: 'CrispLens',
@@ -67,6 +68,8 @@ export default defineConfig({
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/models\//, /^\/ort-wasm\//],
         cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         runtimeCaching: [
           // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
           {
