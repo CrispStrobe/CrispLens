@@ -117,13 +117,14 @@
     }
   }
 
-  async function pickFiles() {
+  function pickFiles() {
     console.log('[ProcessView] pickFiles() clicked');
     if (inElectron) {
-      const paths = await window.electronAPI.openFileDialog({ multiple: true });
-      if (paths?.length) addPaths(paths);
+      window.electronAPI.openFileDialog({ multiple: true }).then(paths => {
+        if (paths?.length) addPaths(paths);
+      });
     } else if (localMode && isMobile) {
-      await pickPhotosFromLibrary();
+      pickPhotosFromLibrary();
     } else {
       if (fileInput) {
         console.log('[ProcessView] Triggering click on fileInput ref');
@@ -166,11 +167,12 @@
     }
   }
 
-  async function pickFolder() {
+  function pickFolder() {
     console.log('[ProcessView] pickFolder() clicked');
     if (inElectron) {
-      const folder = await window.electronAPI.openFolderDialog();
-      if (folder) addFolderPaths(folder);
+      window.electronAPI.openFolderDialog().then(folder => {
+        if (folder) addFolderPaths(folder);
+      });
     } else {
       if (folderInput) {
         console.log('[ProcessView] Triggering click on folderInput ref');

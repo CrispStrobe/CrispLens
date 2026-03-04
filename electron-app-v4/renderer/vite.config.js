@@ -66,7 +66,14 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,mjs}'],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/models\//, /^\/ort-wasm\//],
+        navigateFallbackDenylist: [
+          /^\/api\//, 
+          /^\/models\//, 
+          /^\/ort-wasm\//, 
+          /^\/wasm\//, 
+          /^\/assets\//,
+          /\.(js|mjs|wasm|css|png|jpg|jpeg|gif|svg|ico|json)$/
+        ],
         cleanupOutdatedCaches: true,
         skipWaiting: true,
         clientsClaim: true,
