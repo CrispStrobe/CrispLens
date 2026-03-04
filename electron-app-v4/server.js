@@ -148,12 +148,30 @@ app.use((err, req, res, _next) => {
 // don't stall on first use.
 
 setImmediate(() => {
+  console.log('[server] Post-startup initialization...');
+  
+  // 1. Check DB connectivity immediately
+  try {
+    const { getDb } = require('./server/db');
+    getDb(); 
+    console.log('[server] Database connection verified.');
+  } catch (err) {
+    console.error('[server] CRITICAL: Database connection failed:', err.message);
+  }
+
+  // 2. Warm engine
   const { findModelDir } = require('./core/face-engine');
   if (findModelDir()) {
+    console.log('[server] Warming up face engine...');
     require('./server/processor'); // triggers module load
-    // Warm up engine (model loading is async; errors are non-fatal)
     const proc = require('./server/processor');
-    if (proc.warmEngine) proc.warmEngine().catch(() => {});
+    if (proc.warmEngine) {
+      proc.warmEngine()
+        .then(() => console.log('[server] Face engine warm and ready.'))
+        .catch(err => console.warn('[server] Face engine warmup failed:', err.message));
+    }
+  } else {
+    console.warn('[server] ONNX models not found — local inference will be disabled.');
   }
 });
 

@@ -134,25 +134,44 @@
     doFetchModels();
   }
 
+  let vlmFetchMsg = '';
   async function doFetchModels() {
     if (!vlmProvider || fetchingModels) return;
     fetchingModels = true;
+    vlmFetchMsg = 'Fetching…';
     console.log('[SettingsView] Fetching models for:', vlmProvider);
     try {
       vlmModels = await fetchVlmModels(vlmProvider);
+      vlmFetchMsg = vlmModels.length > 0 ? `✓ ${vlmModels.length} models found` : '✓ Using local defaults';
       console.log(`[SettingsView] Found ${vlmModels.length} models for ${vlmProvider}`);
       
       // Auto-select first model if current one is blank or not in the list
       if (vlmModels.length > 0 && (!vlmModel || !vlmModels.includes(vlmModel))) {
-        vlmModel = vlmModels[0];
+        // vlmModel = vlmModels[0]; // Don't auto-override if user might want Default
       }
     } catch (e) {
       console.error('[SettingsView] fetchVlmModels failed:', e);
-      // Fallback: at least show the default model if we know it
-      vlmModels = [];
+      vlmFetchMsg = '✗ Live fetch failed — using defaults';
+      // Fallback: at least show the hardcoded models if we know them
+      import('./VlmData.js').then(m => {
+        vlmModels = m.VLM_MODELS[vlmProvider] || [];
+      });
     } finally {
       fetchingModels = false;
+      setTimeout(() => { if (vlmFetchMsg.startsWith('✓') || vlmFetchMsg.includes('failed')) vlmFetchMsg = ''; }, 3000);
     }
+  }
+
+  // Get the display name for the default model of current provider
+  async function getDefaultModelName(provider) {
+    try {
+      const { DEFAULT_MODELS } = await import('./VlmWeb.js');
+      return DEFAULT_MODELS[provider] || 'Default';
+    } catch { return 'Default'; }
+  }
+  let defaultModelLabel = 'Default';
+  $: if (vlmProvider) {
+    getDefaultModelName(vlmProvider).then(name => defaultModelLabel = `Default (${name})`);
   }
 
   // ── API keys state ─────────────────────────────────────────────────────────
@@ -1181,7 +1200,7 @@
   <section class="card">
     <h3>{$t('settings_img_proc_section')}</h3>
     {#if connectionMode === 'local'}
-      <p class="hint">Images are processed by the local FastAPI server using InsightFace.</p>
+      <p class="hint">Images are processed by the internal Node.js server using ONNX Runtime.</p>
       <div class="form-grid" style="margin-top: 8px;">
         <label>{$t('settings_python_path')}</label>
         <div class="field-row">
@@ -1690,7 +1709,7 @@
       <label for="setting-vlm-model">{$t('vlm_model')}</label>
       <div class="model-row">
         <select id="setting-vlm-model" bind:value={vlmModel} disabled={!vlmEnabled}>
-          <option value="">(Default)</option>
+          <option value="">{defaultModelLabel}</option>
           {#each vlmModels as m}
             <option value={m}>{m}</option>
           {/each}
@@ -1699,6 +1718,9 @@
           {fetchingModels ? '...' : '🔄'}
         </button>
       </div>
+      {#if vlmFetchMsg}
+        <div class="save-msg" style="margin-top: 4px; font-size: 10px;" class:error-msg={vlmFetchMsg.startsWith('✗')}>{vlmFetchMsg}</div>
+      {/if}
     </div>
   </section>
 

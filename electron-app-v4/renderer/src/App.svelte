@@ -130,22 +130,25 @@
   }
 
   async function loadAll() {
-    console.log('[App] Starting loadAll...');
+    dbg('Starting data load...');
     // Try to restore existing session
     try {
-      console.log('[App] Fetching current user...');
-      currentUser.set(await fetchMe());
+      dbg('Checking session (/auth/me)...');
+      const user = await fetchMe();
+      currentUser.set(user);
+      dbg(`Session OK: logged in as ${user.username}`);
     } catch (e) {
-      console.warn('[App] fetchMe failed (not logged in):', e.message);
+      dbg(`No active session: ${e.message}`);
     }
     sessionChecked = true;   // show login screen now if still null
 
     // Load i18n — apply language from backend settings
     try {
-      console.log('[App] Fetching translations...');
+      dbg('Fetching translations...');
       const data = await fetchTranslations(true);
       const language = data.language ?? data.lang ?? 'en';
       lang.set(language);
+      dbg(`Language set to: ${language}`);
       // Apply translations: prefer local TRANSLATIONS bundle for non-EN languages
       // (the backend sends an empty translations object for EN since it's baked in)
       const localStrings = language !== 'en' ? (TRANSLATIONS[language] ?? {}) : {};
@@ -154,18 +157,17 @@
       if (Object.keys(merged).length > 0)
         translations.update(cur => ({ ...cur, ...merged }));
       sessionStorage.setItem('i18n_cache', JSON.stringify({ ...data, language, lang: language }));
-      console.log(`[App] Translations loaded for: ${language}`);
-    } catch (e) { console.error('[App] i18n load error:', e); }
+    } catch (e) { dbg(`i18n load failed: ${e.message}`); }
 
     // Load initial data
     try {
-      console.log('[App] Fetching initial data (stats, tags, people, albums, settings)...');
+      dbg('Fetching stats, tags, people, albums, settings...');
       const [sStats, sTags, sPeople, sAlbums, sSettings] = await Promise.all([
-        fetchStats().catch(e => { console.error('[App] fetchStats error:', e); return {}; }),
-        fetchTags().catch(e => { console.error('[App] fetchTags error:', e); return []; }),
-        fetchPeople().catch(e => { console.error('[App] fetchPeople error:', e); return []; }),
-        fetchAlbums().catch(e => { console.error('[App] fetchAlbums error:', e); return []; }),
-        fetchSettings().catch(e => { console.error('[App] fetchSettings error:', e); return null; })
+        fetchStats().then(r => { dbg('✓ Stats loaded'); return r; }).catch(e => { dbg(`✗ fetchStats error: ${e.message}`); return {}; }),
+        fetchTags().then(r => { dbg('✓ Tags loaded'); return r; }).catch(e => { dbg(`✗ fetchTags error: ${e.message}`); return []; }),
+        fetchPeople().then(r => { dbg('✓ People loaded'); return r; }).catch(e => { dbg(`✗ fetchPeople error: ${e.message}`); return []; }),
+        fetchAlbums().then(r => { dbg('✓ Albums loaded'); return r; }).catch(e => { dbg(`✗ fetchAlbums error: ${e.message}`); return []; }),
+        fetchSettings().then(r => { dbg('✓ Settings loaded'); return r; }).catch(e => { dbg(`✗ fetchSettings error: ${e.message}`); return null; })
       ]);
 
       stats.set(sStats);
@@ -175,9 +177,9 @@
       if (sSettings) {
         processingBackend.set(sSettings?.processing?.backend ?? 'local');
       }
-      console.log('[App] Initial data loaded.');
+      dbg('Initial data load complete.');
     } catch (e) {
-      console.error('[App] General data load error:', e);
+      dbg(`General data load error: ${e.message}`);
     }
   }
 

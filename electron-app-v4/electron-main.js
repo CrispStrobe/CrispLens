@@ -36,6 +36,10 @@ const IS_WIN  = process.platform === 'win32';
 const PORT    = parseInt(process.env.PORT || '7861', 10);
 const VITE_URL = `http://localhost:5173`;
 
+// Always enable debug logs in main/server for better visibility
+process.env.DEBUG = '1';
+process.env.DEBUG_SQL = IS_DEV ? '1' : '0';
+
 const ICON_PATH = path.join(__dirname, 'assets',
   IS_MAC ? 'icon.icns' : IS_WIN ? 'icon.ico' : 'icon.png');
 

@@ -15,7 +15,7 @@ const OPENAI_COMPATIBLE = {
   'poe':        'https://api.poe.com/v1',
 };
 
-const DEFAULT_MODELS = {
+export const DEFAULT_MODELS = {
   'anthropic':  'claude-3-5-sonnet-20241022',
   'openai':     'gpt-4o',
   'nebius':     'Qwen/Qwen2-VL-72B-Instruct',

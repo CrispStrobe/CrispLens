@@ -18,14 +18,14 @@ export const VLM_PROVIDERS = {
 };
 
 export const VLM_MODELS = {
-  anthropic:  ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307', 'claude-opus-4-6'],
+  anthropic:  ['claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-latest', 'claude-3-haiku-20240307', 'claude-opus-4-6'],
   openai:     ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   groq:       ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-11b-vision-preview'],
   openrouter: ['anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash-001', 'openai/gpt-4o'],
-  mistral:    ['pixtral-large-latest', 'pixtral-12b-2409'],
+  mistral:    ['pixtral-large-latest', 'pixtral-12b-2409', 'ministral-14b-2512'],
   nebius:     ['Qwen/Qwen2-VL-72B-Instruct', 'Qwen/Qwen2.5-VL-72B-Instruct'],
-  scaleway:   ['llama-3.2-11b-vision-instruct', 'pixtral-12b-2409-v2'],
+  scaleway:   ['llama-3.2-11b-vision-instruct', 'pixtral-12b-2409-v2', 'pixtral-12b-2409'],
   bfl:        ['flux-kontext-pro', 'flux-pro-1.1', 'flux-dev'],
   ollama:     ['llava', 'llava-llama3', 'llava:13b', 'moondream'],
-  google:     ['gemini-1.5-flash', 'gemini-1.5-pro'],
+  google:     ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'],
 };
