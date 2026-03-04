@@ -132,34 +132,34 @@ function _snapSize(size) {
 }
 export function thumbnailUrl(id, size = 200) {
   if (_localMode) {
-    const b64 = thumbCache.get(id);
+    const b64 = thumbCache.get(String(id));
     if (b64) {
       if (b64.startsWith('data:')) return b64;
       return `data:image/jpeg;base64,${b64}`;
     }
-    return toWebUrl(fileCache.get(id) || '');
+    return toWebUrl(fileCache.get(String(id)) || '');
   }
   return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`;
 }
 export function previewUrl(id) {
   if (_localMode) {
-    const b64 = thumbCache.get(id);
+    const b64 = thumbCache.get(String(id));
     if (b64) {
       if (b64.startsWith('data:')) return b64;
       return `data:image/jpeg;base64,${b64}`;
     }
-    return toWebUrl(fileCache.get(id) || '');
+    return toWebUrl(fileCache.get(String(id)) || '');
   }
   return `${BASE}/images/${id}/preview`;
 }
 export function fullUrl(id) {
   if (_localMode) {
-    const b64 = thumbCache.get(id);
+    const b64 = thumbCache.get(String(id));
     if (b64) {
       if (b64.startsWith('data:')) return b64;
       return `data:image/jpeg;base64,${b64}`;
     }
-    return toWebUrl(fileCache.get(id) || '');
+    return toWebUrl(fileCache.get(String(id)) || '');
   }
   return `${BASE}/images/${id}/full`;
 }

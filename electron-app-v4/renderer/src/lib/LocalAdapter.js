@@ -57,10 +57,10 @@ export const thumbCache = new Map(); // image_id → base64 jpeg string
 
 function _cache(images) {
   for (const img of images) {
-    if (img?.id && img?.filepath) fileCache.set(img.id, img.filepath);
+    if (img?.id && img?.filepath) fileCache.set(String(img.id), img.filepath);
     if (img?.id && img?.thumbnail_blob) {
       console.log(`[LocalAdapter] Caching thumbnail for image ${img.id}`);
-      thumbCache.set(img.id, img.thumbnail_blob);
+      thumbCache.set(String(img.id), img.thumbnail_blob);
     }
   }
   return images;
@@ -363,12 +363,13 @@ export const localAdapter = {
                     dateFrom='', dateTo='', sort='newest',
                     limit=200, offset=0, unidentified=false, album=0 } = {}) {
     console.log('[LocalAdapter] getImages', { person, tag, scene, folder, path, dateFrom, dateTo, sort, limit, offset, unidentified, album });
-    // Specifically include thumbnail_blob in the selection
-    let sql    = 'SELECT *, thumbnail_blob FROM images WHERE 1=1';
+    
+    // We'll build a query that joins tags and people for each image
+    let where = 'WHERE 1=1';
     const params = [];
 
     if (person) {
-      sql += ` AND id IN (
+      where += ` AND i.id IN (
         SELECT DISTINCT f.image_id FROM faces f
         JOIN face_embeddings fe ON fe.face_id=f.id
         JOIN people p           ON fe.person_id=p.id
@@ -376,51 +377,77 @@ export const localAdapter = {
       params.push(`%${person}%`);
     }
     if (tag) {
-      sql += ` AND id IN (SELECT image_id FROM image_tags WHERE tag LIKE ?)`;
+      where += ` AND i.id IN (SELECT image_id FROM image_tags WHERE tag LIKE ?)`;
       params.push(`%${tag}%`);
     }
     if (scene) {
-      sql += ` AND scene_type LIKE ?`;
+      where += ` AND i.scene_type LIKE ?`;
       params.push(`%${scene}%`);
     }
     if (folder || path) {
-      sql += ` AND filepath LIKE ?`;
-      params.push(`%${folder || path}%`);
+      where += ` AND (i.filepath LIKE ? OR i.filename LIKE ?)`;
+      const p = `%${folder || path}%`;
+      params.push(p, p);
     }
     if (dateFrom) {
-      sql += ` AND date_taken >= ?`;
+      where += ` AND i.date_taken >= ?`;
       params.push(dateFrom);
     }
     if (dateTo) {
-      sql += ` AND date_taken <= ?`;
+      where += ` AND i.date_taken <= ?`;
       params.push(dateTo);
     }
     if (unidentified) {
-      sql += ` AND id IN (
+      where += ` AND i.id IN (
         SELECT DISTINCT f.image_id FROM faces f
         LEFT JOIN face_embeddings fe ON fe.face_id=f.id
         WHERE fe.person_id IS NULL)`;
     }
     if (album) {
-      sql += ` AND id IN (SELECT image_id FROM image_albums WHERE album_id=?)`;
+      where += ` AND i.id IN (SELECT image_id FROM image_albums WHERE album_id=?)`;
       params.push(album);
     }
 
     const orderMap = {
-      newest:          'id DESC',
-      oldest:          'id ASC',
-      date_taken_desc: 'date_taken DESC, id DESC',
-      date_taken_asc:  'date_taken ASC,  id ASC',
-      filename_az:     'filename ASC',
-      most_faces:      'id DESC',    // approximate — no face count per image in this query
+      newest:          'i.id DESC',
+      oldest:          'i.id ASC',
+      date_taken_desc: 'i.date_taken DESC, i.id DESC',
+      date_taken_asc:  'i.date_taken ASC,  i.id ASC',
+      filename_az:     'i.filename ASC',
+      most_faces:      'i.id DESC',
     };
-    sql += ` ORDER BY ${orderMap[sort] ?? 'id DESC'} LIMIT ? OFFSET ?`;
+    const orderBy = orderMap[sort] ?? 'i.id DESC';
+
+    // Complex query to get images with concatenated tags and people
+    const sql = `
+      SELECT i.*, 
+             (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
+             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f 
+              JOIN face_embeddings fe ON fe.face_id = f.id 
+              JOIN people p ON p.id = fe.person_id 
+              WHERE f.image_id = i.id) as people_names
+      FROM images i
+      ${where}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `;
     params.push(limit, offset);
 
     try {
-      const results = await query(sql, params);
-      console.log(`[LocalAdapter] SQL: ${sql} | Params: ${JSON.stringify(params)} | Results: ${results.length}`);
-      return _cache(results);
+      const rows = await query(sql, params);
+      console.log(`[LocalAdapter] getImages results: ${rows.length}`);
+      
+      // Map to UI-compatible objects
+      const images = rows.map(r => ({
+        ...r,
+        ai_description: r.description, // map description -> ai_description
+        ai_scene_type:  r.scene_type,  // map scene_type -> ai_scene_type
+        ai_tags_list:   r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
+        origin_path:    r.local_path || r.filepath,
+        server_path:    r.filepath
+      }));
+
+      return _cache(images);
     } catch (err) {
       console.error('[LocalAdapter] getImages error:', err);
       throw err;
@@ -428,9 +455,31 @@ export const localAdapter = {
   },
 
   async getImage(id) {
-    const rows = await query('SELECT * FROM images WHERE id=?', [id]);
-    if (rows[0]) _cache([rows[0]]);
-    return rows[0] ?? null;
+    const sql = `
+      SELECT i.*, 
+             (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
+             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f 
+              JOIN face_embeddings fe ON fe.face_id = f.id 
+              JOIN people p ON p.id = fe.person_id 
+              WHERE f.image_id = i.id) as people_names
+      FROM images i
+      WHERE i.id = ?
+    `;
+    const rows = await query(sql, [id]);
+    if (rows[0]) {
+      const r = rows[0];
+      const img = {
+        ...r,
+        ai_description: r.description,
+        ai_scene_type:  r.scene_type,
+        ai_tags_list:   r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
+        origin_path:    r.local_path || r.filepath,
+        server_path:    r.filepath
+      };
+      _cache([img]);
+      return img;
+    }
+    return null;
   },
 
   async fetchThumbnail(id) {
