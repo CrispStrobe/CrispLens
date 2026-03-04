@@ -122,7 +122,17 @@ const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist 
 
 if (uiDist) {
   console.log(`[server] Serving UI from: ${uiDist}`);
-  app.use(express.static(uiDist));
+  
+  // Ensure .mjs files are served with correct MIME type
+  express.static.mime.define({ 'application/javascript': ['mjs'] });
+  
+  app.use(express.static(uiDist, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.mjs')) {
+        res.setHeader('Content-Type', 'application/javascript');
+      }
+    }
+  }));
   // SPA: send index.html for non-API routes
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) return;

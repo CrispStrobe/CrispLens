@@ -23,11 +23,12 @@ import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web paths for WASM and worker scripts
 // We copy the entire dist folder to /wasm/ in vite.config.js
-ort.env.wasm.wasmPaths = '/wasm/';
+ort.env.wasm.wasmPaths = window.location.origin + '/wasm/';
 
-// Enable single-threaded execution to avoid SharedArrayBuffer/COOP/COEP issues
+// Enable workers for better UI responsiveness
 ort.env.wasm.numThreads = 1;
-ort.env.wasm.proxy = false; // Disable workers to avoid worker script MIME type issues ('text/html' error)
+ort.env.wasm.proxy = true; 
+
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

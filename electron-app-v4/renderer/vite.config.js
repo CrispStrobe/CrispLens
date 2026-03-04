@@ -65,7 +65,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/models\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/models\//, /^\/wasm\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)

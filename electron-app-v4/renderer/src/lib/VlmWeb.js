@@ -141,20 +141,30 @@ export class VlmClientWeb {
    * Enrich an image using a Cloud VLM.
    */
   async enrichImage(image, provider, model, prompt) {
+    console.log(`[VlmWeb] enrichImage start. Provider: ${provider}, Model: ${model || 'default'}`);
     const key = this.keys[provider];
-    if (!key) throw new Error(`API key for ${provider} not found in local storage.`);
+    if (!key) {
+      console.error(`[VlmWeb] Missing key for ${provider}`);
+      throw new Error(`API key for ${provider} not found in local storage.`);
+    }
 
     const base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
     const modelId = model || DEFAULT_MODELS[provider];
+    console.log(`[VlmWeb] Resolved modelId: ${modelId}, base64 length: ${base64.length}`);
 
-    if (provider === 'anthropic') {
-      return this._callAnthropic(key, modelId, base64, prompt);
-    } else if (provider === 'google') {
-      return this._callGemini(key, modelId, base64, prompt);
-    } else if (OPENAI_COMPATIBLE[provider]) {
-      return this._callOpenAICompatible(provider, key, modelId, base64, prompt);
-    } else {
-      throw new Error(`Provider ${provider} not yet supported in Standalone web mode.`);
+    try {
+      if (provider === 'anthropic') {
+        return await this._callAnthropic(key, modelId, base64, prompt);
+      } else if (provider === 'google') {
+        return await this._callGemini(key, modelId, base64, prompt);
+      } else if (OPENAI_COMPATIBLE[provider]) {
+        return await this._callOpenAICompatible(provider, key, modelId, base64, prompt);
+      } else {
+        throw new Error(`Provider ${provider} not yet supported in Standalone web mode.`);
+      }
+    } catch (err) {
+      console.error(`[VlmWeb] Error in enrichImage for ${provider}:`, err);
+      throw err;
     }
   }
 
@@ -168,6 +178,7 @@ export class VlmClientWeb {
   }
 
   async _callAnthropic(key, model, base64, prompt) {
+    console.log('[VlmWeb] Calling Anthropic API...');
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -188,37 +199,62 @@ export class VlmClientWeb {
         }]
       })
     });
+    console.log('[VlmWeb] Anthropic response status:', res.status);
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return this._parseJson(data.content[0].text);
+    if (data.error) {
+      console.error('[VlmWeb] Anthropic API Error:', data.error);
+      throw new Error(data.error.message);
+    }
+    const result = this._parseJson(data.content[0].text);
+    console.log('[VlmWeb] Anthropic parsed result:', result);
+    return result;
   }
 
   async _callOpenAICompatible(provider, key, model, base64, prompt) {
     const baseUrl = OPENAI_COMPATIBLE[provider];
+    console.log(`[VlmWeb] Calling OpenAI-compatible API (${provider}) at ${baseUrl}...`);
+    
+    const body = {
+      model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: `${prompt}\nRespond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]
+      }]
+    };
+
+    // Some providers don't like response_format
+    if (provider === 'openai' || provider === 'openrouter') {
+      body.response_format = { type: "json_object" };
+    }
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${key}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: `${prompt}\nRespond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
-          ]
-        }],
-        response_format: { type: "json_object" }
-      })
+      body: JSON.stringify(body)
     });
+    
+    console.log(`[VlmWeb] ${provider} response status:`, res.status);
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    return JSON.parse(data.choices[0].message.content);
+    if (data.error) {
+      console.error(`[VlmWeb] ${provider} API Error:`, data.error);
+      throw new Error(data.error.message || JSON.stringify(data.error));
+    }
+    
+    const content = data.choices[0].message.content;
+    console.log(`[VlmWeb] ${provider} raw content:`, content);
+    const result = this._parseJson(content);
+    console.log(`[VlmWeb] ${provider} parsed result:`, result);
+    return result;
   }
 
   async _callGemini(key, model, base64, prompt) {
+    console.log('[VlmWeb] Calling Gemini API...');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
     const res = await fetch(url, {
       method: 'POST',
@@ -233,9 +269,15 @@ export class VlmClientWeb {
         generationConfig: { response_mime_type: "application/json" }
       })
     });
+    console.log('[VlmWeb] Gemini response status:', res.status);
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return JSON.parse(data.candidates[0].content.parts[0].text);
+    if (data.error) {
+      console.error('[VlmWeb] Gemini API Error:', data.error);
+      throw new Error(data.error.message);
+    }
+    const result = JSON.parse(data.candidates[0].content.parts[0].text);
+    console.log('[VlmWeb] Gemini parsed result:', result);
+    return result;
   }
 
   _parseJson(text) {
