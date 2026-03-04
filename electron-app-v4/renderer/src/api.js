@@ -330,11 +330,25 @@ export function fetchMe() {
 
 export function listUsers()                         { const g = _guard('listUsers', localAdapter.listUsers()); if (g) return g; return get('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
+  const g = _guard('createUser', localAdapter.createUser(username, password, role));
+  if (g) return g;
   return post('/users', { username, password, role, allowed_folders });
 }
-export function updateUser(userId, changes)         { return _fetch('PATCH', `/users/${userId}`, changes); }
-export function deleteUser(userId)                  { return del(`/users/${userId}`); }
-export function resetUserLock(userId)               { return post(`/users/${userId}/reset-lock`, {}); }
+export function updateUser(userId, changes)         {
+  const g = _guard('updateUser', localAdapter.updateUser(userId, changes));
+  if (g) return g;
+  return _fetch('PATCH', `/users/${userId}`, changes);
+}
+export function deleteUser(userId)                  {
+  const g = _guard('deleteUser', localAdapter.deleteUser(userId));
+  if (g) return g;
+  return del(`/users/${userId}`);
+}
+export function resetUserLock(userId)               {
+  const g = _guard('resetUserLock', { ok: true });
+  if (g) return g;
+  return post(`/users/${userId}/reset-lock`, {});
+}
 
 // ── Image sharing ─────────────────────────────────────────────────────────────
 

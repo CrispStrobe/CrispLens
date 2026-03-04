@@ -241,25 +241,44 @@ export const localAdapter = {
   },
 
   async listUsers() {
-    return [{
-      id: 1,
-      username: 'Local Admin',
-      role: 'admin',
-      is_active: true,
-      last_login: new Date().toISOString(),
-      failed_login_attempts: 0
-    }];
+    return query('SELECT * FROM users ORDER BY username');
+  },
+
+  async createUser(username, password, role) {
+    // Note: standalone mode doesn't implement secure password hashing yet,
+    // it just stores the data so the UI functions.
+    await run('INSERT INTO users (username, role) VALUES (?, ?)', [username, role]);
+    return { ok: true };
+  },
+
+  async updateUser(userId, changes) {
+    const fields = [];
+    const params = [];
+    for (const [k, v] of Object.entries(changes)) {
+      fields.push(`${k} = ?`);
+      params.push(v);
+    }
+    if (fields.length === 0) return { ok: true };
+    params.push(userId);
+    await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params);
+    return { ok: true };
+  },
+
+  async deleteUser(userId) {
+    await run('DELETE FROM users WHERE id = ?', [userId]);
+    return { ok: true };
   },
 
   async dbStatus() {
     const [img] = await query('SELECT COUNT(*) AS n FROM images');
     const [ppl] = await query('SELECT COUNT(*) AS n FROM people');
+    const [usr] = await query('SELECT COUNT(*) AS n FROM users');
     return {
       db_path: 'Browser IndexedDB (WASM SQLite)',
       file_size_mb: 'N/A',
       permissions_ok: true,
       image_count: img?.n ?? 0,
-      user_count: 1
+      user_count: usr?.n ?? 0
     };
   },
 

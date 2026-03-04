@@ -129,12 +129,20 @@
   let fetchingModels = false;
   let globalVlmHint = null;  // { vlm_enabled, vlm_provider, vlm_model } — for non-admin hint
 
+  $: if (vlmProvider) {
+    doFetchModels();
+  }
+
   async function doFetchModels() {
     fetchingModels = true;
     try {
       vlmModels = await fetchVlmModels(vlmProvider);
+      // Auto-select first model if current one is blank or not in the list
+      if (vlmModels.length > 0 && (!vlmModel || !vlmModels.includes(vlmModel))) {
+        vlmModel = vlmModels[0];
+      }
     } catch (e) {
-      alert('Error fetching models: ' + e.message);
+      console.warn('Error fetching models:', e.message);
     } finally {
       fetchingModels = false;
     }

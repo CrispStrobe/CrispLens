@@ -77,6 +77,18 @@ const SCHEMA = `
     key   TEXT PRIMARY KEY,
     value TEXT
   );
+  CREATE TABLE IF NOT EXISTS users (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    username              TEXT NOT NULL UNIQUE,
+    password_hash         TEXT,
+    password_salt         TEXT,
+    role                  TEXT DEFAULT 'user',
+    is_active             INTEGER DEFAULT 1,
+    failed_login_attempts INTEGER DEFAULT 0,
+    last_login            TIMESTAMP,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  INSERT OR IGNORE INTO users (id, username, role) VALUES (1, 'Local Admin', 'admin');
 `;
 
 // ── Public API ────────────────────────────────────────────────────────────────
