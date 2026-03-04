@@ -219,14 +219,14 @@ export class VlmClientWeb {
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: `${prompt}\nRespond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
+          { type: 'text', text: `${prompt}\nIMPORTANT: Respond with a valid JSON object ONLY. No markdown, no extra text. Format: {"description": "...", "scene_type": "...", "tags": ["tag1", "tag2"]}` },
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
         ]
       }]
     };
 
-    // OpenRouter and OpenAI both support json_object
-    if (provider === 'openai' || provider === 'openrouter') {
+    // Only use response_format for OpenAI; OpenRouter models vary in support
+    if (provider === 'openai') {
       body.response_format = { type: "json_object" };
     }
 

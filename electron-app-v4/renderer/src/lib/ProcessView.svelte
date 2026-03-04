@@ -1288,6 +1288,7 @@
     border: 1px solid #222234;
     border-radius: 4px;
     min-height: 52px;
+    height: auto;
     transition: background 0.1s;
   }
   .result-row:hover { background: #1e1e30; }
@@ -1370,7 +1371,7 @@
     max-width: 100%;
   }
   .desc.muted { color: #404055; }
-  .desc.err   { color: #904040; }
+  .desc.err   { color: #e07070; white-space: normal; word-break: break-word; overflow: visible; }
 
   /* Remove button */
   .remove-btn {
