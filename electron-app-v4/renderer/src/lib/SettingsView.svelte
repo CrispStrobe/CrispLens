@@ -220,6 +220,7 @@
   let localPort = 7865;
   let isStandaloneBroken = false;
   let standaloneError = '';
+  let syncRemoteUrl = ''; // Target server for syncing from standalone mode
   let testDiagMsg = '';
   let testingDiag = false;
 
@@ -493,7 +494,10 @@
     }
 
     // Load offline cache stats (works regardless of backend state)
-    if (typeof window !== 'undefined') loadSyncStats();
+    if (typeof window !== 'undefined') {
+      loadSyncStats();
+      syncRemoteUrl = localStorage.getItem('remote_url') || '';
+    }
 
     if ($backendReady) {
       try {
@@ -570,6 +574,10 @@
       } else {
         // Browser/PWA: persist language preference locally
         localStorage.setItem('pwa_language', language);
+      }
+
+      if (dbMode === 'local') {
+        localStorage.setItem('remote_url', syncRemoteUrl.trim());
       }
 
       // Only try to save server settings when backend is reachable
@@ -1168,6 +1176,16 @@
             ⬇ Download ONNX models
           {/if}
         </button>
+      </div>
+
+      <!-- Sync Target (for standalone mode only) -->
+      <div style="margin-top:16px; padding-top:12px; border-top:1px solid #2a2a42;">
+        <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:8px;">Sync Target</div>
+        <p class="hint" style="margin-bottom:8px;">Set the remote server to push/pull data from when in standalone mode.</p>
+        <div class="form-grid">
+          <label>Server URL</label>
+          <input type="text" bind:value={syncRemoteUrl} placeholder="https://faces.example.com" />
+        </div>
       </div>
     {/if}
   </section>
