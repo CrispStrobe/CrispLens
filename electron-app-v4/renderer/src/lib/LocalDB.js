@@ -371,7 +371,8 @@ export async function importDatabase(jsonContent) {
     console.log(`[LocalDB] Importing database from JSON...`);
     if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
     
-    const jsonStr = typeof jsonContent === 'string' ? jsonContent : JSON.stringify(jsonContent);
+    // Ensure we have a parsed object, not a string
+    const data = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
     
     // We should close the current connection first
     if (_db) {
@@ -379,12 +380,14 @@ export async function importDatabase(jsonContent) {
         const isOpen = (await _db.isDBOpen()).result;
         if (isOpen) await _db.close();
       } catch (e) { /* ignore */ }
-      await sqlite.closeConnection(DB_NAME, false);
+      try {
+        await sqlite.closeConnection(DB_NAME, false);
+      } catch (e) { /* ignore */ }
       _db = null;
     }
 
-    // In Capacitor v7, importFromJson takes an object with jsonstring property
-    const result = await sqlite.importFromJson({ jsonstring: jsonStr });
+    // In v7, importFromJson takes the JsonSQLite object directly
+    const result = await sqlite.importFromJson(data);
     console.log('[LocalDB] Import successful, changes:', result.changes);
     
     // Re-initialize the connection
