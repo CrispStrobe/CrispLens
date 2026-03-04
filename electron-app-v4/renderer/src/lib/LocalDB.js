@@ -96,7 +96,6 @@ const SCHEMA = `
 let _initPromise = null;
 
 export async function getDB() {
-  if (_db) return _db;
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
@@ -116,17 +115,12 @@ export async function getDB() {
       console.log(`[LocalDB] Connection exists: ${isConn}`);
 
       if (isConn) {
-        console.log('[LocalDB] Retrieving existing connection...');
         _db = await sqlite.retrieveConnection(DB_NAME, false);
       } else {
-        console.log('[LocalDB] Creating new connection...');
         _db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
       }
 
-      console.log('[LocalDB] Checking if DB is open...');
       const isOpen = (await _db.isDBOpen()).result;
-      console.log(`[LocalDB] DB open: ${isOpen}`);
-
       if (!isOpen) {
         console.log('[LocalDB] Opening DB...');
         await _db.open();
@@ -138,7 +132,7 @@ export async function getDB() {
       return _db;
     } catch (err) {
       console.error('[LocalDB] Initialization error:', err);
-      _initPromise = null;
+      _initPromise = null; // Allow retry
       throw err;
     }
   })();
@@ -147,14 +141,34 @@ export async function getDB() {
 }
 
 export async function query(sql, params = []) {
-  const db = await getDB();
-  const result = await db.query(sql, params);
-  return result.values ?? [];
+  try {
+    const db = await getDB();
+    const isOpen = (await db.isDBOpen()).result;
+    if (!isOpen) {
+      console.warn('[LocalDB] DB was closed, re-opening...');
+      await db.open();
+    }
+    const result = await db.query(sql, params);
+    return result.values ?? [];
+  } catch (err) {
+    console.error('[LocalDB] Query error:', err);
+    throw err;
+  }
 }
 
 export async function run(sql, params = []) {
-  const db = await getDB();
-  return db.run(sql, params);
+  try {
+    const db = await getDB();
+    const isOpen = (await db.isDBOpen()).result;
+    if (!isOpen) {
+      console.warn('[LocalDB] DB was closed, re-opening...');
+      await db.open();
+    }
+    return await db.run(sql, params);
+  } catch (err) {
+    console.error('[LocalDB] Run error:', err);
+    throw err;
+  }
 }
 
 export async function isAvailable() {

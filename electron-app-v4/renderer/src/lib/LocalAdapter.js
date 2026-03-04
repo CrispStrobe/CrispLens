@@ -193,7 +193,14 @@ export const localAdapter = {
   },
 
   async getVlmModels(provider) {
-    const models = {
+    const { vlmClientWeb } = await import('./VlmWeb.js');
+    const keys = await this.getVlmKeys();
+    vlmClientWeb.setKeys(keys);
+    
+    const liveModels = await vlmClientWeb.fetchModels(provider);
+    if (liveModels && liveModels.length > 0) return liveModels;
+
+    const hardcoded = {
       'anthropic':  ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
       'openai':     ['gpt-4o', 'gpt-4o-mini'],
       'nebius':     ['Qwen/Qwen2-VL-72B-Instruct', 'Qwen/Qwen2-VL-7B-Instruct'],
@@ -204,7 +211,7 @@ export const localAdapter = {
       'poe':        ['claude-3-5-sonnet', 'gpt-4o'],
       'google':     ['gemini-1.5-flash', 'gemini-1.5-pro'],
     };
-    return models[provider] || [];
+    return hardcoded[provider] || [];
   },
 
   async getKeyStatus() {

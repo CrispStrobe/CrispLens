@@ -37,6 +37,48 @@ export class VlmClientWeb {
   }
 
   /**
+   * Fetch available models from a provider.
+   */
+  async fetchModels(provider) {
+    const key = this.keys[provider];
+    if (!key && provider !== 'openrouter') {
+      console.warn(`[VlmWeb] No API key for ${provider}, cannot fetch live models.`);
+      return [];
+    }
+
+    try {
+      if (provider === 'google') {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        const data = await res.json();
+        return (data.models || [])
+          .filter(m => m.supportedGenerationMethods.includes('generateContent') && m.name.includes('vision'))
+          .map(m => m.name.replace('models/', ''));
+      }
+
+      let url, headers = { 'Content-Type': 'application/json' };
+      if (provider === 'openai') url = 'https://api.openai.com/v1/models';
+      else if (provider === 'openrouter') url = 'https://openrouter.ai/api/v1/models';
+      else if (OPENAI_COMPATIBLE[provider]) url = `${OPENAI_COMPATIBLE[provider]}/models`;
+      else return [];
+
+      if (key) headers['Authorization'] = `Bearer ${key}`;
+      
+      const res = await fetch(url, { headers });
+      const data = await res.json();
+      const allModels = data.data || data.models || [];
+      
+      // Simple heuristic for vision models
+      const keywords = ['vision', 'vl', 'gpt-4o', 'pixtral', 'claude-3'];
+      return allModels
+        .map(m => m.id || m.name)
+        .filter(id => keywords.some(k => id.toLowerCase().includes(k)));
+    } catch (err) {
+      console.error(`[VlmWeb] Failed to fetch models for ${provider}:`, err);
+      return [];
+    }
+  }
+
+  /**
    * Enrich an image using a Cloud VLM.
    */
   async enrichImage(image, provider, model, prompt) {
