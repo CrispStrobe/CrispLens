@@ -1,8 +1,5 @@
 /**
  * LocalDB.js — @capacitor-community/sqlite wrapper for standalone/local mode.
- *
- * Provides the same face_recognition schema as the server's SQLite DB.
- * Used only when db_mode='local' (Capacitor without a remote server).
  */
 
 import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
@@ -10,8 +7,6 @@ import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
 const DB_NAME = 'face_recognition';
 let   sqlite  = null;
 let   _db     = null;
-
-// ── Schema — mirrors server/db.js CREATE TABLE IF NOT EXISTS statements ────────
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS images (
@@ -95,12 +90,30 @@ const SCHEMA = `
 
 let _initPromise = null;
 
+async function _waitForJeepSqlite() {
+  if (window.location.protocol === 'capacitor:') return;
+  const el = document.querySelector('jeep-sqlite');
+  if (el && el.shadowRoot) return; // already ready
+  
+  console.log('[LocalDB] Waiting for jeep-sqlite element...');
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('jeep-sqlite timed out')), 5000);
+    customElements.whenDefined('jeep-sqlite').then(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
 export async function getDB() {
+  if (_db && (await _db.isDBOpen()).result) return _db;
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
     console.log('[LocalDB] Initializing database...');
     try {
+      await _waitForJeepSqlite();
+      
       if (!sqlite) {
         sqlite = new SQLiteConnection(CapacitorSQLite);
       }
@@ -112,8 +125,6 @@ export async function getDB() {
       }
 
       const isConn = (await sqlite.isConnection(DB_NAME, false)).result;
-      console.log(`[LocalDB] Connection exists: ${isConn}`);
-
       if (isConn) {
         _db = await sqlite.retrieveConnection(DB_NAME, false);
       } else {
@@ -126,13 +137,13 @@ export async function getDB() {
         await _db.open();
       }
 
-      console.log('[LocalDB] Executing schema...');
       await _db.execute(SCHEMA);
       console.log('[LocalDB] Database ready.');
+      _initPromise = null; 
       return _db;
     } catch (err) {
       console.error('[LocalDB] Initialization error:', err);
-      _initPromise = null; // Allow retry
+      _initPromise = null;
       throw err;
     }
   })();
@@ -143,11 +154,6 @@ export async function getDB() {
 export async function query(sql, params = []) {
   try {
     const db = await getDB();
-    const isOpen = (await db.isDBOpen()).result;
-    if (!isOpen) {
-      console.warn('[LocalDB] DB was closed, re-opening...');
-      await db.open();
-    }
     const result = await db.query(sql, params);
     return result.values ?? [];
   } catch (err) {
@@ -159,11 +165,6 @@ export async function query(sql, params = []) {
 export async function run(sql, params = []) {
   try {
     const db = await getDB();
-    const isOpen = (await db.isDBOpen()).result;
-    if (!isOpen) {
-      console.warn('[LocalDB] DB was closed, re-opening...');
-      await db.open();
-    }
     return await db.run(sql, params);
   } catch (err) {
     console.error('[LocalDB] Run error:', err);

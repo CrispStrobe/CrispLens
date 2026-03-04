@@ -130,19 +130,23 @@
   let globalVlmHint = null;  // { vlm_enabled, vlm_provider, vlm_model } — for non-admin hint
 
   $: if (vlmProvider) {
+    console.log('[SettingsView] VLM provider changed:', vlmProvider);
     doFetchModels();
   }
 
   async function doFetchModels() {
+    if (!vlmProvider || fetchingModels) return;
     fetchingModels = true;
+    console.log('[SettingsView] doFetchModels starting for:', vlmProvider);
     try {
       vlmModels = await fetchVlmModels(vlmProvider);
+      console.log(`[SettingsView] Fetched ${vlmModels.length} models for ${vlmProvider}`);
       // Auto-select first model if current one is blank or not in the list
       if (vlmModels.length > 0 && (!vlmModel || !vlmModels.includes(vlmModel))) {
         vlmModel = vlmModels[0];
       }
     } catch (e) {
-      console.warn('Error fetching models:', e.message);
+      console.error('[SettingsView] Error fetching models:', e);
     } finally {
       fetchingModels = false;
     }

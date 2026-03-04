@@ -33,7 +33,6 @@ export function isLocalMode() { return _localMode; }
 // On Mobile pointing at a remote server, we need the full URL.
 let BASE = (localStorage.getItem('remote_url') || '').replace(/\/$/, '') + '/api';
 if (BASE === '/api') {
-  // If no remote URL, use relative or absolute origin
   BASE = window.location.origin + '/api';
 }
 console.log(`[api] BASE set to: ${BASE}`);
@@ -45,10 +44,10 @@ export function setRemoteBase(url) {
 }
 
 /** Helper to block server calls in standalone mode and log them. */
-function _guard(msg, fallback = null) {
+function _guard(msg, fallbackFn = null) {
   if (_localMode) {
-    console.log(`[api] Standalone mode: intercepting call to ${msg}. Returning local fallback.`);
-    return Promise.resolve(fallback);
+    console.log(`[api] Standalone mode: intercepting call to ${msg}.`);
+    return fallbackFn ? Promise.resolve(fallbackFn()) : Promise.resolve(null);
   }
   return null;
 }
@@ -87,8 +86,8 @@ const del  = (path)        => _fetch('DELETE', path);
 // ── Images ────────────────────────────────────────────────────────────────────
 
 export async function fetchImages(params = {}) {
-  const g = _guard('fetchImages');
-  if (g) return localAdapter.getImages(params);
+  const g = _guard('fetchImages', () => localAdapter.getImages(params));
+  if (g) return g;
 
   const { person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='',
           sort='newest', limit=200, offset=0, unidentified=false, album=0 } = params;
@@ -106,8 +105,8 @@ export async function fetchImages(params = {}) {
 }
 
 export function fetchImage(id) {
-  const g = _guard('fetchImage');
-  if (g) return localAdapter.getImage(id);
+  const g = _guard('fetchImage', () => localAdapter.getImage(id));
+  if (g) return g;
   return get(`/images/${id}`);
 }
 
@@ -141,8 +140,8 @@ export function downloadImage(id, filename) {
 }
 
 export function patchMetadata(id, params) {
-  const g = _guard('patchMetadata');
-  if (g) return localAdapter.patchMetadata(id, params);
+  const g = _guard('patchMetadata', () => localAdapter.patchMetadata(id, params));
+  if (g) return g;
   const { description='', scene_type='', tags_csv='' } = params;
   return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv });
 }
@@ -152,34 +151,50 @@ export function renameImage(id, new_filename) {
 }
 
 export function deleteImage(id) {
-  const g = _guard('deleteImage');
-  if (g) return localAdapter.deleteImage(id);
+  const g = _guard('deleteImage', () => localAdapter.deleteImage(id));
+  if (g) return g;
   return del(`/images/${id}`);
 }
 export function openInOs(id)      { return post(`/images/${id}/open`); }
 export function openFolderInOs(id) { return post(`/images/${id}/open-folder`); }
-export function fetchExif(id)     { return get(`/images/${id}/exif`); }
+export function fetchExif(id)     {
+  const g = _guard('fetchExif', () => ({}));
+  if (g) return g;
+  return get(`/images/${id}/exif`);
+}
 export function fetchImageFaces(id) {
-  const g = _guard('fetchImageFaces');
-  if (g) return localAdapter.getImageFaces(id);
+  const g = _guard('fetchImageFaces', () => localAdapter.getImageFaces(id));
+  if (g) return g;
   return get(`/images/${id}/faces`);
 }
 export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
-export function clearIdentifications(imageId) { return post(`/images/${imageId}/clear-identifications`, {}); }
-export function clearDetections(imageId) { return post(`/images/${imageId}/clear-detections`, {}); }
+export function clearIdentifications(imageId) {
+  const g = _guard('clearIdentifications', () => ({ ok: true }));
+  if (g) return g;
+  return post(`/images/${imageId}/clear-identifications`, {});
+}
+export function clearDetections(imageId) {
+  const g = _guard('clearDetections', () => ({ ok: true }));
+  if (g) return g;
+  return post(`/images/${imageId}/clear-detections`, {});
+}
 export function reDetectFaces(imageId, params = {}) {
+  const g = _guard('reDetectFaces', () => ({ ok: true }));
+  if (g) return g;
   const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true, det_model: 'auto', max_size: 0 };
   return post(`/images/${imageId}/re-detect`, { ...defaults, ...params });
 }
 export function addManualFace(imageId, bbox, rec_thresh = null) {
+  const g = _guard('addManualFace', () => ({ ok: true }));
+  if (g) return g;
   return post(`/images/${imageId}/faces/manual`, { bbox, rec_thresh });
 }
 
 // ── People ────────────────────────────────────────────────────────────────────
 
 export async function fetchPeople() {
-  const g = _guard('fetchPeople');
-  if (g) return localAdapter.getPeople();
+  const g = _guard('fetchPeople', () => localAdapter.getPeople());
+  if (g) return g;
   try {
     return await get('/people');
   } catch (e) {
@@ -189,36 +204,36 @@ export async function fetchPeople() {
   }
 }
 export function fetchPerson(id) {
-  const g = _guard('fetchPerson');
-  if (g) return localAdapter.getPerson(id);
+  const g = _guard('fetchPerson', () => localAdapter.getPerson(id));
+  if (g) return g;
   return get(`/people/${id}`);
 }
 export function renamePerson(id, name) {
-  const g = _guard('renamePerson');
-  if (g) return localAdapter.renamePerson(id, name);
+  const g = _guard('renamePerson', () => localAdapter.renamePerson(id, name));
+  if (g) return g;
   return put(`/people/${id}`, { name });
 }
 export function mergePeople(source_id, target_id) {
-  const g = _guard('mergePeople');
-  if (g) return localAdapter.mergePeople(source_id, target_id);
+  const g = _guard('mergePeople', () => localAdapter.mergePeople(source_id, target_id));
+  if (g) return g;
   return post('/people/merge', { source_id, target_id });
 }
 export function reassignFace(face_id, new_name) {
-  const g = _guard('reassignFace');
-  if (g) return localAdapter.reassignFace(face_id, new_name);
+  const g = _guard('reassignFace', () => localAdapter.reassignFace(face_id, new_name));
+  if (g) return g;
   return post('/people/reassign-face', { face_id, new_name });
 }
 export function deletePerson(id) {
-  const g = _guard('deletePerson');
-  if (g) return localAdapter.deletePerson(id);
+  const g = _guard('deletePerson', () => localAdapter.deletePerson(id));
+  if (g) return g;
   return del(`/people/${id}`);
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
 export function searchImages(q, limit = 50) {
-  const g = _guard('searchImages');
-  if (g) return localAdapter.searchImages(q, limit);
+  const g = _guard('searchImages', () => localAdapter.searchImages(q, limit));
+  if (g) return g;
   return get(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
@@ -243,8 +258,8 @@ export function scanFolder(folder, recursive = true) {
 // ── Hybrid ingest ─────────────────────────────────────────────────────────────
 
 export function importProcessed(data) {
-  const g = _guard('importProcessed');
-  if (g) return localAdapter.importProcessed(data);
+  const g = _guard('importProcessed', () => localAdapter.importProcessed(data));
+  if (g) return g;
   return post('/ingest/import-processed', data);
 }
 
@@ -318,7 +333,7 @@ function _streamSSE(url, body, onEvent) {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export function fetchHealth() {
-  const g = _guard('fetchHealth', localAdapter.health());
+  const g = _guard('fetchHealth', () => localAdapter.health());
   if (g) return g;
   return get('/health');
 }
@@ -326,31 +341,31 @@ export function fetchHealth() {
 export function login(username, password) { return post('/auth/login', { username, password }); }
 export function logout()                  { return post('/auth/logout'); }
 export function fetchMe() {
-  const g = _guard('fetchMe', localAdapter.me());
+  const g = _guard('fetchMe', () => localAdapter.me());
   if (g) return g;
   return get('/auth/me');
 }
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
-export function listUsers()                         { const g = _guard('listUsers', localAdapter.listUsers()); if (g) return g; return get('/users'); }
+export function listUsers()                         { const g = _guard('listUsers', () => localAdapter.listUsers()); if (g) return g; return get('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
-  const g = _guard('createUser', localAdapter.createUser(username, password, role));
+  const g = _guard('createUser', () => localAdapter.createUser(username, password, role));
   if (g) return g;
   return post('/users', { username, password, role, allowed_folders });
 }
 export function updateUser(userId, changes)         {
-  const g = _guard('updateUser', localAdapter.updateUser(userId, changes));
+  const g = _guard('updateUser', () => localAdapter.updateUser(userId, changes));
   if (g) return g;
   return _fetch('PATCH', `/users/${userId}`, changes);
 }
 export function deleteUser(userId)                  {
-  const g = _guard('deleteUser', localAdapter.deleteUser(userId));
+  const g = _guard('deleteUser', () => localAdapter.deleteUser(userId));
   if (g) return g;
   return del(`/users/${userId}`);
 }
 export function resetUserLock(userId)               {
-  const g = _guard('resetUserLock', { ok: true });
+  const g = _guard('resetUserLock', () => ({ ok: true }));
   if (g) return g;
   return post(`/users/${userId}/reset-lock`, {});
 }
@@ -367,29 +382,33 @@ export function setImageVisibility(imageId, visibility) {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export function fetchSettings() {
-  const g = _guard('fetchSettings', localAdapter.settings());
+  const g = _guard('fetchSettings', () => localAdapter.settings());
   if (g) return g;
   return get('/settings');
 }
 export function saveSettings(body) {
-  const g = _guard('saveSettings', localAdapter.saveSettings(body));
+  const g = _guard('saveSettings', () => localAdapter.saveSettings(body));
   if (g) return g;
   return put('/settings', body);
 }
 export function fetchTranslations(nocache = false) {
-  const g = _guard('fetchTranslations', localAdapter.i18n());
+  const g = _guard('fetchTranslations', () => localAdapter.i18n());
   if (g) return g;
   const q = nocache ? `?t=${Date.now()}` : '';
   return get(`/settings/i18n${q}`);
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
-export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
-export function fetchEngineStatus()                 { const g = _guard('fetchEngineStatus', null); if (g) return g; return get('/settings/engine-status'); }
+export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', () => localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
+export function fetchEngineStatus()                 {
+  const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
+  if (g) return g;
+  return get('/settings/engine-status');
+}
 export function reloadEngine()                      { return post('/settings/reload-engine', {}); }
-export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', { effective: {}, global: {} }); if (g) return g; return get('/settings/user-vlm'); }
-export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', {}); if (g) return g; return put('/settings/user-vlm', prefs); }
-export function fetchUserDetPrefs()                 { const g = _guard('fetchUserDetPrefs', { effective: {}, global: {} }); if (g) return g; return get('/settings/user-detection'); }
-export function saveUserDetPrefs(prefs)             { const g = _guard('saveUserDetPrefs', {}); if (g) return g; return put('/settings/user-detection', prefs); }
+export function fetchUserVlmPrefs()                 { const g = _guard('fetchUserVlmPrefs', () => ({ effective: {}, global: {} })); if (g) return g; return get('/settings/user-vlm'); }
+export function saveUserVlmPrefs(prefs)             { const g = _guard('saveUserVlmPrefs', () => ({})); if (g) return g; return put('/settings/user-vlm', prefs); }
+export function fetchUserDetPrefs()                 { const g = _guard('fetchUserDetPrefs', () => ({ effective: {}, global: {} })); if (g) return g; return get('/settings/user-detection'); }
+export function saveUserDetPrefs(prefs)             { const g = _guard('saveUserDetPrefs', () => ({})); if (g) return g; return put('/settings/user-detection', prefs); }
 export function changePassword(current_password, new_password) {
   return post('/auth/change-password', { current_password, new_password });
 }
@@ -397,13 +416,13 @@ export function changePassword(current_password, new_password) {
 // ── Admin operations ──────────────────────────────────────────────────────────
 
 export function testAdminJson() {
-  const g = _guard('testAdminJson', new Response('{}', { status: 200 }));
+  const g = _guard('testAdminJson', () => new Response('{}', { status: 200 }));
   if (g) return g;
   return fetch(`${BASE}/admin/test-json`, { credentials: 'include' });
 }
 
 export function streamServerUpdate(fix_db_path = '', opts = {}) {
-  const g = _guard('streamServerUpdate', new Response('data: [DONE]\n\n', { status: 200 }));
+  const g = _guard('streamServerUpdate', () => new Response('data: [DONE]\n\n', { status: 200 }));
   if (g) return g;
   return fetch(`${BASE}/admin/update`, {
     method: 'POST',
@@ -415,38 +434,38 @@ export function streamServerUpdate(fix_db_path = '', opts = {}) {
 }
 
 export function fetchServerLogs(lines = 50, opts = {}) {
-  const g = _guard('fetchServerLogs', new Response('data: [DONE]\n\n', { status: 200 }));
+  const g = _guard('fetchServerLogs', () => new Response('data: [DONE]\n\n', { status: 200 }));
   if (g) return g;
   return fetch(`${BASE}/admin/logs?lines=${lines}`, { credentials: 'include', ...opts });
 }
 
 export function fetchServerLogsJson(lines = 50) {
-  const g = _guard('fetchServerLogsJson', { lines: [] });
+  const g = _guard('fetchServerLogsJson', () => ({ lines: [] }));
   if (g) return g;
   return fetch(`${BASE}/admin/logs-json?lines=${lines}`, { credentials: 'include' }).then(r => r.json());
 }
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
-export function fetchProviders()              { const g = _guard('fetchProviders', localAdapter.getProviders()); if (g) return g; return get('/api-keys/providers'); }
-export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', localAdapter.getKeyStatus()); if (g) return g; return get('/api-keys/status'); }
+export function fetchProviders()              { const g = _guard('fetchProviders', () => localAdapter.getProviders()); if (g) return g; return get('/api-keys/providers'); }
+export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', () => localAdapter.getKeyStatus()); if (g) return g; return get('/api-keys/status'); }
 export async function fetchVlmModels(provider) {
-  const g = _guard('fetchVlmModels', localAdapter.getVlmModels(provider));
+  const g = _guard('fetchVlmModels', () => localAdapter.getVlmModels(provider));
   if (g) return g;
   const d = await get(`/api-keys/models/${provider}`); return d.models ?? d;
 }
 export function saveApiKey(provider, api_key, scope = 'system') {
-  const g = _guard('saveApiKey', localAdapter.saveApiKey(provider, api_key));
+  const g = _guard('saveApiKey', () => localAdapter.saveApiKey(provider, api_key));
   if (g) return g;
   return post('/api-keys', { provider, key_value: api_key, scope });
 }
 export function deleteApiKey(provider, scope = 'system') {
-  const g = _guard('deleteApiKey', localAdapter.deleteApiKey(provider));
+  const g = _guard('deleteApiKey', () => localAdapter.deleteApiKey(provider));
   if (g) return g;
   return del(`/api-keys/${provider}?scope=${scope}`);
 }
 export function testApiKey(provider) {
-  const g = _guard('testApiKey', localAdapter.testApiKey(provider));
+  const g = _guard('testApiKey', () => localAdapter.testApiKey(provider));
   if (g) return g;
   return post(`/api-keys/test/${provider}`, {});
 }
@@ -454,56 +473,69 @@ export function testApiKey(provider) {
 // ── Tags & Stats ──────────────────────────────────────────────────────────────
 
 export function fetchTags() {
-  const g = _guard('fetchTags');
-  if (g) return localAdapter.getTags();
+  const g = _guard('fetchTags', () => localAdapter.getTags());
+  if (g) return g;
   return get('/tags');
 }
 export function fetchTagsStats()  {
-  const g = _guard('fetchTagsStats', []);
+  const g = _guard('fetchTagsStats', () => []);
   if (g) return g;
   return get('/tags/stats');
 }
 export function fetchDatesStats() {
-  const g = _guard('fetchDatesStats', []);
+  const g = _guard('fetchDatesStats', () => []);
   if (g) return g;
   return get('/dates/stats');
 }
 export function fetchFoldersStats() {
-  const g = _guard('fetchFoldersStats', []);
+  const g = _guard('fetchFoldersStats', () => []);
   if (g) return g;
   return get('/folders/stats');
 }
 export function fetchSceneTypes() {
-  const g = _guard('fetchSceneTypes', []);
+  const g = _guard('fetchSceneTypes', () => []);
   if (g) return g;
   return get('/scene-types');
 }
 export function fetchStats() {
-  const g = _guard('fetchStats');
-  if (g) return localAdapter.getStats();
+  const g = _guard('fetchStats', () => localAdapter.getStats());
+  if (g) return g;
   return get('/stats');
 }
 
 // ── Duplicates ────────────────────────────────────────────────────────────────
 
 export function fetchDuplicateStats() {
+  const g = _guard('fetchDuplicateStats', () => ({}));
+  if (g) return g;
   return get('/duplicates/stats');
 }
 
 export function fetchDuplicateGroups(method = 'hash', threshold = 8) {
+  const g = _guard('fetchDuplicateGroups', () => []);
+  if (g) return g;
   const q = new URLSearchParams({ method, threshold });
   return get(`/duplicates/groups?${q}`);
 }
 
 export function resolveDuplicate(keep_id, delete_ids, action = 'delete_file', merge_faces = true) {
+  const g = _guard('resolveDuplicate', () => ({ ok: true }));
+  if (g) return g;
   return post('/duplicates/resolve', { keep_id, delete_ids, action, merge_faces });
 }
 
 export function resolveDuplicateBatch(groups, action = 'delete_file', merge_faces = true) {
+  const g = _guard('resolveDuplicateBatch', () => ({ ok: true }));
+  if (g) return g;
   return post('/duplicates/resolve-batch', { groups, action, merge_faces });
 }
 
 export function scanPhash(onEvent) {
+  const g = _guard('scanPhash');
+  if (g) {
+    onEvent({ done: true, available: false });
+    return { close: () => {} };
+  }
   const ctrl = new AbortController();
   fetch(`${BASE}/duplicates/scan-phash`, {
     method: 'POST',
@@ -540,6 +572,8 @@ export function scanPhash(onEvent) {
 }
 
 export async function downloadCleanupScript(files, format = 'bash', action = 'trash') {
+  const g = _guard('downloadCleanupScript');
+  if (g) return g;
   const resp = await fetch(`${BASE}/duplicates/cleanup-script`, {
     method:      'POST',
     headers:     { 'Content-Type': 'application/json' },
@@ -562,6 +596,11 @@ export async function downloadCleanupScript(files, format = 'bash', action = 'tr
 }
 
 export function scanHashes(onEvent) {
+  const g = _guard('scanHashes');
+  if (g) {
+    onEvent({ done: true, count: 0 });
+    return { close: () => {} };
+  }
   const ctrl = new AbortController();
   fetch(`${BASE}/duplicates/scan-hashes`, {
     method: 'POST',
@@ -656,12 +695,26 @@ export function addToDb(paths, recursive, onEvent, visibility = 'shared', detPar
 
 // ── Editing (crop / convert) ──────────────────────────────────────────────────
 
-export function fetchEditFormats() { return get('/edit/formats'); }
+export function fetchEditFormats() {
+  const g = _guard('fetchEditFormats', () => ({ formats: ['jpg', 'png', 'webp'] }));
+  if (g) return g;
+  return get('/edit/formats');
+}
 export function cropImage(image_id, x, y, width, height, saveAs = 'replace', newFilename = null) {
+  const g = _guard('cropImage', () => ({ ok: true }));
+  if (g) return g;
   return post('/edit/crop', { image_id, x, y, width, height, save_as: saveAs, new_filename: newFilename });
 }
-export function convertImages(params) { return post('/edit/convert', params); }
-export function adjustImage(params) { return post('/edit/adjust', params); }
+export function convertImages(params) {
+  const g = _guard('convertImages', () => ({ ok: true }));
+  if (g) return g;
+  return post('/edit/convert', params);
+}
+export function adjustImage(params) {
+  const g = _guard('adjustImage', () => ({ ok: true }));
+  if (g) return g;
+  return post('/edit/adjust', params);
+}
 
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 

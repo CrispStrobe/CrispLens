@@ -9,6 +9,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { query, run } from './LocalDB.js';
+import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
 
@@ -179,17 +180,7 @@ export const localAdapter = {
   },
 
   getProviders() {
-    return {
-      'anthropic':  { display_name: 'Anthropic (Claude)', is_eu: false },
-      'openai':     { display_name: 'OpenAI (GPT-4o)',    is_eu: false },
-      'nebius':     { display_name: 'Nebius (Qwen2-VL)',  is_eu: true  },
-      'scaleway':   { display_name: 'Scaleway (Pixtral)', is_eu: true  },
-      'openrouter': { display_name: 'OpenRouter',         is_eu: false },
-      'mistral':    { display_name: 'Mistral AI',         is_eu: true  },
-      'groq':       { display_name: 'Groq',               is_eu: false },
-      'poe':        { display_name: 'Poe (Quora)',        is_eu: false },
-      'google':     { display_name: 'Google Gemini',      is_eu: false },
-    };
+    return VLM_PROVIDERS;
   },
 
   async getVlmModels(provider) {
@@ -197,21 +188,14 @@ export const localAdapter = {
     const keys = await this.getVlmKeys();
     vlmClientWeb.setKeys(keys);
     
-    const liveModels = await vlmClientWeb.fetchModels(provider);
-    if (liveModels && liveModels.length > 0) return liveModels;
+    try {
+      const liveModels = await vlmClientWeb.fetchModels(provider);
+      if (liveModels && liveModels.length > 0) return liveModels;
+    } catch (err) {
+      console.warn(`[LocalAdapter] Live fetch failed for ${provider}:`, err);
+    }
 
-    const hardcoded = {
-      'anthropic':  ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
-      'openai':     ['gpt-4o', 'gpt-4o-mini'],
-      'nebius':     ['Qwen/Qwen2-VL-72B-Instruct', 'Qwen/Qwen2-VL-7B-Instruct'],
-      'scaleway':   ['pixtral-12b-2409'],
-      'openrouter': ['anthropic/claude-3.5-sonnet', 'google/gemini-pro-1.5', 'openai/gpt-4o'],
-      'mistral':    ['ministral-14b-2512', 'mistral-large-latest'],
-      'groq':       ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.2-11b-vision-preview'],
-      'poe':        ['claude-3-5-sonnet', 'gpt-4o'],
-      'google':     ['gemini-1.5-flash', 'gemini-1.5-pro'],
-    };
-    return hardcoded[provider] || [];
+    return VLM_MODELS[provider] || [];
   },
 
   async getKeyStatus() {
