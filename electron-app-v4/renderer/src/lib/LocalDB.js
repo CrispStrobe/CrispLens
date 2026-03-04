@@ -109,6 +109,40 @@ export function resetInit() {
   _db = null;
 }
 
+/** 
+ * Safely restart the engine by closing everything and resetting state.
+ * Useful when the engine gets stuck in an inconsistent state.
+ */
+export async function restartEngine() {
+  console.log('[LocalDB] Full engine restart requested...');
+  try {
+    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+    
+    // 1. Try to close active connection
+    if (_db) {
+      try {
+        const isOpen = (await _db.isDBOpen()).result;
+        if (isOpen) await _db.close();
+      } catch (e) { console.warn('[LocalDB] Error closing DB during restart:', e); }
+    }
+    
+    // 2. Try to close connection in the plugin
+    try {
+      await sqlite.closeConnection(DB_NAME, false);
+    } catch (e) { /* often fails if already closed */ }
+    
+    // 3. Reset internal state
+    resetInit();
+    
+    // 4. Trigger fresh init
+    console.log('[LocalDB] Triggering fresh initialization...');
+    return await getDB();
+  } catch (err) {
+    console.error('[LocalDB] Restart engine failed:', err);
+    throw err;
+  }
+}
+
 async function _waitForJeepSqlite() {
   if (window.location.protocol === 'capacitor:') return;
   if (typeof document === 'undefined') {
@@ -218,7 +252,16 @@ export async function getDB() {
         _db = await sqlite.retrieveConnection(DB_NAME, false);
       } else {
         console.log('[LocalDB] Step 5b: Creating new connection...');
-        _db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
+        try {
+          _db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
+        } catch (createErr) {
+          if (createErr.message?.includes('already exists')) {
+            console.warn('[LocalDB] Connection already exists despite isConnection=false. Attempting retrieval...');
+            _db = await sqlite.retrieveConnection(DB_NAME, false);
+          } else {
+            throw createErr;
+          }
+        }
       }
 
       console.log('[LocalDB] Step 6: Checking if DB is open...');

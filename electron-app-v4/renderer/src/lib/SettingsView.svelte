@@ -230,6 +230,23 @@
   let syncRemoteUrl = ''; // Target server for syncing from standalone mode
   let testDiagMsg = '';
   let testingDiag = false;
+  let restartingEngine = false;
+
+  async function doRestartEngine() {
+    restartingEngine = true;
+    testDiagMsg = 'Restarting WASM engine...';
+    try {
+      const { restartEngine } = await import('./LocalDB.js');
+      await restartEngine();
+      testDiagMsg = '✓ Engine restarted successfully';
+      isStandaloneBroken = false;
+      standaloneError = '';
+    } catch (e) {
+      testDiagMsg = `✗ Restart failed: ${e.message}`;
+    } finally {
+      restartingEngine = false;
+    }
+  }
 
   async function runDbDiag() {
     testingDiag = true;
@@ -1203,12 +1220,15 @@
         <div class="card error-notice" style="margin-top:10px; background:#2a1a1a; border-color:#5a2a2a;">
           <p style="color:#e08080; font-weight:600; font-size:12px;">⚠ Standalone Mode Error</p>
           <p style="color:#c08080; font-size:11px; margin-top:4px;">{standaloneError}</p>
-          <div style="display:flex; gap:8px; margin-top:10px;">
+          <div style="display:flex; gap:8px; margin-top:10px; flex-wrap: wrap;">
             <button class="small" on:click={() => switchDbMode('server')}>
               Switch back to Server Mode
             </button>
             <button class="small" on:click={runDbDiag} disabled={testingDiag}>
               {testingDiag ? '...' : 'Run DB Diagnostics'}
+            </button>
+            <button class="small primary" on:click={doRestartEngine} disabled={restartingEngine}>
+              {restartingEngine ? '...' : '🔄 Restart WASM Engine'}
             </button>
           </div>
           {#if testDiagMsg}
@@ -1219,15 +1239,19 @@
       <p class="hint" style="margin-top:10px;color:#a0a060;">
         ⚡ Standalone mode active. All processing, including VLM API calls and user management, happens locally on this device. Ensure you have downloaded the ONNX models below.
       </p>
-      {#if !isStandaloneBroken}
-        <button class="small" style="margin-top:6px;" on:click={runDbDiag} disabled={testingDiag}>
-          {testingDiag ? '...' : 'Test Standalone DB Connection'}
-        </button>
-        {#if testDiagMsg}
-          <p style="font-size:11px; margin-top:6px; color: {testDiagMsg.startsWith('✓') ? '#80c080' : '#e08080'}">{testDiagMsg}</p>
-        {/if}
-      {/if}
-      <!-- ONNX model cache status + download -->
+            {#if !isStandaloneBroken}
+              <div style="display:flex; gap:8px; margin-top:6px; flex-wrap: wrap;">
+                <button class="small" on:click={runDbDiag} disabled={testingDiag}>
+                  {testingDiag ? '...' : 'Test Standalone DB Connection'}
+                </button>
+                <button class="small" on:click={doRestartEngine} disabled={restartingEngine}>
+                  {restartingEngine ? '...' : '🔄 Restart SQLite Engine'}
+                </button>
+              </div>
+              {#if testDiagMsg}
+                <p style="font-size:11px; margin-top:6px; color: {testDiagMsg.startsWith('✓') ? '#80c080' : '#e08080'}">{testDiagMsg}</p>
+              {/if}
+            {/if}      <!-- ONNX model cache status + download -->
       <div class="model-cache-section">
         <div class="model-status-row">
           <span class="model-status-label">SCRFD detector</span>

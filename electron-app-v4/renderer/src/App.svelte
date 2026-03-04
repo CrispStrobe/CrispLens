@@ -228,12 +228,6 @@
     // ── Local (standalone) mode: no server needed ──────────────────────────
     if (isLocalMode()) {
       console.log('[App] Standalone mode detected, skipping backend check');
-      try {
-        const { resetInit } = await import('./lib/LocalDB.js');
-        resetInit();
-      } catch (e) {
-        console.warn('[App] Could not reset LocalDB init state:', e);
-      }
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;
