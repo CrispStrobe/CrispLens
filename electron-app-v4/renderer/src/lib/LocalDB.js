@@ -255,3 +255,36 @@ export async function isAvailable() {
     return false;
   }
 }
+
+/** 
+ * Diagnostic: Run a simple SQL test to prove the engine works.
+ */
+export async function testStandaloneDB() {
+  console.log('[LocalDB] Running diagnostic test...');
+  try {
+    const db = await getDB();
+    
+    // 1. Create temp table
+    console.log('[LocalDB] Test: creating table...');
+    await db.execute('CREATE TABLE IF NOT EXISTS _test_diag (id INTEGER PRIMARY KEY, val TEXT);');
+    
+    // 2. Insert row
+    console.log('[LocalDB] Test: inserting row...');
+    const ts = new Date().toISOString();
+    await db.run('INSERT INTO _test_diag (val) VALUES (?);', [ts]);
+    
+    // 3. Query row
+    console.log('[LocalDB] Test: querying row...');
+    const res = await db.query('SELECT * FROM _test_diag ORDER BY id DESC LIMIT 1;');
+    
+    if (res.values && res.values.length > 0 && res.values[0].val === ts) {
+      console.log('[LocalDB] Diagnostic test PASSED');
+      return { ok: true, message: 'SQLite engine is working correctly (Read/Write OK)' };
+    } else {
+      throw new Error('Database read/write verification failed');
+    }
+  } catch (err) {
+    console.error('[LocalDB] Diagnostic test FAILED:', err);
+    return { ok: false, error: err.message };
+  }
+}
