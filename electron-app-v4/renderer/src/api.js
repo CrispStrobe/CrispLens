@@ -57,6 +57,10 @@ async function _fetch(method, path, body) {
     console.warn(`[api] _fetch(${method}, ${path}) called in local mode!`);
     throw new Error('Server calls disabled in standalone mode');
   }
+  
+  const fullUrl = BASE + path;
+  console.log(`[api] fetch: ${method} ${fullUrl}`, body ? '(with body)' : '');
+
   const opts = {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
@@ -64,13 +68,20 @@ async function _fetch(method, path, body) {
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
   try {
-    const res = await fetch(BASE + path, opts);
+    const res = await fetch(fullUrl, opts);
+    console.log(`[api] response: ${method} ${path} → ${res.status} ${res.statusText}`);
+    
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
+      console.error(`[api] error response: ${text}`);
       throw new Error(`${method} ${path} → ${res.status}: ${text}`);
     }
     const ct = res.headers.get('content-type') || '';
-    return ct.includes('application/json') ? res.json() : res.text();
+    if (ct.includes('application/json')) {
+      const data = await res.json();
+      return data;
+    }
+    return res.text();
   } catch (err) {
     console.error(`[api] ${method} ${path} error:`, err);
     throw err;

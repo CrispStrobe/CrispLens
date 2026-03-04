@@ -184,18 +184,35 @@ export const localAdapter = {
   },
 
   async getVlmModels(provider) {
+    console.log(`[LocalAdapter] getVlmModels for ${provider}`);
     const { vlmClientWeb } = await import('./VlmWeb.js');
     const keys = await this.getVlmKeys();
     vlmClientWeb.setKeys(keys);
     
+    let models = [];
     try {
       const liveModels = await vlmClientWeb.fetchModels(provider);
-      if (liveModels && liveModels.length > 0) return liveModels;
+      if (liveModels && liveModels.length > 0) {
+        console.log(`[LocalAdapter] Live models found: ${liveModels.length}`);
+        models = liveModels;
+      }
     } catch (err) {
       console.warn(`[LocalAdapter] Live fetch failed for ${provider}:`, err);
     }
 
-    return VLM_MODELS[provider] || [];
+    // Merge with hardcoded defaults if empty or to ensure variety
+    const defaults = VLM_MODELS[provider] || [];
+    if (models.length === 0) {
+      models = defaults;
+    } else {
+      // Add defaults that aren't in the live list
+      for (const d of defaults) {
+        if (!models.includes(d)) models.push(d);
+      }
+    }
+    
+    console.log(`[LocalAdapter] Returning ${models.length} models`);
+    return models;
   },
 
   async getKeyStatus() {

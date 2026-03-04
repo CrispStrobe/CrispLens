@@ -71,7 +71,9 @@
 
   // ── Auto-load server settings when backend becomes ready ──────────────────
   $: if ($backendReady && !cfg) {
+    console.log('[SettingsView] Backend ready, starting initial fetch...');
     fetchSettings().then(c => {
+      console.log('[SettingsView] fetchSettings complete');
       cfg = c;
       language     = c?.ui?.language ?? 'de';
       backend      = c?.face_recognition?.backend ?? 'insightface';
@@ -96,31 +98,35 @@
         remoteV2Mode = c?.processing?.remote_v2?.mode ?? 'upload_bytes';
         processingBackend.set(procBackend);
       }
-    }).catch(() => {});
+    }).catch(e => console.error('[SettingsView] fetchSettings failed:', e));
     // Non-admin: load personal VLM prefs (shows effective = override || global fallback)
     if ($currentUser?.role !== 'admin') {
       fetchUserVlmPrefs().then(p => {
+        console.log('[SettingsView] fetchUserVlmPrefs complete');
         vlmEnabled  = p.effective.vlm_enabled  ?? false;
         vlmProvider = p.effective.vlm_provider ?? 'anthropic';
         vlmModel    = p.effective.vlm_model    ?? '';
         globalVlmHint = p.global;
-      }).catch(() => {});
+      }).catch(e => console.warn('[SettingsView] fetchUserVlmPrefs failed:', e));
       // Load personal detection model pref
       fetchUserDetPrefs().then(p => {
+        console.log('[SettingsView] fetchUserDetPrefs complete');
         detModel = p.effective?.det_model ?? 'auto';
         globalDetModelHint = p.global?.det_model ?? 'auto';
-      }).catch(() => {});
+      }).catch(e => console.warn('[SettingsView] fetchUserDetPrefs failed:', e));
     }
-    fetchProviders().then(p => { providers = p; }).catch(() => {});
-    fetchKeyStatus().then(k => { keyStatus = k; }).catch(() => {});
-    fetchEngineStatus().then(s => { engineStatus = s; }).catch(() => {});
+    fetchProviders().then(p => { console.log('[SettingsView] fetchProviders complete'); providers = p; }).catch(() => {});
+    fetchKeyStatus().then(k => { console.log('[SettingsView] fetchKeyStatus complete'); keyStatus = k; }).catch(() => {});
+    fetchEngineStatus().then(s => { console.log('[SettingsView] fetchEngineStatus complete'); engineStatus = s; }).catch(() => {});
     if ($currentUser?.role === 'admin') {
+      console.log('[SettingsView] User is admin, loading users and db status...');
       loadUsers();
-      fetchDbStatus().then(s => { dbStatus = s; }).catch(() => {});
+      fetchDbStatus().then(s => { console.log('[SettingsView] fetchDbStatus complete'); dbStatus = s; }).catch(() => {});
     }
   }
 
   $: if ($currentUser?.role === 'admin' && $backendReady && !usersLoaded && !usersLoading) {
+    console.log('[SettingsView] Reactive trigger: loading users...');
     loadUsers();
   }
 
@@ -139,26 +145,33 @@
     if (!vlmProvider || fetchingModels) return;
     fetchingModels = true;
     vlmFetchMsg = 'Fetching…';
-    console.log('[SettingsView] Fetching models for:', vlmProvider);
+    console.log('[SettingsView] doFetchModels for:', vlmProvider);
+    
+    // Safety timeout to prevent permanent hang
+    const safetyTimer = setTimeout(() => {
+      if (fetchingModels) {
+        console.warn('[SettingsView] doFetchModels safety timeout triggered');
+        fetchingModels = false;
+        vlmFetchMsg = '✗ Request timed out';
+      }
+    }, 15000);
+
     try {
       vlmModels = await fetchVlmModels(vlmProvider);
       vlmFetchMsg = vlmModels.length > 0 ? `✓ ${vlmModels.length} models found` : '✓ Using local defaults';
       console.log(`[SettingsView] Found ${vlmModels.length} models for ${vlmProvider}`);
-      
-      // Auto-select first model if current one is blank or not in the list
-      if (vlmModels.length > 0 && (!vlmModel || !vlmModels.includes(vlmModel))) {
-        // vlmModel = vlmModels[0]; // Don't auto-override if user might want Default
-      }
     } catch (e) {
       console.error('[SettingsView] fetchVlmModels failed:', e);
       vlmFetchMsg = '✗ Live fetch failed — using defaults';
       // Fallback: at least show the hardcoded models if we know them
-      import('./VlmData.js').then(m => {
+      try {
+        const m = await import('./VlmData.js');
         vlmModels = m.VLM_MODELS[vlmProvider] || [];
-      });
+      } catch (err) { console.error('[SettingsView] Failed to load VlmData.js:', err); }
     } finally {
+      clearTimeout(safetyTimer);
       fetchingModels = false;
-      setTimeout(() => { if (vlmFetchMsg.startsWith('✓') || vlmFetchMsg.includes('failed')) vlmFetchMsg = ''; }, 3000);
+      setTimeout(() => { if (vlmFetchMsg.startsWith('✓') || vlmFetchMsg.includes('failed') || vlmFetchMsg.includes('timeout')) vlmFetchMsg = ''; }, 3000);
     }
   }
 
@@ -492,11 +505,12 @@
   });
 
   async function doSaveSettings() {
+    console.log('[SettingsView] doSaveSettings() start');
     saving = true;
     saveMsg = '';
     try {
       if (isElectron) {
-        // Save Electron / connection settings (works offline)
+        console.log('[SettingsView] Saving Electron settings via IPC...');
         const existing = await window.electronAPI?.getSettings() || {};
         await window.electronAPI?.saveSettings({
           ...existing,
@@ -517,6 +531,7 @@
         // Sync stores so ProcessView picks up changes immediately
         processingMode.set(processingModeLocal);
         localModel.set(localModelLocal);
+        console.log('[SettingsView] IPC save settings complete');
       } else {
         // Browser/PWA: persist language preference locally
         localStorage.setItem('pwa_language', language);
@@ -524,6 +539,7 @@
 
       // Only try to save server settings when backend is reachable
       if ($backendReady) {
+        console.log('[SettingsView] Saving server settings via API...');
         if (isAdmin) {
           // Admin saves language + face-rec + global VLM defaults + upload settings
           await saveSettings({
@@ -558,6 +574,7 @@
           // Personal detection model preference
           await saveUserDetPrefs({ det_model: detModel || null });
         }
+        console.log('[SettingsView] API save settings complete');
         saveMsg = '✓ All settings saved';
       } else {
         saveMsg = isElectron
@@ -565,9 +582,11 @@
           : '✓ Preferences saved  (server settings require backend)';
       }
     } catch (e) {
+      console.error('[SettingsView] doSaveSettings error:', e);
       saveMsg = '✗ ' + e.message;
     } finally {
       saving = false;
+      console.log('[SettingsView] doSaveSettings() finished');
     }
   }
 
@@ -666,14 +685,18 @@
 
   // ── User management ───────────────────────────────────────────────────────
   async function loadUsers() {
+    console.log('[SettingsView] loadUsers() start');
     usersLoading = true;
     try {
       users = await listUsers();
+      console.log(`[SettingsView] loadUsers() success: ${Array.isArray(users) ? users.length : 'non-array'} users found`);
     } catch (e) {
+      console.error('[SettingsView] loadUsers() failed:', e);
       usersMsg = '✗ ' + e.message;
     } finally {
       usersLoading = false;
       usersLoaded = true;
+      console.log('[SettingsView] loadUsers() finished');
     }
   }
 
