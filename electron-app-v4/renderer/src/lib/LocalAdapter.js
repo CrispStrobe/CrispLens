@@ -53,10 +53,13 @@ async function _voyBestMatch(embedding, threshold = 0.4) {
 // ── Filepath cache — lets thumbnailUrl() stay synchronous ─────────────────────
 // Populated whenever getImages / getImage / getPerson returns records.
 export const fileCache = new Map(); // image_id → filepath
+export const thumbCache = new Map(); // image_id → base64 jpeg string
 
 function _cache(images) {
-  for (const img of images)
+  for (const img of images) {
     if (img?.id && img?.filepath) fileCache.set(img.id, img.filepath);
+    if (img?.id && img?.thumbnail_blob) thumbCache.set(img.id, img.thumbnail_blob);
+  }
   return images;
 }
 
@@ -495,19 +498,20 @@ export const localAdapter = {
 
   async importProcessed({ filepath, filename, width, height, date_taken,
                           faces = [], description, scene_type, tags = [],
-                          embedding_dim = 512 }) {
+                          thumbnail_b64, embedding_dim = 512 }) {
     const fname = filename || filepath.split('/').pop();
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
-               (filename, filepath, width, height, date_taken, description, scene_type)
-               VALUES(?,?,?,?,?,?,?)`,
+               (filename, filepath, width, height, date_taken, description, scene_type, thumbnail_blob)
+               VALUES(?,?,?,?,?,?,?,?)`,
               [fname, filepath, width ?? null, height ?? null,
-               date_taken ?? null, description ?? null, scene_type ?? null]);
+               date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
     const imgRows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
     const imageId = imgRows[0]?.id;
     if (!imageId) throw new Error('Failed to insert image record');
     fileCache.set(imageId, filepath);
+    if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
 
     // Tags
     for (const tag of tags)

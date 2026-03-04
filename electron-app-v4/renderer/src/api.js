@@ -9,7 +9,7 @@
  */
 
 import syncManager from './lib/SyncManager.js';
-import { localAdapter, fileCache, toWebUrl } from './lib/LocalAdapter.js';
+import { localAdapter, fileCache, thumbCache, toWebUrl } from './lib/LocalAdapter.js';
 import { localThumb } from './lib/LocalThumbnailCache.js';
 
 export { localThumb };
@@ -131,15 +131,27 @@ function _snapSize(size) {
   return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
 }
 export function thumbnailUrl(id, size = 200) {
-  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  if (_localMode) {
+    const b64 = thumbCache.get(id);
+    if (b64) return `data:image/jpeg;base64,${b64}`;
+    return toWebUrl(fileCache.get(id) || '');
+  }
   return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`;
 }
 export function previewUrl(id) {
-  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  if (_localMode) {
+    const b64 = thumbCache.get(id);
+    if (b64) return `data:image/jpeg;base64,${b64}`;
+    return toWebUrl(fileCache.get(id) || '');
+  }
   return `${BASE}/images/${id}/preview`;
 }
 export function fullUrl(id) {
-  if (_localMode) return toWebUrl(fileCache.get(id) || '');
+  if (_localMode) {
+    const b64 = thumbCache.get(id);
+    if (b64) return `data:image/jpeg;base64,${b64}`;
+    return toWebUrl(fileCache.get(id) || '');
+  }
   return `${BASE}/images/${id}/full`;
 }
 export function downloadUrl(id) { return `${BASE}/images/${id}/download`; }

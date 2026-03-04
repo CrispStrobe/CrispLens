@@ -20,6 +20,7 @@ const SCHEMA = `
     height          INTEGER,
     date_taken      TIMESTAMP,
     date_processed  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    thumbnail_blob  BLOB,
     description     TEXT,
     scene_type      TEXT,
     owner_id        INTEGER,
