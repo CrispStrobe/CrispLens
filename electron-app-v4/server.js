@@ -161,7 +161,7 @@ app.use('/api',            miscRouter);
   if (modelDir) {
     app.use('/models', (req, res, next) => {
       // Only serve the two known model files — no directory traversal
-      const allowed = ['det_10g.onnx', 'w600k_r50.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task'];
+      const allowed = ['det_10g.onnx', 'det_10g_int8.onnx', 'w600k_r50.onnx', 'w600k_r50_int8.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task'];
       const filename = path.basename(req.path);
       if (!allowed.includes(filename)) return res.status(404).json({ error: 'Unknown model' });
       const filePath = path.join(modelDir, filename);

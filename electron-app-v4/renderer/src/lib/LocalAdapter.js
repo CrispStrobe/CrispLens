@@ -555,13 +555,15 @@ export const localAdapter = {
     };
     const orderBy = orderMap[sort] ?? 'i.id DESC';
 
-    // Complex query to get images with concatenated tags and people
+    // Exclude thumbnail_blob — it's large base64 data loaded via fetchThumbnail() on demand.
+    // Loading it here for every gallery page would bloat WASM SQLite memory significantly.
     const sql = `
-      SELECT i.*, 
+      SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
+             i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
-             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f 
-              JOIN face_embeddings fe ON fe.face_id = f.id 
-              JOIN people p ON p.id = fe.person_id 
+             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
+              JOIN face_embeddings fe ON fe.face_id = f.id
+              JOIN people p ON p.id = fe.person_id
               WHERE f.image_id = i.id) as people_names
       FROM images i
       ${where}
@@ -593,11 +595,12 @@ export const localAdapter = {
 
   async getImage(id) {
     const sql = `
-      SELECT i.*, 
+      SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
+             i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
-             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f 
-              JOIN face_embeddings fe ON fe.face_id = f.id 
-              JOIN people p ON p.id = fe.person_id 
+             (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
+              JOIN face_embeddings fe ON fe.face_id = f.id
+              JOIN people p ON p.id = fe.person_id
               WHERE f.image_id = i.id) as people_names
       FROM images i
       WHERE i.id = ?
