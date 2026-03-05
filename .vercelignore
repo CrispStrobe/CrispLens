@@ -1,0 +1,15 @@
+venv/
+data/
+datasets/
+logs/
+backups/
+bkp/
+node_modules/
+.git/
+electron-app/
+electron-app-v2/
+thumbnails/
+exports/
+*.onnx
+*.zip
+*.db

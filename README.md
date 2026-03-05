@@ -441,32 +441,41 @@ This applies four fixes without touching your data or database:
 3. Adds `<Location /api>` + `<Location /api/admin>` blocks inside the Apache VirtualHost — prevents mod_deflate buffering of SSE streams
 4. Writes `admin.fix_db_path` to `config.yaml` so the UI finds the script path automatically
 
-### Container / Docker
+### Container / Docker (v4 Node.js stack)
 
-Build the image (no admin credentials baked in):
+The v4 edition is ideal for containerized environments. The provided `Dockerfile` uses a multi-stage build to compile the Svelte UI and run the Node.js API.
 
+**Build the image:**
 ```bash
-docker build -t crisp-lens .
+docker build -t crisplens .
 ```
 
-Run (admin account created on first start, credentials passed at runtime):
-
+**Run locally:**
 ```bash
 docker run -d \
-  -p 7865:7865 \
+  -p 7860:7860 \
   -v crisp-data:/data \
-  -e FACE_REC_DATA_DIR=/data \
-  -e CRISP_ADMIN_USER=admin \
-  -e CRISP_ADMIN_PASS='s3cr3t!X9' \
-  --name crisp-lens \
-  crisp-lens
+  --name crisplens \
+  crisplens
 ```
 
-Or use the deploy script in container mode to build a custom install:
+### Hugging Face Space Deployment (Docker)
 
-```bash
-CRISP_CONTAINER=1 CRISP_INSTALL_DIR=/app bash deploy-v2.sh
-```
+You can host CrispLens as a private or public Space on Hugging Face. This provides server-side ONNX inference using HF's hardware.
+
+1. Create a new **Docker** Space on Hugging Face.
+2. Push this repository to the Space.
+3. The Space will automatically:
+   - Build the Svelte UI.
+   - Install Node.js dependencies.
+   - Download the required AI models (`buffalo_l`).
+   - Initialize a fresh database if one isn't mounted.
+4. **Persistence:** To keep your data after restarts, create a **Dataset** on HF and mount it to `/data` in your Space settings.
+
+**Technical Details for HF:**
+- **App Port:** `7860` (default)
+- **Base Image:** `node:20-bookworm-slim`
+- **Inference:** Server-side via `onnxruntime-node`.
 
 ---
 

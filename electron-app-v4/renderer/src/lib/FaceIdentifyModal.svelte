@@ -18,6 +18,22 @@
 
     async function update(newUrl) {
       if (!newUrl) return;
+      
+      // Handle local crop protocol
+      if (newUrl.startsWith('local-crop://')) {
+        const parts = newUrl.replace('local-crop://', '').split('?');
+        const [ids, query] = parts;
+        const [imageId, faceId] = ids.split('/');
+        const size = new URLSearchParams(query || '').get('size') || 128;
+        
+        const { localAdapter } = await import('./LocalAdapter.js');
+        const blobUrl = await localAdapter.getFaceCrop(imageId, faceId, parseInt(size));
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = blobUrl;
+        node.src = blobUrl;
+        return;
+      }
+
       if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
         node.src = newUrl;
         return;
@@ -309,12 +325,12 @@
 
   // Convert normalised bbox → pixel coords in the displayed image area
   function bboxPx(bbox) {
-    if (!displayW || !displayH) return { x: 0, y: 0, w: 0, h: 0 };
+    if (!displayW || !displayH || !bbox) return { x: 0, y: 0, w: 0, h: 0 };
     return {
-      x: bbox.left   * displayW,
-      y: bbox.top    * displayH,
-      w: (bbox.right  - bbox.left) * displayW,
-      h: (bbox.bottom - bbox.top)  * displayH,
+      x: (bbox.left || 0)   * displayW,
+      y: (bbox.top || 0)    * displayH,
+      w: ((bbox.right || 0)  - (bbox.left || 0)) * displayW,
+      h: ((bbox.bottom || 0) - (bbox.top || 0))  * displayH,
     };
   }
 

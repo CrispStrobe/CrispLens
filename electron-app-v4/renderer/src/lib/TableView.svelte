@@ -17,6 +17,22 @@
 
     async function update(newUrl) {
       if (!newUrl) return;
+
+      // Handle local crop protocol
+      if (newUrl.startsWith('local-crop://')) {
+        const parts = newUrl.replace('local-crop://', '').split('?');
+        const [ids, query] = parts;
+        const [imageId, faceId] = ids.split('/');
+        const size = new URLSearchParams(query || '').get('size') || 128;
+        
+        const { localAdapter } = await import('./LocalAdapter.js');
+        const blobUrl = await localAdapter.getFaceCrop(imageId, faceId, parseInt(size));
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = blobUrl;
+        node.src = blobUrl;
+        return;
+      }
+
       if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
         node.src = newUrl;
         return;

@@ -1,8 +1,3 @@
-# =============================================================================
-# CrispLens v4 — multi-stage Dockerfile (Node.js API + Svelte UI)
-# Supports: Hugging Face Spaces, VPS, and local Docker.
-# =============================================================================
-
 # ── Stage 1: Build Svelte Frontend ───────────────────────────────────────────
 FROM node:20-bookworm-slim AS frontend-builder
 
@@ -16,16 +11,15 @@ RUN cd electron-app-v4/renderer && npm run build
 # ── Stage 2: Node.js Runtime ──────────────────────────────────────────────────
 FROM node:20-bookworm-slim
 
-ENV NODE_ENV=production \
-    PORT=7860 \
-    DB_PATH=/data/face_recognition.db \
-    FACE_REC_MODELS_DIR=/app/models
+ENV NODE_ENV=production 
+    PORT=7860 
+    DB_PATH=/data/face_recognition.db
 
 # Install system dependencies for native modules (better-sqlite3, sharp)
 # and utilities (sqlite3, curl, exiftool)
-RUN apt-get update -qq && apt-get install -y -qq \
-    python3 make g++ \
-    sqlite3 curl libvips-dev exiftool \
+RUN apt-get update -qq && apt-get install -y -qq 
+    python3 make g++ 
+    sqlite3 curl libvips-dev exiftool 
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -48,7 +42,7 @@ COPY schema_complete.sql ./
 # Copy built frontend from Stage 1
 COPY --from=frontend-builder /build/electron-app-v4/renderer/dist/ ./renderer/dist/
 
-# Pre-download models during build into /app/models/buffalo_l/
+# Pre-download models during build
 RUN node core/model-downloader.js
 
 # Create data directory and set permissions for Hugging Face user (1000)
@@ -56,7 +50,7 @@ RUN mkdir -p /data && chown -R 1000:1000 /app /data
 USER 1000
 
 # Container entrypoint script
-COPY --chown=1000:1000 <<'EOF' /app/start.sh
+COPY --chown=1000:1000 <<'EOF' /app/start_hf.sh
 #!/usr/bin/env bash
 set -e
 
@@ -69,19 +63,15 @@ if [ ! -f "$DB_PATH" ]; then
 fi
 
 # Start Node.js server
-# Hugging Face provides PORT=7860 env var by default
-echo "[start] Launching CrispLens v4 Node.js API on port ${PORT:-7860}..."
-exec node server.js "${PORT:-7860}" "$DB_PATH"
+echo "[start] Launching CrispLens v4 Node.js API on port $PORT..."
+exec node server.js "$PORT" "$DB_PATH"
 EOF
 
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start_hf.sh
 
-# Data volume — mount a host directory or HF Dataset here
+# HF persistent storage is at /data if a dataset is mounted
 VOLUME ["/data"]
 
 EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost:${PORT:-7860}/api/health || exit 1
-
-ENTRYPOINT ["/app/start.sh"]
+ENTRYPOINT ["/app/start_hf.sh"]

@@ -18,7 +18,14 @@ let _voyIndex = null;
 async function _getVoyIndex(forceRebuild = false) {
   if (_voyIndex && !forceRebuild) return _voyIndex;
   
-  const { Voy } = await import('voy-search');
+  const mod = await import('voy-search');
+  const Voy = mod.Voy || mod.default?.Voy || mod.default;
+  
+  if (!Voy) {
+    console.error('[LocalAdapter] Failed to find Voy class in module:', mod);
+    throw new Error('Voy class not found');
+  }
+
   const items = await _loadAllEmbeddings();
   
   const embeddings = items.map(p => ({
@@ -122,6 +129,52 @@ export const localAdapter = {
 
   me() {
     return { username: 'local', role: 'admin' };
+  },
+
+  async getFaceCrop(imageId, faceId, size = 128) {
+    console.log(`[LocalAdapter] getFaceCrop imageId=${imageId} faceId=${faceId} size=${size}`);
+    try {
+      // 1. Get face coordinates
+      const rows = await query('SELECT bbox_x1, bbox_y1, bbox_x2, bbox_y2 FROM faces WHERE id = ?', [faceId]);
+      if (rows.length === 0) throw new Error('Face not found');
+      const { bbox_x1, bbox_y1, bbox_x2, bbox_y2 } = rows[0];
+
+      // 2. Get image source
+      const imgRows = await query('SELECT filepath, thumbnail_blob FROM images WHERE id = ?', [imageId]);
+      if (imgRows.length === 0) throw new Error('Image not found');
+      const { filepath, thumbnail_blob } = imgRows[0];
+
+      // 3. Load image into memory
+      let imgSource = '';
+      if (thumbnail_blob) {
+        imgSource = thumbnail_blob.startsWith('data:') ? thumbnail_blob : `data:image/jpeg;base64,${thumbnail_blob}`;
+      } else {
+        imgSource = toWebUrl(filepath);
+      }
+
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = imgSource;
+      });
+
+      // 4. Crop using Canvas
+      const canvas = new OffscreenCanvas(size, size);
+      const ctx = canvas.getContext('2d');
+      
+      const x = bbox_x1 * img.width;
+      const y = bbox_y1 * img.height;
+      const w = (bbox_x2 - bbox_x1) * img.width;
+      const h = (bbox_y2 - bbox_y1) * img.height;
+
+      ctx.drawImage(img, x, y, w, h, 0, 0, size, size);
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      console.error('[LocalAdapter] getFaceCrop failed:', err);
+      return '';
+    }
   },
 
   async searchImages(q, limit = 50) {

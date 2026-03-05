@@ -989,7 +989,13 @@ export function fetchFaceClusters(threshold = 0.55, limit = 500, includeIdentifi
   const q = new URLSearchParams({ threshold, limit, include_identified: includeIdentified });
   return get(`/faces/clusters?${q}`);
 }
-export function faceCropUrl(imageId, faceId, size = 128) { return `${BASE}/faces/face-crop?image_id=${imageId}&face_id=${faceId}&size=${size}`; }
+export function faceCropUrl(imageId, faceId, size = 128) { 
+  if (_localMode) {
+    // In standalone mode, we return a special marker that lazySrc or our adapter can handle
+    return `local-crop://${imageId}/${faceId}?size=${size}`;
+  }
+  return `${BASE}/faces/face-crop?image_id=${imageId}&face_id=${faceId}&size=${size}`; 
+}
 export function assignCluster(faceIds, personName) { return post('/faces/assign-cluster', { face_ids: faceIds, person_name: personName }); }
 
 // ── Ratings, flags, rotation ──────────────────────────────────────────────────

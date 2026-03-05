@@ -36,8 +36,17 @@ const INSIGHTFACE_MODEL_DIR = path.join(os.homedir(), '.insightface', 'models', 
 // Fallback: local models/ dir next to this package
 const LOCAL_MODEL_DIR = path.join(__dirname, '..', 'models', 'buffalo_l');
 
+// Explicit override via environment variable
+const ENV_MODEL_DIR = process.env.FACE_REC_MODELS_DIR;
+
 function findModelDir() {
-  const dirs = [INSIGHTFACE_MODEL_DIR, LOCAL_MODEL_DIR];
+  const dirs = [];
+  if (ENV_MODEL_DIR) {
+    dirs.push(ENV_MODEL_DIR);
+    if (!ENV_MODEL_DIR.endsWith('buffalo_l')) dirs.push(path.join(ENV_MODEL_DIR, 'buffalo_l'));
+  }
+  dirs.push(INSIGHTFACE_MODEL_DIR, LOCAL_MODEL_DIR);
+
   for (const d of dirs) {
     if (
       fs.existsSync(path.join(d, 'det_10g.onnx')) &&
