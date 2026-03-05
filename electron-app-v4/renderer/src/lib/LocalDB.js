@@ -287,43 +287,53 @@ export async function getDB() {
 
       // ── Migration: ensure columns exist ────────────────────────────────
       try {
+        console.log('[LocalDB] Checking for required columns...');
         const isWeb = window.location.protocol !== 'capacitor:';
         
         // 1. images.thumbnail_blob
         const imgInfo = await _db.query("PRAGMA table_info(images);");
-        if (!imgInfo.values?.some(c => c.name === 'thumbnail_blob')) {
+        const imgCols = (imgInfo.values || []).map(c => c.name);
+        if (!imgCols.includes('thumbnail_blob')) {
           console.log('[LocalDB] Migrating: images.thumbnail_blob');
           await _db.execute("ALTER TABLE images ADD COLUMN thumbnail_blob BLOB;");
         }
 
         // 2. faces.face_quality
         const facesInfo = await _db.query("PRAGMA table_info(faces);");
-        if (!facesInfo.values?.some(c => c.name === 'face_quality')) {
+        const faceCols = (facesInfo.values || []).map(c => c.name);
+        if (!faceCols.includes('face_quality')) {
           console.log('[LocalDB] Migrating: faces.face_quality');
           await _db.execute("ALTER TABLE faces ADD COLUMN face_quality REAL DEFAULT 1.0;");
         }
 
-        // 3. face_embeddings.verified, etc.
+        // 3. face_embeddings columns
         const embInfo = await _db.query("PRAGMA table_info(face_embeddings);");
-        if (!embInfo.values?.some(c => c.name === 'verified')) {
+        const embCols = (embInfo.values || []).map(c => c.name);
+        
+        if (!embCols.includes('verified')) {
           console.log('[LocalDB] Migrating: face_embeddings.verified');
           await _db.execute("ALTER TABLE face_embeddings ADD COLUMN verified INTEGER DEFAULT 0;");
         }
-        if (!embInfo.values?.some(c => c.name === 'embedding_model')) {
+        if (!embCols.includes('embedding_model')) {
           console.log('[LocalDB] Migrating: face_embeddings.embedding_model');
           await _db.execute("ALTER TABLE face_embeddings ADD COLUMN embedding_model TEXT;");
         }
-        if (!embInfo.values?.some(c => c.name === 'recognition_confidence')) {
+        if (!embCols.includes('recognition_confidence')) {
           console.log('[LocalDB] Migrating: face_embeddings.recognition_confidence');
           await _db.execute("ALTER TABLE face_embeddings ADD COLUMN recognition_confidence REAL;");
         }
 
         // Persist all migrations
-        if (isWeb && sqlite) await sqlite.saveToStore(DB_NAME);
+        if (isWeb && sqlite) {
+          console.log('[LocalDB] Saving migrations to WebStore...');
+          await sqlite.saveToStore(DB_NAME);
+        }
         console.log('[LocalDB] Migrations check complete');
       } catch (migErr) {
-        console.warn('[LocalDB] Migration check failed (non-critical):', migErr.message);
+        console.error('[LocalDB] Migration check failed CRITICALLY:', migErr);
       }
+
+      console.log('[LocalDB] Step 9: Database is ready for queries');
 
       console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 

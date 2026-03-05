@@ -343,11 +343,14 @@
   }
 
   function recalcSize() {
-    if (imgEl) {
+    if (!imgEl) return;
+    try {
       const rect = imgEl.getBoundingClientRect();
       // getBoundingClientRect returns zoomed dimensions; divide by zoomLevel for true display size
       displayW = rect.width  / zoomLevel;
       displayH = rect.height / zoomLevel;
+    } catch (e) {
+      console.warn('[FaceIdentifyModal] recalcSize failed:', e);
     }
   }
 
