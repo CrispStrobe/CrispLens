@@ -291,6 +291,11 @@
 
   function onKey(e) {
     if (e.key === 'Escape') close();
+    
+    // Don't intercept zoom/pan keys if typing in an input
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+
     if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomIn(); }
     if (e.key === '-') { e.preventDefault(); zoomOut(); }
     if (e.key === '*') { e.preventDefault(); fitToScreen(); }

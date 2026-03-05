@@ -1,0 +1,9 @@
+{
+  "name": "crisplens",
+  "framework": "vite",
+  "buildCommand": "cd electron-app-v4/renderer && npm install && npm run build",
+  "outputDirectory": "electron-app-v4/renderer/dist",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

@@ -191,6 +191,11 @@
 
   function handleKey(e) {
     if ($selectedId) return; // Lightbox handles its own keys
+    
+    // Don't intercept if typing in an input
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+
     const items = $galleryImages;
     if (items.length === 0) return;
 

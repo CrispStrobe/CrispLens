@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "gen-icons": "python3 scripts/gen-pwa-icons.py",
+    "gen-icons": "python3 scripts/gen-app-icons.py ../../CrispLens.png",
     "cap:sync": "npx cap sync",
     "cap:add:ios": "npx cap add ios",
     "cap:add:android": "npx cap add android",
