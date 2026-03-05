@@ -696,9 +696,9 @@ export const localAdapter = {
         console.log(`[LocalAdapter] Using lenient det_thresh for thumbnail: ${det_thresh}`);
       }
       
-      // VLM should run if NOT explicitly skipped in params (requested in modal)
-      // or if it's enabled globally.
-      const vlm_enabled = !params.skip_vlm || settings.vlm.enabled;
+      // VLM should run if explicitly requested in modal (!skip_vlm)
+      // or if globally enabled AND not explicitly disabled.
+      const vlm_enabled = params.skip_vlm === false || (settings.vlm.enabled && params.skip_vlm !== true);
 
       console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | vlm=${vlm_enabled}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
@@ -709,6 +709,7 @@ export const localAdapter = {
         vlm_enabled:   vlm_enabled,
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
+        vlm_prompt:    params.vlm_prompt,
         thumb_size:    thumb_size,
       });
 

@@ -317,6 +317,7 @@
         max_retries:   detRetries,
         max_size:      maxSize,
         vlm_max_size:  vlmMaxSize,
+        vlm_prompt:    $t('vlm_prompt'),
       });
       console.log('[FaceIdentifyModal] reDetectFaces finished:', res);
       anyChanged = true;
