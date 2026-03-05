@@ -85,6 +85,17 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         runtimeCaching: [
+          // JS/CSS app bundles: NetworkFirst so new builds load immediately without
+          // requiring SW unregistration. Files have no content hashes so CacheFirst
+          // would serve stale bundles indefinitely after an update.
+          {
+            urlPattern: /\/assets\/.*\.(js|css)$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'crisplens-app-bundles',
+              networkTimeoutSeconds: 4,
+            },
+          },
           // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
           {
             urlPattern: /\/api\/images\/\d+\/thumbnail/,

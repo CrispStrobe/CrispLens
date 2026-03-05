@@ -64,12 +64,14 @@ async function _getVoyIndex(forceRebuild = false) {
 /** Brute-force cosine fallback — works in all browsers, no WASM required. */
 async function _bruteForceMatch(embedding, threshold = 0.4) {
   const items = await _loadAllEmbeddings();
+  console.log(`[LocalAdapter] bruteForce: ${items.length} embeddings to compare`);
   if (items.length === 0) return null;
   let best = null, bestSim = -1;
   for (const item of items) {
     const sim = _cosine(embedding, item.vec);
     if (sim > bestSim) { bestSim = sim; best = item; }
   }
+  console.log(`[LocalAdapter] bruteForce: best=${best?.person_name} sim=${bestSim.toFixed(4)} threshold=${threshold}`);
   return (best && bestSim >= threshold)
     ? { person_id: best.person_id, name: best.person_name }
     : null;
@@ -135,14 +137,23 @@ export function toWebUrl(filepath) {
   return Capacitor.convertFileSrc(filepath);
 }
 
-/** Load all face embeddings from SQLite for the search index. */
+/** Load all face embeddings from SQLite for the search index.
+ *
+ * Uses LEFT JOIN so orphaned embeddings (whose face row was deleted by
+ * clearDetections) are still returned. This is critical for re-detection:
+ * after clearDetections removes the old face row the embedding becomes
+ * orphaned, but it still holds the person_id assignment and should be
+ * used to match the newly detected face.
+ */
 async function _loadAllEmbeddings() {
   const rows = await query(`
-    SELECT fe.id, fe.person_id, p.name, fe.embedding_vector, f.image_id, i.filename
+    SELECT fe.id, fe.person_id, p.name, fe.embedding_vector,
+           COALESCE(f.image_id, -1) AS image_id,
+           COALESCE(i.filename, '') AS filename
     FROM face_embeddings fe
-    JOIN faces f ON f.id = fe.face_id
-    JOIN images i ON i.id = f.image_id
-    LEFT JOIN people p ON p.id = fe.person_id
+    LEFT JOIN faces f  ON f.id  = fe.face_id
+    LEFT JOIN images i ON i.id  = f.image_id
+    LEFT JOIN people p ON p.id  = fe.person_id
     WHERE fe.embedding_vector IS NOT NULL
   `);
   return rows.map(r => ({
