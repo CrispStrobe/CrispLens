@@ -391,6 +391,11 @@
   let syncMsg           = '';
   let syncStats         = null;
 
+  // Auto-save sync settings when sliders change
+  $: if (typeof window !== 'undefined') {
+    saveSyncSettings({ maxItems: syncMaxItems, maxSizeMb: syncMaxSizeMb, thumbSize: syncThumbSize });
+  }
+
   async function loadSyncStats() {
     syncStats = await syncManager.getStats().catch(() => null);
     pendingPushCount = syncStats?.pendingPush ?? 0;
@@ -1380,9 +1385,12 @@
 
       <label>{$t('offline_thumb_size')}</label>
       <div class="field-row" style="gap:10px;">
-        <input type="range" min="150" max="800" step="50" bind:value={syncThumbSize} style="flex:1;" />
+        <input type="range" min="150" max="1200" step="50" bind:value={syncThumbSize} style="flex:1;" />
         <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncThumbSize}px</span>
       </div>
+      <p class="hint" style="margin-top:4px;">
+        Controls the resolution of thumbnails downloaded for offline use AND the resolution of images stored in your browser's Standalone database.
+      </p>
     </div>
 
     {#if syncStats}

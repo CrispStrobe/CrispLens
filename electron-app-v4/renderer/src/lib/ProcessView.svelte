@@ -384,6 +384,7 @@
 
     let engine;
     let vlmCfg = {};
+    let syncCfg = {};
     try {
       console.log('[ProcessView] Initializing web engine...');
       engine = await _getWebEngine();
@@ -394,6 +395,11 @@
       console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
       const detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
+
+      // Also get sync settings for thumbnail size
+      const { loadSyncSettings } = await import('./SyncManager.js');
+      syncCfg = loadSyncSettings();
+      const thumb_size = syncCfg.thumbSize || 200;
       
       const modelBase = localMode
         ? '/ort-wasm'
@@ -407,6 +413,9 @@
       running = false; finished = true;
       return;
     }
+
+    const { loadSyncSettings } = await import('./SyncManager.js');
+    const thumb_size_final = loadSyncSettings().thumbSize || 200;
 
     for (const item of pending) {
       if (cancelled) break;
@@ -446,6 +455,9 @@
           model: vlmCfg.model
         });
 
+        const s = await fetchSettings();
+        const detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
+
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
@@ -456,6 +468,7 @@
           vlm_provider:  vlmCfg.provider,
           vlm_model:     vlmCfg.model,
           vlm_prompt:    $t('vlm_prompt'),
+          thumb_size:    thumb_size_final,
           onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
         });
         

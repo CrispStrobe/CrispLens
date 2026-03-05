@@ -683,6 +683,10 @@ export const localAdapter = {
 
       // 4. Run the engine
       const settings = await this.settings();
+      const { loadSyncSettings } = await import('./SyncManager.js');
+      const syncCfg = loadSyncSettings();
+      const thumb_size = syncCfg.thumbSize || 200;
+      
       const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
       let det_thresh = params.det_thresh || settings.face_recognition.insightface.detection_threshold;
       
@@ -692,7 +696,7 @@ export const localAdapter = {
         console.log(`[LocalAdapter] Using lenient det_thresh for thumbnail: ${det_thresh}`);
       }
       
-      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh}`);
+      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | thumb_size=${thumb_size}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    det_thresh,
         min_face_size: effectiveMinFaceSize,
@@ -701,6 +705,7 @@ export const localAdapter = {
         vlm_enabled:   !params.skip_vlm && settings.vlm.enabled,
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
+        thumb_size:    thumb_size,
       });
 
       console.log(`[LocalAdapter] Engine finished. Found ${faceData.faces?.length || 0} faces. Updating DB...`);

@@ -682,7 +682,8 @@ export class FaceEngineWeb {
     console.log(`[FaceEngineWeb] processFile: embedding complete for ${faces.length} faces`);
 
     // ── Thumbnail ──────────────────────────────────────────────────────────────
-    const THUMB = 200;
+    const THUMB = opts.thumb_size || 200;
+    console.log(`[FaceEngineWeb] Generating ${THUMB}px thumbnail...`);
     const tW = Math.round(THUMB * W / Math.max(W, H));
     const tH = Math.round(THUMB * H / Math.max(W, H));
     const thumbCanvas = new OffscreenCanvas(tW, tH);
