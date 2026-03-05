@@ -317,3 +317,4 @@ site/
 !datasets/.gitkeep
 !thumbnails/.gitkeep
 node_modules/
+.vercel

@@ -257,7 +257,7 @@ export class FaceEngineWeb {
       if (!resp) {
         this._progress(`Downloading ${filename}…`);
         try {
-          // Attempt server fetch first
+          console.log(`[FaceEngineWeb] Fetching ${filename} from ${fetchUrl}`);
           resp = await fetch(fetchUrl);
           
           // CRITICAL: Manual MIME type check to fail early with clear message
@@ -270,6 +270,7 @@ export class FaceEngineWeb {
           if (!resp.ok) throw new Error(`Server fetch failed: ${resp.status}`);
         } catch (e) {
           if (fallbackUrl) {
+            console.log(`[FaceEngineWeb] Primary fetch failed for ${filename}, trying fallback: ${fallbackUrl}`);
             this._progress(`Server fetch failed, trying direct download for ${filename}…`);
             resp = await fetch(fallbackUrl);
             if (!resp.ok) throw new Error(`Model download failed from both server and mirror: ${resp.status}`);
@@ -277,7 +278,10 @@ export class FaceEngineWeb {
             throw new Error(`Model download failed: ${e.message}`);
           }
         }
-        // Store under canonical key so the cache survives base URL changes
+        
+        // Store under canonical key. Clone first so we can still use the response.
+        // We use cache.put(..., resp.clone()) immediately so we don't hold the whole 170MB in RAM.
+        console.log(`[FaceEngineWeb] Storing ${filename} in Cache API...`);
         await cache.put(canonicalKey, resp.clone());
       }
       return resp.arrayBuffer();

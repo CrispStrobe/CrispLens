@@ -436,12 +436,21 @@
       queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
       try {
         console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
+        const vlmEnabledFinal = !detParams.skip_vlm && vlmCfg.enabled;
+        console.log(`[ProcessView] VLM parameters for ${item.name}:`, {
+          vlmEnabledFinal,
+          skip_vlm: detParams.skip_vlm,
+          vlmCfgEnabled: vlmCfg.enabled,
+          provider: vlmCfg.provider,
+          model: vlmCfg.model
+        });
+
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
           det_model:     detParams.det_model,
           visibility,
-          vlm_enabled:   !detParams.skip_vlm && vlmCfg.enabled,
+          vlm_enabled:   vlmEnabledFinal,
           vlm_provider:  vlmCfg.provider,
           vlm_model:     vlmCfg.model,
           vlm_prompt:    $t('vlm_prompt'),

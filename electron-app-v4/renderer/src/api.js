@@ -175,10 +175,10 @@ export async function fetchImageAsUrl(url) {
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
 let _localMode = localStorage.getItem('db_mode') === 'local';
-// Default to server mode if no mode is stored
+// Default to local mode for zero-server deployments (Vercel/PWA)
 if (localStorage.getItem('db_mode') === null) {
-  _localMode = false;
-  localStorage.setItem('db_mode', 'server');
+  _localMode = true;
+  localStorage.setItem('db_mode', 'local');
 }
 console.log(`[api] Initializing. localMode=${_localMode} (db_mode=${localStorage.getItem('db_mode')})`);
 
