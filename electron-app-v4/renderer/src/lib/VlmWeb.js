@@ -5,6 +5,37 @@
  * to generate image descriptions and tags by calling provider APIs directly.
  */
 
+import { Capacitor } from '@capacitor/core';
+
+// Helper for native-safe fetch
+async function crossFetch(url, options = {}) {
+  if (Capacitor.isNativePlatform()) {
+    console.log(`[crossFetch] Native platform detected, using Capacitor HTTP for: ${url}`);
+    const { Http } = await import('@capacitor-community/http');
+    
+    // Map fetch options to Capacitor Http options
+    const capOptions = {
+      url,
+      method: options.method || 'GET',
+      headers: options.headers || {},
+      data: options.body ? JSON.parse(options.body) : undefined,
+    };
+    
+    const response = await Http.request(capOptions);
+    
+    // Mock a fetch-like response object
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      statusText: String(response.status),
+      json: async () => response.data,
+      text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+    };
+  }
+  
+  return fetch(url, options);
+}
+
 const OPENAI_COMPATIBLE = {
   'openai':     'https://api.openai.com/v1',
   'nebius':     'https://api.tokenfactory.nebius.com/v1',
