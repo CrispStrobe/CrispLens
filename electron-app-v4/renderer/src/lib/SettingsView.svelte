@@ -56,20 +56,44 @@
   const LANGUAGES  = [{ code: 'en', label: 'English' }, { code: 'de', label: 'Deutsch' }];
 
   // ── Remote processing backend ─────────────────────────────────────────────
-  let procBackend    = 'local';         // 'local' | 'remote_v2'
+  let procBackend    = 'local';         // 'local' | 'remote_v2' | 'remote_v4'
   let remoteV2Url    = '';
   let remoteV2User   = '';
   let remoteV2Pass   = '';
   let remoteV2Mode   = 'upload_bytes';  // 'upload_bytes' | 'local_infer'
   let remoteV2TestMsg = '';
   let remoteV2Testing = false;
-  const DET_MODELS = [
-    { value: 'auto',       label: 'det_model_auto' },
-    { value: 'retinaface', label: 'det_model_retinaface' },
-    { value: 'scrfd',      label: 'det_model_scrfd' },
-    { value: 'yunet',      label: 'det_model_yunet' },
-    { value: 'mediapipe',  label: 'det_model_mediapipe' },
+
+  // Detection model options vary by backend
+  const ALL_DET_MODELS = [
+    { value: 'auto',       label: 'det_model_auto',       backends: ['local', 'remote_v2', 'remote_v4', 'standalone'] },
+    { value: 'retinaface', label: 'det_model_retinaface',  backends: ['remote_v2'] },
+    { value: 'scrfd',      label: 'det_model_scrfd',       backends: ['remote_v2'] },
+    { value: 'yunet',      label: 'det_model_yunet',       backends: ['local', 'remote_v2', 'remote_v4', 'standalone'] },
+    { value: 'mediapipe',  label: 'det_model_mediapipe',   backends: ['remote_v2', 'standalone'] },
+    { value: 'none',       label: 'det_model_none',        backends: ['local', 'remote_v2', 'remote_v4', 'standalone'] },
   ];
+  $: _effectiveBackend = dbMode === 'local' ? 'standalone' : procBackend;
+  $: DET_MODELS = ALL_DET_MODELS.filter(m => m.backends.includes(_effectiveBackend));
+  $: if (DET_MODELS.length && !DET_MODELS.find(m => m.value === detModel)) detModel = 'auto';
+
+  // ── Browser ONNX provider prefs (localStorage, standalone/browser only) ────
+  const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
+  let ortUseSIMD   = _ls?.getItem('pref_ort_use_simd')   === 'true';
+  let ortUseWebGL  = _ls?.getItem('pref_ort_use_webgl')  !== 'false'; // default true
+  let ortUseWebGPU = _ls?.getItem('pref_ort_use_webgpu') === 'true';
+
+  function saveOrtPrefs() {
+    if (!_ls) return;
+    _ls.setItem('pref_ort_use_simd',   String(ortUseSIMD));
+    _ls.setItem('pref_ort_use_webgl',  String(ortUseWebGL));
+    _ls.setItem('pref_ort_use_webgpu', String(ortUseWebGPU));
+  }
+
+  // ── Server ONNX provider prefs (from server settings) ─────────────────────
+  let ortUseCoreML   = false;
+  let ortUseCUDA     = false;
+  let ortUseDirectML = false;
 
   // ── Auto-load server settings when backend becomes ready ──────────────────
   $: if ($backendReady && !cfg) {
@@ -95,10 +119,13 @@
         vlmModel    = c?.vlm?.model ?? '';
         detModel    = c?.face_recognition?.insightface?.det_model ?? 'auto';
         // Remote backend settings
-        procBackend  = c?.processing?.backend         ?? 'local';
-        remoteV2Url  = c?.processing?.remote_v2?.url  ?? '';
-        remoteV2User = c?.processing?.remote_v2?.user ?? '';
-        remoteV2Mode = c?.processing?.remote_v2?.mode ?? 'upload_bytes';
+        procBackend    = c?.processing?.backend         ?? 'local';
+        remoteV2Url    = c?.processing?.remote_v2?.url  ?? '';
+        remoteV2User   = c?.processing?.remote_v2?.user ?? '';
+        remoteV2Mode   = c?.processing?.remote_v2?.mode ?? 'upload_bytes';
+        ortUseCoreML   = c?.inference?.ort_use_coreml   ?? false;
+        ortUseCUDA     = c?.inference?.ort_use_cuda     ?? false;
+        ortUseDirectML = c?.inference?.ort_use_directml ?? false;
         processingBackend.set(procBackend);
       }
     }).catch(e => console.error('[SettingsView] fetchSettings failed:', e));
@@ -548,10 +575,13 @@
           vlmModel    = cfg?.vlm?.model ?? '';
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
           console.log(`[SettingsView] onMount: VLM initialized: enabled=${vlmEnabled}, provider=${vlmProvider}, model=${vlmModel}`);
-          procBackend  = cfg?.processing?.backend         ?? 'local';
-          remoteV2Url  = cfg?.processing?.remote_v2?.url  ?? '';
-          remoteV2User = cfg?.processing?.remote_v2?.user ?? '';
-          remoteV2Mode = cfg?.processing?.remote_v2?.mode ?? 'upload_bytes';
+          procBackend    = cfg?.processing?.backend         ?? 'local';
+          remoteV2Url    = cfg?.processing?.remote_v2?.url  ?? '';
+          remoteV2User   = cfg?.processing?.remote_v2?.user ?? '';
+          remoteV2Mode   = cfg?.processing?.remote_v2?.mode ?? 'upload_bytes';
+          ortUseCoreML   = cfg?.inference?.ort_use_coreml   ?? false;
+          ortUseCUDA     = cfg?.inference?.ort_use_cuda     ?? false;
+          ortUseDirectML = cfg?.inference?.ort_use_directml ?? false;
           processingBackend.set(procBackend);
         }
       } catch (e) { 
@@ -642,6 +672,9 @@
             remote_v2_user:     remoteV2User.trim(),
             remote_v2_mode:     remoteV2Mode,
             ...(remoteV2Pass ? { remote_v2_pass: remoteV2Pass } : {}),
+            ort_use_coreml:     ortUseCoreML,
+            ort_use_cuda:       ortUseCUDA,
+            ort_use_directml:   ortUseDirectML,
           });
           processingBackend.set(procBackend);
         } else {
@@ -1530,9 +1563,10 @@
       <select bind:value={procBackend}>
         <option value="local">{$t('backend_local')}</option>
         <option value="remote_v2">{$t('backend_remote_v2')}</option>
+        <option value="remote_v4">{$t('backend_remote_v4')}</option>
       </select>
     </div>
-    {#if procBackend === 'remote_v2'}
+    {#if procBackend === 'remote_v2' || procBackend === 'remote_v4'}
     <div class="form-grid" style="margin-top:10px;">
       <label>{$t('remote_v2_url')}</label>
       <input type="text" bind:value={remoteV2Url} placeholder="https://img.example.com" />
@@ -1555,6 +1589,55 @@
       {/if}
     </div>
     {/if}
+
+    <!-- Server ONNX providers (GPU acceleration for Node.js engine) -->
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #2a2a42;">
+      <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:4px;">{$t('ort_server_section')}</div>
+      <p class="hint" style="margin-bottom:10px;">{$t('ort_server_hint')}</p>
+      <div class="form-grid">
+        <label title={$t('ort_use_coreml_hint')}>{$t('ort_use_coreml')}</label>
+        <div class="field-row">
+          <input type="checkbox" bind:checked={ortUseCoreML} />
+          <span class="hint">{$t('ort_use_coreml_hint')}</span>
+        </div>
+        <label title={$t('ort_use_cuda_hint')}>{$t('ort_use_cuda')}</label>
+        <div class="field-row">
+          <input type="checkbox" bind:checked={ortUseCUDA} />
+          <span class="hint">{$t('ort_use_cuda_hint')}</span>
+        </div>
+        <label title={$t('ort_use_directml_hint')}>{$t('ort_use_directml')}</label>
+        <div class="field-row">
+          <input type="checkbox" bind:checked={ortUseDirectML} />
+          <span class="hint">{$t('ort_use_directml_hint')}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+  {/if}
+
+  <!-- Browser ONNX backend settings (browser/PWA only) -->
+  {#if !isElectron}
+  <section class="card">
+    <h3>{$t('ort_browser_section')}</h3>
+    <p class="hint" style="margin-bottom:10px;">{$t('ort_browser_hint')}</p>
+    <div class="form-grid">
+      <label title={$t('ort_use_webgl_hint')}>{$t('ort_use_webgl')}</label>
+      <div class="field-row">
+        <input type="checkbox" bind:checked={ortUseWebGL} on:change={saveOrtPrefs} />
+        <span class="hint">{$t('ort_use_webgl_hint')}</span>
+      </div>
+      <label title={$t('ort_use_simd_hint')}>{$t('ort_use_simd')} ⚠</label>
+      <div class="field-row">
+        <input type="checkbox" bind:checked={ortUseSIMD} on:change={saveOrtPrefs} />
+        <span class="hint" style="color:#c09030;">{$t('ort_use_simd_hint')}</span>
+      </div>
+      <label title={$t('ort_use_webgpu_hint')}>{$t('ort_use_webgpu')} ⚠</label>
+      <div class="field-row">
+        <input type="checkbox" bind:checked={ortUseWebGPU} on:change={saveOrtPrefs} />
+        <span class="hint" style="color:#c09030;">{$t('ort_use_webgpu_hint')}</span>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:8px;">Reload the page after changing these settings.</p>
   </section>
   {/if}
 
@@ -1890,7 +1973,7 @@
         {/each}
       </select>
 
-      {#if isAdmin}
+      {#if isAdmin && procBackend === 'remote_v2'}
       <label for="setting-backend">{$t('backend')}</label>
       <select id="setting-backend" bind:value={backend}>
         {#each BACKENDS as b}
@@ -1906,7 +1989,9 @@
           {/each}
         </select>
       {/if}
+      {/if}
 
+      {#if isAdmin}
       <label for="setting-det-thresh">{$t('detection_threshold')}</label>
       <div class="slider-row">
         <input id="setting-det-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={detThreshold} />

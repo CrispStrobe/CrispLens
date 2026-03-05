@@ -23,11 +23,15 @@ const DEFAULTS = {
   copy_exempt_paths:     [],
   fix_db_path:           '',
   // Remote processing backend (only used when browser API = local v4)
-  processing_backend:  'local',          // 'local' | 'remote_v2'
+  processing_backend:  'local',          // 'local' | 'remote_v2' | 'remote_v4'
   remote_v2_url:       '',               // e.g. 'https://img.akademie-rs.de'
   remote_v2_user:      '',
   remote_v2_pass:      '',
   remote_v2_mode:      'upload_bytes',   // 'upload_bytes' | 'local_infer'
+  // Server-side ONNX execution providers (Node.js face engine)
+  ort_use_coreml:      false,
+  ort_use_cuda:        false,
+  ort_use_directml:    false,
 };
 
 // ── Load flat settings from DB (merged with DEFAULTS) ─────────────────────────
@@ -86,6 +90,11 @@ function flatToNested(f) {
         mode: f.remote_v2_mode,
         // Password intentionally omitted from GET response
       },
+    },
+    inference: {
+      ort_use_coreml:   f.ort_use_coreml,
+      ort_use_cuda:     f.ort_use_cuda,
+      ort_use_directml: f.ort_use_directml,
     },
   };
 }

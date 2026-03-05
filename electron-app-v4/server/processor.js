@@ -106,21 +106,22 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
   try {
     const { loadFlat } = require('./routes/settings');
     const flat = loadFlat();
-    if ((flat.processing_backend || 'local') === 'remote_v2') {
+    const backend = flat.processing_backend || 'local';
+    if (backend === 'remote_v2' || backend === 'remote_v4') {
       const client = getRemoteClient(flat);
       const mode   = flat.remote_v2_mode || 'upload_bytes';
       if (mode === 'local_infer') {
         // Run ONNX detection+embedding here; send only 512D vectors to remote DB
         const engine   = await getEngine();
         const faceData = await engine.extractFaceData(imagePath, detOpts);
-        console.log(`[processor/local_infer] ${path.basename(imagePath)}: ${faceData.faces.length} face(s) → POST import-processed`);
+        console.log(`[processor/${backend}/local_infer] ${path.basename(imagePath)}: ${faceData.faces.length} face(s) → POST import-processed`);
         return await client.importProcessed(faceData);
       }
       // upload_bytes: send full image to remote server for inference
       return await client.processFilepath(imagePath, opts);
     }
   } catch (err) {
-    if (err.message && err.message.includes('remote_v2')) throw err; // propagate config errors
+    if (err.message && err.message.includes('remote_v')) throw err; // propagate config errors
     // If settings module not loaded yet, fall through to local
     console.warn('[processor] Remote backend check failed, using local:', err.message);
   }

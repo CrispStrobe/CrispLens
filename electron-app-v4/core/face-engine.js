@@ -28,6 +28,24 @@ const { ensureYuNet }    = require('./model-downloader');
 
 sharp.cache(false);
 
+// ── Build ONNX execution providers from server settings ──────────────────────
+// Reads ort_use_coreml / ort_use_cuda / ort_use_directml from settings DB.
+// Always falls back to 'cpu' as the last provider.
+function _buildExecProviders() {
+  try {
+    const { loadFlat } = require('../server/routes/settings');
+    const flat = loadFlat();
+    const providers = [];
+    if (flat.ort_use_cuda)     providers.push('cuda');
+    if (flat.ort_use_coreml)   providers.push('coreml');
+    if (flat.ort_use_directml) providers.push('directml');
+    providers.push('cpu');
+    return providers;
+  } catch {
+    return ['cpu'];
+  }
+}
+
 // ── Model locations ──────────────────────────────────────────────────────────
 
 // buffalo_l ships with InsightFace Python — reuse if already downloaded.
@@ -226,13 +244,14 @@ class FaceEngine {
       );
     }
 
+    const execProviders = _buildExecProviders();
     const opts = {
-      executionProviders: ['cpu'],
+      executionProviders: execProviders,
       intraOpNumThreads:  4,
       interOpNumThreads:  1,
     };
 
-    console.log(`[FaceEngine] Loading models from: ${this.modelDir}`);
+    console.log(`[FaceEngine] Loading models from: ${this.modelDir} | providers: ${execProviders.join(',')}`);
     this.detModel = await ort.InferenceSession.create(
       path.join(this.modelDir, 'det_10g.onnx'), opts
     );
@@ -258,7 +277,7 @@ class FaceEngine {
     const yunetPath = require('path').join(this.modelDir, 'face_detection_yunet_2023mar.onnx');
     if (!fs.existsSync(yunetPath)) await ensureYuNet(this.modelDir);
     this.yunetModel = await ort.InferenceSession.create(yunetPath, {
-      executionProviders: ['cpu'],
+      executionProviders: _buildExecProviders(),
       intraOpNumThreads:  2,
       interOpNumThreads:  1,
     });

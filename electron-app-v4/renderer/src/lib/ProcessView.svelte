@@ -330,7 +330,9 @@
     { value: 'mediapipe',  label: 'det_model_mediapipe'  },
     { value: 'none',       label: 'det_model_none'       },
   ];
-  $: DET_MODELS = $processingBackend === 'remote_v2' ? REMOTE_DET_MODELS : LOCAL_DET_MODELS;
+  $: DET_MODELS = $processingBackend === 'remote_v2' ? REMOTE_DET_MODELS
+               : $processingBackend === 'remote_v4' ? LOCAL_DET_MODELS  // v4 remote = same as local (no retinaface/mediapipe)
+               : LOCAL_DET_MODELS;
 
   // ── Standalone VLM Status ──
   let vlmStatusMsg = '';
@@ -1074,7 +1076,7 @@
         ⚙ {$t('pv_det_settings')} {showDetParams ? '▲' : '▼'}
       </button>
       <span class="backend-chip">
-        {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+        {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : $processingBackend === 'remote_v4' ? '🌐 ' + $t('pipeline_remote_v4') : '🖥 ' + $t('pipeline_local')}
       </span>
     </div>
     {#if showDetParams}

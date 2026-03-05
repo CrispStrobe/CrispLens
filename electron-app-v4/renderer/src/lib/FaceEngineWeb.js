@@ -30,10 +30,31 @@ ort.env.wasm.wasmPaths = wasmBase;
 
 // Disable proxy (workers) to avoid MIME type 'text/html' errors in some browsers/PWA setups
 ort.env.wasm.numThreads = 1;
-ort.env.wasm.proxy = false; 
+ort.env.wasm.proxy = false;
 
-// Disable SIMD to reduce memory usage and avoid "Out of memory" errors in WASM
-ort.env.wasm.simd = false;
+// ── User-configurable ORT backend prefs (from localStorage) ──────────────────
+// These are read once at module load time. SIMD must be set before any WASM
+// session is compiled; executionProviders are applied per InferenceSession.
+const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
+const _ortPrefs = {
+  simd:   _ls?.getItem('pref_ort_use_simd')   === 'true',
+  webgl:  _ls?.getItem('pref_ort_use_webgl')  !== 'false', // default true
+  webgpu: _ls?.getItem('pref_ort_use_webgpu') === 'true',
+};
+console.log(`[FaceEngineWeb] ORT prefs: simd=${_ortPrefs.simd} webgl=${_ortPrefs.webgl} webgpu=${_ortPrefs.webgpu}`);
+ort.env.wasm.simd = _ortPrefs.simd;
+
+/** Build execution provider list for a new InferenceSession. */
+function _getOrtProviders() {
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const providers = [];
+  // WebGPU: desktop browsers only; experimental
+  if (_ortPrefs.webgpu && !isAndroid) providers.push('webgpu');
+  // WebGL: stable on desktop, avoid on Android (driver crashes with large models)
+  if (_ortPrefs.webgl && !isAndroid) providers.push('webgl');
+  providers.push('wasm'); // always keep WASM as final fallback
+  return providers;
+}
 
 // Trace onnxruntime-web backend selection
 const _originalCreate = ort.InferenceSession.create;
@@ -345,12 +366,9 @@ export class FaceEngineWeb {
     this._progress('Loading SCRFD detector…');
     const buf = await this._fetchModelCached('det_10g.onnx');
     
-    // Memory-saving options for mobile
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    const providers = isAndroid ? ['wasm'] : ['wasm', 'webgl']; // WebGL can crash on large models on some Androids
-    
-    console.log(`[FaceEngineWeb] Initializing Detector | isAndroid=${isAndroid} | providers=${providers}`);
-    
+    const providers = _getOrtProviders();
+    console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
+
     this._detSession = await ort.InferenceSession.create(buf, {
       executionProviders: providers,
       graphOptimizationLevel: 'all',
@@ -365,10 +383,8 @@ export class FaceEngineWeb {
     this._progress('Loading ArcFace recognizer…');
     const buf = await this._fetchModelCached('w600k_r50.onnx');
     
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    const providers = isAndroid ? ['wasm'] : ['wasm', 'webgl'];
-
-    console.log(`[FaceEngineWeb] Initializing Recognizer | isAndroid=${isAndroid} | providers=${providers}`);
+    const providers = _getOrtProviders();
+    console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
 
     this._recSession = await ort.InferenceSession.create(buf, {
       executionProviders: providers,

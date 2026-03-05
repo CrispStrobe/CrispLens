@@ -571,7 +571,7 @@
 
         <div class="params-box visible">
           <div class="backend-badge" title={$t('processing_backend_section')}>
-            {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+            {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : $processingBackend === 'remote_v4' ? '🌐 ' + $t('pipeline_remote_v4') : '🖥 ' + $t('pipeline_local')}
           </div>
           <div class="param-row">
             <label for="id-det-thresh-e">{$t('detection_threshold')}: {detThresh}</label>
@@ -712,7 +712,7 @@
         {#if showParams}
           <div class="params-box">
             <div class="backend-badge" title={$t('processing_backend_section')}>
-              {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : '🖥 ' + $t('pipeline_local')}
+              {$processingBackend === 'remote_v2' ? '🌐 ' + $t('pipeline_remote_v2') : $processingBackend === 'remote_v4' ? '🌐 ' + $t('pipeline_remote_v4') : '🖥 ' + $t('pipeline_local')}
             </div>
             <div class="param-row">
               <label for="id-det-thresh">{$t('detection_threshold')}: {detThresh}</label>
