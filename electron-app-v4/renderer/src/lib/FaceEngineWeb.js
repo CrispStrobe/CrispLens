@@ -315,6 +315,20 @@ export class FaceEngineWeb {
     return results;
   }
 
+  /** Manually release all AI models from memory. */
+  async releaseModels() {
+    console.log('[FaceEngineWeb] Releasing all models from memory...');
+    try {
+      if (this._detSession) { await this._detSession.release(); this._detSession = null; }
+      if (this._recSession) { await this._recSession.release(); this._recSession = null; }
+      if (this._mpLandmarker) { await this._mpLandmarker.close(); this._mpLandmarker = null; }
+      if (this._mpDetector) { this._mpDetector = null; }
+      console.log('[FaceEngineWeb] Release complete.');
+    } catch (err) {
+      console.warn('[FaceEngineWeb] Error during model release:', err);
+    }
+  }
+
   /** Check which models are cached without fetching. */
   async getModelCacheStatus() {
     if (!('caches' in globalThis)) return { det_10g: false, w600k_r50: false };
@@ -330,8 +344,18 @@ export class FaceEngineWeb {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     const buf = await this._fetchModelCached('det_10g.onnx');
+    
+    // Memory-saving options for mobile
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const providers = isAndroid ? ['wasm'] : ['wasm', 'webgl']; // WebGL can crash on large models on some Androids
+    
+    console.log(`[FaceEngineWeb] Initializing Detector | isAndroid=${isAndroid} | providers=${providers}`);
+    
     this._detSession = await ort.InferenceSession.create(buf, {
-      executionProviders: ['wasm', 'webgl'],
+      executionProviders: providers,
+      graphOptimizationLevel: 'all',
+      enableCpuMemArena: true,
+      enableMemPattern: true,
     });
     this._progress('Detector ready');
   }
@@ -340,8 +364,17 @@ export class FaceEngineWeb {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     const buf = await this._fetchModelCached('w600k_r50.onnx');
+    
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const providers = isAndroid ? ['wasm'] : ['wasm', 'webgl'];
+
+    console.log(`[FaceEngineWeb] Initializing Recognizer | isAndroid=${isAndroid} | providers=${providers}`);
+
     this._recSession = await ort.InferenceSession.create(buf, {
-      executionProviders: ['wasm', 'webgl'],
+      executionProviders: providers,
+      graphOptimizationLevel: 'all',
+      enableCpuMemArena: true,
+      enableMemPattern: true,
     });
     this._progress('Recognizer ready');
   }
@@ -367,22 +400,43 @@ export class FaceEngineWeb {
 
   /**
    * Letterbox img to SCRFD_SIZE × SCRFD_SIZE (top-left, black padding).
-   * Matches sharp's `fit:'contain', position:'northwest'` behaviour.
    * Returns { canvas, invScale } where invScale converts 640-space → original pixels.
    */
   _letterbox(img) {
     const W = img.naturalWidth  || img.width;
     const H = img.naturalHeight || img.height;
-    const scale    = Math.min(SCRFD_SIZE / W, SCRFD_SIZE / H);
-    const newW     = Math.round(W * scale);
-    const newH     = Math.round(H * scale);
+    
+    // Safety check for mobile: if original is HUGE, we pre-scale it once here to save memory
+    // during the .getImageData() and tensor conversion steps.
+    const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+    const MAX_PRE_SCALE = isMobile ? 1600 : 4000;
+    
+    let source = img;
+    let currentW = W;
+    let currentH = H;
+    
+    if (Math.max(W, H) > MAX_PRE_SCALE) {
+      const scale = MAX_PRE_SCALE / Math.max(W, H);
+      currentW = Math.round(W * scale);
+      currentH = Math.round(H * scale);
+      console.log(`[FaceEngineWeb] Pre-scaling HUGE image for safety: ${W}x${H} -> ${currentW}x${currentH}`);
+      const preCanvas = new OffscreenCanvas(currentW, currentH);
+      preCanvas.getContext('2d').drawImage(img, 0, 0, currentW, currentH);
+      source = preCanvas;
+    }
+
+    const scale    = Math.min(SCRFD_SIZE / currentW, SCRFD_SIZE / currentH);
+    const newW     = Math.round(currentW * scale);
+    const newH     = Math.round(currentH * scale);
+    
+    // invScale must still map back to the ORIGINAL dimensions
     const invScale = Math.max(W, H) / SCRFD_SIZE;
 
     const canvas = new OffscreenCanvas(SCRFD_SIZE, SCRFD_SIZE);
     const ctx    = canvas.getContext('2d');
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, SCRFD_SIZE, SCRFD_SIZE);
-    ctx.drawImage(img, 0, 0, newW, newH);
+    ctx.drawImage(source, 0, 0, newW, newH);
 
     return { canvas, invScale };
   }

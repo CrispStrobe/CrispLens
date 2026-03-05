@@ -83,6 +83,12 @@
     queue = queue.filter(q => q.id !== id);
   }
 
+  function retryItem(id) {
+    if (running) return;
+    queue = queue.map(q => q.id === id ? { ...q, status: 'pending', error: '' } : q);
+    finished = false;
+  }
+
   function clearDone() {
     queue = queue.filter(q => q.status === 'pending' || q.status === 'processing');
   }
@@ -483,6 +489,9 @@
         queue = queue.map(q => q.id === item.id
           ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? faceData.faces.length }
           : q);
+        
+        // Short pause to allow GC and UI thread breathing room (especially for Android)
+        await new Promise(r => setTimeout(r, 300));
       } catch (e) {
         console.error(`[ProcessView] Processing failed for ${item.name}:`, e);
         if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
@@ -503,6 +512,16 @@
     webInferMsg = '';
     running = false; finished = true;
     console.log('[ProcessView] startWebLocalInfer() finished');
+    
+    // Release models after a short delay if no more items are added
+    // This is CRITICAL for Android to avoid being killed by the OS for high RAM usage.
+    setTimeout(async () => {
+      if (!running && finished) {
+        const engine = await _getWebEngine();
+        await engine.releaseModels();
+      }
+    }, 5000);
+
     refreshGlobalData();
   }
 
@@ -1129,7 +1148,12 @@
               {:else if item.status === 'done' && item.sceneType}
                 <span class="desc muted">{item.sceneType}</span>
               {:else if item.status === 'error'}
-                <span class="desc err">{item.error}</span>
+                <div class="err-box">
+                  <span class="desc err" title={item.error}>{item.error}</span>
+                  {#if !running}
+                    <button class="retry-btn" on:click={() => retryItem(item.id)}>🔄 {$t('bj_retry')}</button>
+                  {/if}
+                </div>
               {:else if item.status === 'queued'}
                 <span class="desc muted">{item.msg}</span>
               {:else if item.status === 'pending' || item.status === 'processing'}
@@ -1416,7 +1440,25 @@
     max-width: 100%;
   }
   .desc.muted { color: #404055; }
-  .desc.err   { color: #e07070; white-space: normal; word-break: break-word; overflow: visible; }
+  .desc.err   { color: #e07070; white-space: normal; word-break: break-word; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+  .err-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .retry-btn {
+    padding: 2px 6px;
+    font-size: 9px;
+    background: #2a3a5a;
+    border: 1px solid #3a5080;
+    color: #a0c4ff;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .retry-btn:hover { background: #3a5080; }
 
   /* Remove button */
   .remove-btn {
