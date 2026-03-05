@@ -11,8 +11,50 @@
 import syncManager from './lib/SyncManager.js';
 import { localAdapter, fileCache, thumbCache, toWebUrl } from './lib/LocalAdapter.js';
 import { localThumb } from './lib/LocalThumbnailCache.js';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 export { localThumb };
+
+// ── Native-safe Fetch ────────────────────────────────────────────────────────
+// On iOS/Android, standard fetch() often fails due to CORS (capacitor://localhost).
+// Capacitor's built-in native HTTP bypasses this.
+
+async function robustFetch(url, options = {}) {
+  if (Capacitor.isNativePlatform()) {
+    console.log(`[api] Native platform: using CapacitorHttp for ${url}`);
+    try {
+      // Map standard fetch to CapacitorHttp
+      const capOpts = {
+        url,
+        method: options.method || 'GET',
+        headers: {
+          ...options.headers,
+          // Support for cookies/credentials if needed
+          ...(options.credentials === 'include' ? { 'X-Capacitor-HTTP-Cookies': 'true' } : {})
+        },
+        data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
+      };
+
+      const res = await CapacitorHttp.request(capOpts);
+      
+      // Map back to fetch-like Response
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        statusText: String(res.status),
+        json: async () => res.data,
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+        headers: {
+          get: (name) => res.headers[name] || res.headers[name.toLowerCase()]
+        }
+      };
+    } catch (err) {
+      console.error('[api] CapacitorHttp error:', err);
+      throw err;
+    }
+  }
+  return fetch(url, options);
+}
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
@@ -73,7 +115,7 @@ async function _fetch(method, path, body) {
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
   try {
-    const res = await fetch(fullUrl, opts);
+    const res = await robustFetch(fullUrl, opts);
     console.log(`[api] response: ${method} ${path} → ${res.status} ${res.statusText}`);
     
     if (!res.ok) {
@@ -88,8 +130,10 @@ async function _fetch(method, path, body) {
     }
     return res.text();
   } catch (err) {
-    console.error(`[api] ${method} ${path} error:`, err);
-    throw err;
+    // Stringify error for better logs on Capacitor
+    const errMsg = err.message || JSON.stringify(err);
+    console.error(`[api] ${method} ${path} error:`, errMsg);
+    throw new Error(errMsg);
   }
 }
 
@@ -316,16 +360,23 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (newTagNames.length)              form.append('new_tag_names', JSON.stringify(newTagNames));
   if (albumId != null)                 form.append('album_id',      String(albumId));
   if (newAlbumName)                    form.append('new_album_name', newAlbumName);
-  const res = await fetch(`${BASE}/ingest/upload-local`, {
-    method: 'POST',
-    credentials: 'include',
-    body: form,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`upload-local → ${res.status}: ${text}`);
+  
+  try {
+    const res = await robustFetch(`${BASE}/ingest/upload-local`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`upload-local → ${res.status}: ${text}`);
+    }
+    return res.json();
+  } catch (err) {
+    const errMsg = err.message || JSON.stringify(err);
+    console.error('[api] upload-local error:', errMsg);
+    throw new Error(errMsg);
   }
-  return res.json();
 }
 
 export function streamBatchFiles(paths, onEvent) {

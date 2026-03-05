@@ -5,32 +5,36 @@
  * to generate image descriptions and tags by calling provider APIs directly.
  */
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 // Helper for native-safe fetch
 async function crossFetch(url, options = {}) {
   if (Capacitor.isNativePlatform()) {
-    console.log(`[crossFetch] Native platform detected, using Capacitor HTTP for: ${url}`);
-    const { Http } = await import('@capacitor-community/http');
+    console.log(`[crossFetch] Native platform detected, using CapacitorHttp for: ${url}`);
     
-    // Map fetch options to Capacitor Http options
+    // Map fetch options to CapacitorHttp options
     const capOptions = {
       url,
       method: options.method || 'GET',
       headers: options.headers || {},
-      data: options.body ? JSON.parse(options.body) : undefined,
+      data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
     };
     
-    const response = await Http.request(capOptions);
-    
-    // Mock a fetch-like response object
-    return {
-      ok: response.status >= 200 && response.status < 300,
-      status: response.status,
-      statusText: String(response.status),
-      json: async () => response.data,
-      text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
-    };
+    try {
+      const response = await CapacitorHttp.request(capOptions);
+      
+      // Mock a fetch-like response object
+      return {
+        ok: response.status >= 200 && response.status < 300,
+        status: response.status,
+        statusText: String(response.status),
+        json: async () => response.data,
+        text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+      };
+    } catch (err) {
+      console.error('[crossFetch] Native HTTP error:', err);
+      throw err;
+    }
   }
   
   return fetch(url, options);
@@ -79,7 +83,7 @@ export class VlmClientWeb {
 
     try {
       if (provider === 'google') {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        const res = await crossFetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
         const data = await res.json();
         return (data.models || [])
           .filter(m => m.supportedGenerationMethods.includes('generateContent') && m.name.includes('vision'))
@@ -94,7 +98,7 @@ export class VlmClientWeb {
 
       if (key) headers['Authorization'] = `Bearer ${key}`;
       
-      const res = await fetch(url, { headers });
+      const res = await crossFetch(url, { headers });
       const data = await res.json();
       const allModels = data.data || data.models || [];
       
@@ -117,7 +121,7 @@ export class VlmClientWeb {
     
     try {
       if (provider === 'google') {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        const res = await crossFetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error.message || 'Invalid Key');
         return { ok: true, message: 'Google API key is valid' };
@@ -125,7 +129,7 @@ export class VlmClientWeb {
 
       if (provider === 'anthropic') {
         // Minimal messages call with 1 token limit
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
+        const res = await crossFetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
             'x-api-key': key,
@@ -151,7 +155,7 @@ export class VlmClientWeb {
       const baseUrl = OPENAI_COMPATIBLE[provider];
       if (baseUrl) {
         // Test by fetching models list — usually requires valid auth
-        const res = await fetch(`${baseUrl}/models`, {
+        const res = await crossFetch(`${baseUrl}/models`, {
           headers: { 'Authorization': `Bearer ${key}` }
         });
         const data = await res.json();
@@ -222,7 +226,7 @@ export class VlmClientWeb {
 
   async _callAnthropic(key, model, base64, prompt) {
     console.log(`[VlmWeb] Calling Anthropic API | model=${model} | prompt="${prompt.slice(0, 30)}..."`);
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await crossFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'x-api-key': key,
@@ -275,7 +279,7 @@ export class VlmClientWeb {
       body.response_format = { type: "json_object" };
     }
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await crossFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${key}`,
@@ -305,7 +309,7 @@ export class VlmClientWeb {
   async _callGemini(key, model, base64, prompt) {
     console.log(`[VlmWeb] Calling Gemini API | model=${model}`);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-    const res = await fetch(url, {
+    const res = await crossFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
