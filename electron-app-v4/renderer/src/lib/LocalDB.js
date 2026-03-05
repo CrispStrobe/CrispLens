@@ -334,8 +334,6 @@ export async function getDB() {
       }
 
       console.log('[LocalDB] Step 9: Database is ready for queries');
-
-      console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 
       return _db;
     } catch (err) {

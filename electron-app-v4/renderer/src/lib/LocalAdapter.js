@@ -784,13 +784,21 @@ export const localAdapter = {
     // Faces + embeddings
     let faceCount = 0;
     for (const face of faces) {
-      const bbox = face.bbox ?? [0, 0, 1, 1];
+      // FaceEngineWeb.js processFile returns { bbox_left, bbox_top, bbox_right, bbox_bottom, ... }
+      const x1 = face.bbox_left ?? 0;
+      const y1 = face.bbox_top ?? 0;
+      const x2 = face.bbox_right ?? 1;
+      const y2 = face.bbox_bottom ?? 1;
+
       const faceRes = await run(
         `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence)
          VALUES(?,?,?,?,?,?)`,
-        [imageId, bbox[0], bbox[1], bbox[2], bbox[3], face.score ?? null],
+        [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null],
       );
-      const faceId = faceRes.changes?.lastId;
+      
+      // better-sqlite3 (Electron) uses .lastInsertRowid, Capacitor uses .changes.lastId
+      const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;
+      
       if (faceId && face.embedding) {
         const f32 = face.embedding instanceof Float32Array
           ? face.embedding
