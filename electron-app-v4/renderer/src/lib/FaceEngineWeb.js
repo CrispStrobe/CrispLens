@@ -449,33 +449,63 @@ export class FaceEngineWeb {
   // ── SCRFD detection ─────────────────────────────────────────────────────────
 
   async detectFaces(img, opts = {}) {
-    await this._initDetector();
     const detThresh  = opts.det_thresh    ?? 0.5;
     const minFaceSize = opts.min_face_size ?? 0;
+    const detModel    = opts.det_model    || 'auto';
 
     const W = img.naturalWidth  || img.width;
     const H = img.naturalHeight || img.height;
+    console.log(`[FaceEngineWeb] detectFaces START | model=${detModel} | thresh=${detThresh} | minSize=${minFaceSize}`);
+    console.log(`[FaceEngineWeb] Input Image: ${W}x${H} | src=${img.src.slice(0, 100)}...`);
+
+    if (W < 50 || H < 50) {
+      console.warn(`[FaceEngineWeb] WARNING: Image dimensions are very small (${W}x${H}). Detection might fail.`);
+    }
 
     const { canvas, invScale } = this._letterbox(img);
+    console.log(`[FaceEngineWeb] Letterbox complete. invScale=${invScale.toFixed(4)} (640 -> original)`);
+    
     const inputTensor = this._canvasToSCRFDTensor(canvas);
+    console.log(`[FaceEngineWeb] Input Tensor created. Shape:`, inputTensor.dims);
 
+    console.log('[FaceEngineWeb] Running SCRFD ONNX session...');
+    const start = performance.now();
     const results = await this._detSession.run({
       [this._detSession.inputNames[0]]: inputTensor,
     });
+    const duration = performance.now() - start;
+    console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
 
-    console.log('[FaceEngineWeb] Raw SCRFD model run complete');
-    let faces = decodeSCRFD(results, this._detSession.outputNames, invScale, detThresh);
-    console.log(`[FaceEngineWeb] Detections before NMS: ${faces.length} (thresh=${detThresh})`);
+    const outputNames = this._detSession.outputNames;
+    console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
     
+    // Log some raw scores if possible to see if the model is producing anything
+    const topScoreName = outputNames[0]; // usually score_8
+    const topScores = results[topScoreName].data;
+    let maxScore = 0;
+    for (let i = 0; i < topScores.length; i++) if (topScores[i] > maxScore) maxScore = topScores[i];
+    console.log(`[FaceEngineWeb] Max raw score in ${topScoreName}: ${maxScore.toFixed(4)}`);
+
+    let faces = decodeSCRFD(results, outputNames, invScale, detThresh);
+    console.log(`[FaceEngineWeb] decodeSCRFD found ${faces.length} candidates above threshold ${detThresh}`);
+    
+    if (faces.length > 0) {
+      faces.forEach((f, i) => {
+        const [x1, y1, x2, y2] = f.bbox;
+        console.log(`[FaceEngineWeb]   Candidate ${i+1}: score=${f.score.toFixed(4)} | bbox=[${Math.round(x1)}, ${Math.round(y1)}, ${Math.round(x2)}, ${Math.round(y2)}] | size=${Math.round(x2-x1)}x${Math.round(y2-y1)}`);
+      });
+    }
+
     faces = applyNMS(faces);
-    console.log(`[FaceEngineWeb] Detections after NMS: ${faces.length}`);
+    console.log(`[FaceEngineWeb] After NMS: ${faces.length} faces remain`);
 
     if (minFaceSize > 0) {
+      const beforeFilter = faces.length;
       faces = faces.filter(f => {
         const [x1, y1, x2, y2] = f.bbox;
         return Math.min(x2 - x1, y2 - y1) >= minFaceSize;
       });
-      console.log(`[FaceEngineWeb] Detections after size filter (> ${minFaceSize}px): ${faces.length}`);
+      console.log(`[FaceEngineWeb] After size filter (> ${minFaceSize}px): ${faces.length} remain (removed ${beforeFilter - faces.length})`);
     }
 
     return { faces, imageWidth: W, imageHeight: H };

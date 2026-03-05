@@ -279,9 +279,9 @@
     reDetecting = true;
     // Persist the chosen model as the user's default (best-effort, silent on failure)
     saveUserDetPrefs({ det_model: detModel, det_retries: detRetries }).catch(() => {});
-    console.log(`[FaceIdentifyModal] onReDetect for imageId=${imageId} | model=${detModel} | thresh=${detThresh} | retries=${detRetries}`);
+    console.log(`[FaceIdentifyModal] onReDetect start for imageId=${imageId} | model=${detModel} | thresh=${detThresh} | retries=${detRetries}`);
     try {
-      await reDetectFaces(imageId, {
+      const res = await reDetectFaces(imageId, {
         det_thresh:    detThresh,
         min_face_size: minFaceSize,
         rec_thresh:    recThresh,
@@ -291,16 +291,26 @@
         max_size:      maxSize,
         vlm_max_size:  vlmMaxSize,
       });
+      console.log('[FaceIdentifyModal] reDetectFaces finished:', res);
       anyChanged = true;
-      // Server responds immediately (fire-and-forget); poll until face count changes (max ~30s)
-      const prevCount = faces.length;
-      for (let i = 0; i < 15; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+      
+      if (localMode) {
+        // In local/standalone mode, the call is already awaited and done
+        console.log('[FaceIdentifyModal] LocalMode: loading faces immediately...');
         await loadFaces();
-        if (faces.length !== prevCount) break;
+      } else {
+        // Server responds immediately (fire-and-forget); poll until face count changes (max ~30s)
+        const prevCount = faces.length;
+        console.log(`[FaceIdentifyModal] ServerMode: polling for results (prevCount=${prevCount})...`);
+        for (let i = 0; i < 15; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          await loadFaces();
+          if (faces.length !== prevCount) break;
+        }
       }
       showParams = false;
     } catch (e) {
+      console.error('[FaceIdentifyModal] onReDetect FAILED:', e);
       alert(`${$t('run_detection')} failed: ${e.message}`);
     } finally {
       reDetecting = false;

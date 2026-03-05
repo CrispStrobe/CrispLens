@@ -614,35 +614,63 @@ export const localAdapter = {
   },
 
   async reDetectFaces(imageId, params = {}) {
-    console.log(`[LocalAdapter] reDetectFaces for imageId=${imageId}`, params);
+    console.log(`[LocalAdapter] reDetectFaces start | imageId=${imageId}`, params);
     try {
       // 1. Get the image record
       const rows = await query('SELECT * FROM images WHERE id = ?', [imageId]);
-      if (rows.length === 0) throw new Error('Image not found');
+      if (rows.length === 0) throw new Error(`Image ${imageId} not found in LocalDB`);
       const imgRow = rows[0];
+      console.log(`[LocalAdapter] Image record found: ${imgRow.filename} | filepath=${imgRow.filepath}`);
 
-      // 2. Get the engine
+      // 2. Get the engine and configure it
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
       
-      // 3. Prepare the "file" (Blob from thumbnail_blob or filepath)
-      let fileObj;
-      if (imgRow.thumbnail_blob) {
+      // Ensure engine knows where to find models in this session
+      const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
+      console.log(`[LocalAdapter] Configuring engine modelBaseUrl: ${modelBase}`);
+      faceEngineWeb.setModelBaseUrl(modelBase);
+      
+      // 3. Prepare the "file" (Try full filepath first, then thumbnail_blob)
+      let fileObj = null;
+      let sourceInfo = '';
+
+      // Try fetching the full image from the server (if filepath looks like a URL or we are on the same origin)
+      try {
+        const fullUrl = toWebUrl(imgRow.filepath);
+        console.log(`[LocalAdapter] Attempting to fetch full image from: ${fullUrl}`);
+        const res = await fetch(fullUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: blob.type || 'image/jpeg' });
+          sourceInfo = 'Full File (Remote/Local URL)';
+          console.log(`[LocalAdapter] Successfully loaded full image (${blob.size} bytes)`);
+        } else {
+          console.warn(`[LocalAdapter] Full image fetch failed (status ${res.status})`);
+        }
+      } catch (err) {
+        console.warn(`[LocalAdapter] Full image fetch error: ${err.message}`);
+      }
+
+      // Fallback to thumbnail_blob if full file failed
+      if (!fileObj && imgRow.thumbnail_blob) {
+        console.log(`[LocalAdapter] Falling back to thumbnail_blob...`);
         const b64 = imgRow.thumbnail_blob.startsWith('data:') ? imgRow.thumbnail_blob : `data:image/jpeg;base64,${imgRow.thumbnail_blob}`;
         const res = await fetch(b64);
         const blob = await res.blob();
         fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });
-      } else {
-        // Fallback to filepath if available
-        const res = await fetch(toWebUrl(imgRow.filepath));
-        const blob = await res.blob();
-        fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });
+        sourceInfo = 'Thumbnail Blob';
+        console.log(`[LocalAdapter] Successfully loaded thumbnail blob (${blob.size} bytes)`);
+      }
+
+      if (!fileObj) {
+        throw new Error('No image source available (full file and thumbnail both failed)');
       }
 
       // 4. Run the engine
       const settings = await this.settings();
       const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
       
-      console.log(`[LocalAdapter] Calling engine.processFile | retries=${det_retries}`);
+      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    params.det_thresh || settings.face_recognition.insightface.detection_threshold,
         min_face_size: params.min_face_size || 60,
@@ -652,6 +680,8 @@ export const localAdapter = {
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
       });
+
+      console.log(`[LocalAdapter] Engine finished. Found ${faceData.faces?.length || 0} faces. Updating DB...`);
 
       // 5. Update the database
       // First clear old detections if requested (standard server behavior)
@@ -664,9 +694,10 @@ export const localAdapter = {
         filename: imgRow.filename
       });
 
-      return { ok: true };
+      console.log(`[LocalAdapter] reDetectFaces COMPLETE for imageId=${imageId}`);
+      return { ok: true, face_count: faceData.faces?.length || 0 };
     } catch (err) {
-      console.error('[LocalAdapter] reDetectFaces failed:', err);
+      console.error('[LocalAdapter] reDetectFaces CRITICAL FAILURE:', err);
       throw err;
     }
   },
@@ -834,7 +865,8 @@ export const localAdapter = {
                           thumbnail_b64, embedding_dim = 512 }) {
     const fname = filename || filepath.split('/').pop();
 
-    console.log(`[LocalAdapter] importProcessed: saving image ${fname} with VLM results:`, { description, scene_type, tagsCount: tags?.length });
+    console.log(`[LocalAdapter] importProcessed: saving image ${fname} | filepath=${filepath} | dims=${width}x${height}`);
+    console.log(`[LocalAdapter] VLM results:`, { description: description?.slice(0, 50) + '...', scene_type, tagsCount: tags?.length });
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
@@ -853,7 +885,7 @@ export const localAdapter = {
 
     const imgRows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
     const imageId = imgRows[0]?.id;
-    if (!imageId) throw new Error('Failed to insert image record');
+    if (!imageId) throw new Error(`Failed to insert image record for ${filepath}`);
     fileCache.set(imageId, filepath);
     if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
 
@@ -865,10 +897,9 @@ export const localAdapter = {
     }
 
     // Faces + embeddings
+    console.log(`[LocalAdapter] importProcessed: processing ${faces.length} faces for image ${imageId}`);
     let faceCount = 0;
-    console.log(`[LocalAdapter] importProcessed: saving ${faces.length} faces for image ${imageId}`);
     for (const face of faces) {
-      // FaceEngineWeb.js processFile returns { bbox_left, bbox_top, bbox_right, bbox_bottom, ... }
       const x1 = face.bbox_left ?? 0;
       const y1 = face.bbox_top ?? 0;
       const x2 = face.bbox_right ?? 1;
@@ -882,7 +913,6 @@ export const localAdapter = {
         [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null],
       );
       
-      // better-sqlite3 (Electron) uses .lastInsertRowid, Capacitor uses .changes.lastId
       const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;
       
       if (faceId && face.embedding) {
@@ -892,6 +922,7 @@ export const localAdapter = {
         
         // Match against known people using Voy (WASM HNSW)
         const match = await _voyBestMatch(f32, 0.4);
+        if (match) console.log(`[LocalAdapter]     Face matched: ${match.name} (id=${match.person_id})`);
         
         // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
         const embStr = Array.from(f32).join(',');
@@ -910,6 +941,7 @@ export const localAdapter = {
     }
 
     _voyIndex = null; // Invalidate index after adding new embeddings
+    console.log(`[LocalAdapter] importProcessed DONE for image ${imageId}`);
     return { ok: true, image_id: imageId, face_count: faceCount };
   },
 };
