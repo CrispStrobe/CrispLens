@@ -73,6 +73,7 @@ _LOCALHOST_ORIGINS = [
     'http://localhost:7865', 'http://127.0.0.1:7865',
     'http://localhost:5173', 'http://127.0.0.1:5173',
     'http://localhost:7861', 'http://127.0.0.1:7861',
+    'capacitor://localhost', 'http://localhost',
 ]
 _ALLOWED_ORIGINS = list(dict.fromkeys(_LOCALHOST_ORIGINS + _EXTRA_ORIGINS))
 
@@ -604,13 +605,18 @@ from image_ops import get_all_tags, get_all_scene_types, SCENE_TYPES
 from routers.deps import get_current_user
 
 @app.get("/api/health")
+@app.head("/api/health")
 def health():
     """Lightweight liveness probe — always 200, no auth required."""
-    from routers.images import _thumb_mem
+    try:
+        from routers.images import _thumb_mem
+        stats = _thumb_mem.stats()
+    except Exception:
+        stats = {}
     return {
         "ok": True,
         "model_ready": state.engine._backend_ready if state.engine else False,
-        "thumb_cache": _thumb_mem.stats(),
+        "thumb_cache": stats,
     }
 
 

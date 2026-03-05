@@ -317,6 +317,20 @@
   ];
   $: DET_MODELS = $processingBackend === 'remote_v2' ? REMOTE_DET_MODELS : LOCAL_DET_MODELS;
 
+  // ── Standalone VLM Status ──
+  let vlmStatusMsg = '';
+  $: {
+    if (localMode) {
+      fetchSettings().then(s => {
+        if (!s?.vlm?.enabled) {
+          vlmStatusMsg = 'AI Enrichment (VLM) is currently disabled in Settings.';
+        } else {
+          vlmStatusMsg = '';
+        }
+      }).catch(() => {});
+    }
+  }
+
   $: detParams = {
     det_thresh:    detThresh,
     min_face_size: minFaceSize,
@@ -814,6 +828,11 @@
   </div>
   {#if webInferMsg}
     <div class="web-infer-progress">{webInferMsg}</div>
+  {/if}
+  {#if localMode && vlmStatusMsg}
+    <div class="path-notice" style="background: #2a2010; padding: 6px 10px; border-radius: 4px; margin-top: 4px; display: block; white-space: normal;">
+      ⚠️ {vlmStatusMsg} <button class="btn-sm" on:click={() => sidebarView.set('settings')} style="padding: 1px 6px; margin-left: 6px;">Open Settings</button>
+    </div>
   {/if}
 
   <!-- Queue controls for local files -->

@@ -74,10 +74,16 @@
       if (!h || typeof h !== 'object' || !h.ok) throw new Error('Not a CrispLens backend — is the URL correct?');
       lastError = '';
       dbg(`→ 200 OK  model_ready=${h.model_ready}`);
+      
+      // Stop polling as soon as we get a valid response
+      if (checkTimer) {
+        clearInterval(checkTimer);
+        checkTimer = null;
+      }
+
       if (!$backendReady) {
         backendReady.set(true);
         isOffline.set(false);
-        clearInterval(checkTimer);   // stop polling — backend is up
         loadAll();
         // Auto-push any items processed while offline
         const apiBase = localStorage.getItem('remote_url') || window.location.origin;
