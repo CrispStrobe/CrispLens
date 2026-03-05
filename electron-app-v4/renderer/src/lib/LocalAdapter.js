@@ -702,11 +702,11 @@ export const localAdapter = {
 
       let vlm_keys = params.vlm_keys;
       if (vlm_enabled && !vlm_keys) {
-        console.log('[LocalAdapter] VLM keys not passed to reDetectFaces, fetching from DB...');
+        console.error('[LocalAdapter] VLM keys not passed to reDetectFaces, fetching from DB...');
         vlm_keys = await this.getVlmKeys();
       }
 
-      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | vlm=${vlm_enabled}`);
+      console.error(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | vlm=${vlm_enabled} | provider=${settings.vlm.provider}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    det_thresh,
         min_face_size: effectiveMinFaceSize,
@@ -720,7 +720,10 @@ export const localAdapter = {
         thumb_size:    thumb_size,
       });
 
-      console.log(`[LocalAdapter] Engine finished. Found ${faceData.faces?.length || 0} faces. Updating DB...`);
+      console.error(`[LocalAdapter] Engine finished. Found ${faceData.faces?.length || 0} faces. VLM description present: ${!!faceData.description}. Updating DB...`);
+      if (vlm_enabled && !faceData.description) {
+        console.error('[LocalAdapter] CRITICAL: VLM was enabled but NO DESCRIPTION was returned in faceData!');
+      }
 
       // 5. Update the database
       // First clear old detections if requested (standard server behavior)

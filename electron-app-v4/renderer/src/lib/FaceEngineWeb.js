@@ -754,29 +754,29 @@ export class FaceEngineWeb {
 
     // ── VLM Enrichment (Standalone mode) ──────────────────────────────────────
     let vlmResult = null;
-    console.log('[FaceEngineWeb] VLM check:', { 
+    console.error('[FaceEngineWeb] VLM PRE-CHECK:', { 
       vlm_enabled: opts.vlm_enabled, 
+      vlm_enabled_type: typeof opts.vlm_enabled,
       provider: opts.vlm_provider, 
-      model: opts.vlm_model,
-      prompt: opts.vlm_prompt ? (opts.vlm_prompt.slice(0, 20) + '...') : '(none)'
+      has_keys: !!opts.vlm_keys
     });
 
-    if (opts.vlm_enabled) {
+    if (opts.vlm_enabled === true || opts.vlm_enabled === 'true') {
+      console.error('[FaceEngineWeb] VLM IS ENABLED, checking provider...');
       if (!opts.vlm_provider) {
-        console.warn('[FaceEngineWeb] VLM enabled but no provider specified. Skipping.');
+        console.error('[FaceEngineWeb] VLM enabled but no provider specified. Skipping.');
         this._progress('VLM skipped (no provider)');
       } else {
         try {
           this._progress('AI Enrichment (VLM)…');
-          console.log('[FaceEngineWeb] Starting VLM enrichment process...');
+          console.error('[FaceEngineWeb] Starting VLM enrichment process...');
           const { vlmClientWeb } = await import('./VlmWeb.js');
           
           let keys = opts.vlm_keys;
           if (!keys) {
-            console.warn('[FaceEngineWeb] No VLM keys passed to processFile. VLM might fail if keys are needed.');
+            console.error('[FaceEngineWeb] No VLM keys passed to processFile. VLM might fail if keys are needed.');
             keys = {};
           }
-          console.log('[FaceEngineWeb] VLM keys available for providers:', Object.keys(keys));
           
           vlmClientWeb.setKeys(keys);
           
@@ -784,9 +784,9 @@ export class FaceEngineWeb {
           const provider = opts.vlm_provider || 'anthropic';
           const model = opts.vlm_model || '';
           
-          console.log(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
+          console.error(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
           vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
-          console.log('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
+          console.error('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
           this._progress('AI Enrichment done');
         } catch (e) {
           console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);
@@ -794,7 +794,7 @@ export class FaceEngineWeb {
         }
       }
     } else {
-      console.log('[FaceEngineWeb] VLM enrichment SKIPPED (vlm_enabled is false/falsy)');
+      console.error('[FaceEngineWeb] VLM enrichment SKIPPED (vlm_enabled is false/falsy)');
     }
 
     this._progress('Done');

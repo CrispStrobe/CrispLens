@@ -176,7 +176,7 @@ export class VlmClientWeb {
    * Enrich an image using a Cloud VLM.
    */
   async enrichImage(image, provider, model, prompt) {
-    console.log(`[VlmWeb] enrichImage START | provider=${provider} | model=${model || 'default'}`);
+    console.error(`[VlmWeb] enrichImage START | provider=${provider} | model=${model || 'default'}`);
     const key = this.keys[provider];
     if (!key) {
       console.error(`[VlmWeb] Missing API key for provider: ${provider}. Available keys for: ${Object.keys(this.keys).join(', ')}`);
@@ -262,7 +262,7 @@ export class VlmClientWeb {
 
   async _callOpenAICompatible(provider, key, model, base64, prompt) {
     const baseUrl = OPENAI_COMPATIBLE[provider];
-    console.log(`[VlmWeb] Calling OpenAI-compatible API | provider=${provider} | baseUrl=${baseUrl} | model=${model}`);
+    console.error(`[VlmWeb] Calling OpenAI-compatible API | provider=${provider} | baseUrl=${baseUrl} | model=${model}`);
     
     const body = {
       model,
@@ -288,7 +288,7 @@ export class VlmClientWeb {
       body: JSON.stringify(body)
     });
     
-    console.log(`[VlmWeb] ${provider} response received | status=${res.status} ${res.statusText}`);
+    console.error(`[VlmWeb] ${provider} response received | status=${res.status} ${res.statusText}`);
     const data = await res.json();
     if (data.error) {
       console.error(`[VlmWeb] ${provider} API returned ERROR:`, data.error);
@@ -301,7 +301,7 @@ export class VlmClientWeb {
     }
 
     const content = data.choices[0].message.content;
-    console.log(`[VlmWeb] ${provider} raw content:`, content);
+    console.error(`[VlmWeb] ${provider} raw content:`, content);
     const result = this._parseJson(content);
     return result;
   }

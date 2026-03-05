@@ -478,30 +478,35 @@
         doneCount++;
         continue;
       }
-      queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
-      try {
-        console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
-        
-        // VLM should run if the user hasn't checked 'Skip VLM' in the dialog.
-        const vlmEnabledFinal = !detParams.skip_vlm;
-        
-        const faceData = await engine.processFile(fileObj, {
-          det_thresh:    detParams.det_thresh,
-          min_face_size: detParams.min_face_size,
-          det_model:     detParams.det_model,
-          max_retries:   detRetries,
-          visibility,
-          vlm_enabled:   vlmEnabledFinal,
-          vlm_provider:  vlmCfg.provider,
-          vlm_model:     vlmCfg.model,
-          vlm_prompt:    $t('vlm_prompt'),
-          vlm_keys:      vlmKeys,
-          thumb_size:    thumb_size_final,
-          onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
-        });
-        
-        console.log(`[ProcessView] processFile OK for ${item.name}, importing results...`);
-        // In local mode, use the native filepath (item.path) so the DB stores the
+            queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
+            try {
+              console.error(`[ProcessView] Running engine.processFile for ${item.name}...`);
+              
+              // VLM should run if the user hasn't checked 'Skip VLM' in the dialog.
+              const vlmEnabledFinal = !detParams.skip_vlm;
+              console.error(`[ProcessView] VLM skip toggle value: ${detParams.skip_vlm}, vlmEnabledFinal: ${vlmEnabledFinal}, provider: ${vlmCfg.provider}`);
+              
+              const faceData = await engine.processFile(fileObj, {
+                det_thresh:    detParams.det_thresh,
+                min_face_size: detParams.min_face_size,
+                det_model:     detParams.det_model,
+                max_retries:   detRetries,
+                visibility,
+                vlm_enabled:   vlmEnabledFinal,
+                vlm_provider:  vlmCfg.provider,
+                vlm_model:     vlmCfg.model,
+                vlm_prompt:    $t('vlm_prompt'),
+                vlm_keys:      vlmKeys,
+                thumb_size:    thumb_size_final,
+                onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
+              });
+              
+              console.error(`[ProcessView] processFile OK for ${item.name}. VLM description present: ${!!faceData.description}. Importing results...`);
+              if (vlmEnabledFinal && !faceData.description) {
+                console.error('[ProcessView] CRITICAL: VLM was enabled but NO DESCRIPTION was returned!');
+              }
+              
+              // In local mode, use the native filepath (item.path) so the DB stores the
         // permanent on-device path; the webPath is ephemeral (changes between sessions).
         if (localMode && item.path) faceData.filepath = item.path;
         
