@@ -684,10 +684,17 @@ export const localAdapter = {
       // 4. Run the engine
       const settings = await this.settings();
       const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
+      let det_thresh = params.det_thresh || settings.face_recognition.insightface.detection_threshold;
       
-      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize}`);
+      // If we are using a thumbnail, be significantly more lenient with threshold and min size
+      if (sourceInfo === 'Thumbnail Blob') {
+        det_thresh = Math.min(det_thresh, 0.3); // Lower threshold for thumbnails
+        console.log(`[LocalAdapter] Using lenient det_thresh for thumbnail: ${det_thresh}`);
+      }
+      
+      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
-        det_thresh:    params.det_thresh || settings.face_recognition.insightface.detection_threshold,
+        det_thresh:    det_thresh,
         min_face_size: effectiveMinFaceSize,
         det_model:     params.det_model || settings.face_recognition.insightface.det_model,
         max_retries:   det_retries,

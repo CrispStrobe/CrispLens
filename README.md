@@ -2,6 +2,8 @@
 
 A self-hosted face recognition and photo management system. Ships as a standalone Python/FastAPI server, a Gradio web UI (v1), a full-featured Svelte desktop app (v2), and a Python-free pure Node.js edition (v4).
 
+**Live Demo:** [https://crisplens.vercel.app](https://crisplens.vercel.app)
+
 ## Which Version to Use?
 
 | | Gradio Web UI (v1) | Electron v1 | **Desktop App V2** | **v4 — Pure Node.js** |

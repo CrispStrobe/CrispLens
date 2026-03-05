@@ -2,6 +2,8 @@
 
 Zero Python. Zero venv. Same 512D ArcFace vectors. Same SQLite DB as v2.
 
+**Live Demo:** [https://crisplens.vercel.app](https://crisplens.vercel.app)
+
 ---
 
 ## Quick Start
