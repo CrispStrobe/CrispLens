@@ -620,7 +620,7 @@ export const localAdapter = {
       const rows = await query('SELECT * FROM images WHERE id = ?', [imageId]);
       if (rows.length === 0) throw new Error(`Image ${imageId} not found in LocalDB`);
       const imgRow = rows[0];
-      console.log(`[LocalAdapter] Image record found: ${imgRow.filename} | filepath=${imgRow.filepath}`);
+      console.log(`[LocalAdapter] Image record found: ${imgRow.filename} | filepath=${imgRow.filepath} | DB dims=${imgRow.width}x${imgRow.height}`);
 
       // 2. Get the engine and configure it
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
@@ -633,6 +633,7 @@ export const localAdapter = {
       // 3. Prepare the "file" (Try full filepath first, then thumbnail_blob)
       let fileObj = null;
       let sourceInfo = '';
+      let effectiveMinFaceSize = params.min_face_size || 60;
 
       // Try fetching the full image from the server (if filepath looks like a URL or we are on the same origin)
       try {
@@ -659,6 +660,20 @@ export const localAdapter = {
         const blob = await res.blob();
         fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });
         sourceInfo = 'Thumbnail Blob';
+        
+        // CRITICAL: Scale down min_face_size if using a 200px thumbnail!
+        // If original was e.g. 2000px and thumb is 200px, 60px in original is 6px in thumb.
+        // If we don't know the original size or it's already reported as small, we use a conservative floor.
+        const originalMax = Math.max(imgRow.width || 0, imgRow.height || 0);
+        if (originalMax > 400) {
+          const ratio = 200 / originalMax;
+          effectiveMinFaceSize = Math.max(5, Math.round(effectiveMinFaceSize * ratio));
+          console.log(`[LocalAdapter] Scaled min_face_size: ${params.min_face_size || 60} -> ${effectiveMinFaceSize} (ratio=${ratio.toFixed(3)})`);
+        } else {
+          effectiveMinFaceSize = Math.max(5, Math.min(effectiveMinFaceSize, 20));
+          console.log(`[LocalAdapter] Small image detected, using conservative min_face_size: ${effectiveMinFaceSize}`);
+        }
+        
         console.log(`[LocalAdapter] Successfully loaded thumbnail blob (${blob.size} bytes)`);
       }
 
@@ -670,10 +685,10 @@ export const localAdapter = {
       const settings = await this.settings();
       const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
       
-      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries}`);
+      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    params.det_thresh || settings.face_recognition.insightface.detection_threshold,
-        min_face_size: params.min_face_size || 60,
+        min_face_size: effectiveMinFaceSize,
         det_model:     params.det_model || settings.face_recognition.insightface.det_model,
         max_retries:   det_retries,
         vlm_enabled:   !params.skip_vlm && settings.vlm.enabled,

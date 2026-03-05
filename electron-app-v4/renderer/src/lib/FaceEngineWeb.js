@@ -462,6 +462,8 @@ export class FaceEngineWeb {
       console.warn(`[FaceEngineWeb] WARNING: Image dimensions are very small (${W}x${H}). Detection might fail.`);
     }
 
+    await this._initDetector();
+    
     const { canvas, invScale } = this._letterbox(img);
     console.log(`[FaceEngineWeb] Letterbox complete. invScale=${invScale.toFixed(4)} (640 -> original)`);
     
@@ -511,6 +513,13 @@ export class FaceEngineWeb {
     return { faces, imageWidth: W, imageHeight: H };
   }
 
+  async detectFacesYuNet(img, opts = {}) {
+    console.log('[FaceEngineWeb] detectFacesYuNet (placeholder) called');
+    // For now, fall back to SCRFD as YuNet implementation for Web is more complex 
+    // due to different preprocessing and output format.
+    return this.detectFaces(img, opts);
+  }
+
   // ── MediaPipe detection (optional, GPU-accelerated on mobile) ───────────────
 
   async _initMediaPipe() {
@@ -541,6 +550,7 @@ export class FaceEngineWeb {
    * left-mouth, right-mouth) using MP_LANDMARK_IDX = [33, 263, 1, 61, 291].
    */
   async detectFacesMediaPipe(img, opts = {}) {
+    console.log('[FaceEngineWeb] detectFacesMediaPipe START');
     await this._initMediaPipe();
     const W = img.naturalWidth  || img.width;
     const H = img.naturalHeight || img.height;
@@ -566,6 +576,7 @@ export class FaceEngineWeb {
       faces.push({ bbox: [x1, y1, x2, y2], score, landmarks });
     }
 
+    console.log(`[FaceEngineWeb] detectFacesMediaPipe found ${faces.length} faces`);
     return { faces, imageWidth: W, imageHeight: H };
   }
 
@@ -596,23 +607,29 @@ export class FaceEngineWeb {
    *   onProgress    fn(msg) progress callback
    */
   async processFile(file, opts = {}) {
+    console.log(`[FaceEngineWeb] processFile START | file=${file.name} | size=${file.size} | type=${file.type}`);
     if (opts.onProgress) this.onProgress = opts.onProgress;
 
     const img = await this._loadImage(file);
     const W   = img.naturalWidth  || img.width;
     const H   = img.naturalHeight || img.height;
+    console.log(`[FaceEngineWeb] processFile loaded image: ${W}x${H}`);
 
     // ── Detection ──────────────────────────────────────────────────────────────
     this._progress('Detecting faces…');
     let detection;
     const runDetection = async (currentOpts) => {
-      if ((currentOpts.det_model || 'auto') === 'mediapipe') {
+      const model = currentOpts.det_model || 'auto';
+      if (model === 'mediapipe') {
         return await this.detectFacesMediaPipe(img, currentOpts);
+      } else if (model === 'yunet') {
+        return await this.detectFacesYuNet(img, currentOpts);
       } else {
         return await this.detectFaces(img, currentOpts);
       }
     };
 
+    console.log(`[FaceEngineWeb] processFile: invoking initial detection (model=${opts.det_model || 'auto'})`);
     detection = await runDetection(opts);
     
     // Retry logic if 0 faces found and fallback is enabled
@@ -623,7 +640,7 @@ export class FaceEngineWeb {
 
       for (let i = 0; i < retries; i++) {
         currentThresh = Math.max(0.1, currentThresh - 0.15);
-        currentMinSize = Math.max(0, currentMinSize - 20);
+        currentMinSize = Math.max(0, Math.min(20, currentMinSize - 20)); // Don't drop below 0, but be aggressive for retries
         console.log(`[FaceEngineWeb] 0 faces found. Retry ${i + 1}/${retries} with thresh=${currentThresh.toFixed(2)}, minSize=${currentMinSize}`);
         
         this._progress(`Retrying detection (${i + 1}/${retries})…`);
@@ -642,6 +659,7 @@ export class FaceEngineWeb {
     }
 
     const { faces } = detection;
+    console.log(`[FaceEngineWeb] processFile: detection complete. Final face count: ${faces.length}`);
     this._progress(`${faces.length} face(s) found — computing embeddings…`);
 
     // ── Embedding ──────────────────────────────────────────────────────────────
@@ -660,6 +678,8 @@ export class FaceEngineWeb {
         embedding_dimension:  embedding.length,
       });
     }
+
+    console.log(`[FaceEngineWeb] processFile: embedding complete for ${faces.length} faces`);
 
     // ── Thumbnail ──────────────────────────────────────────────────────────────
     const THUMB = 200;
