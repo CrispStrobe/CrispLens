@@ -51,11 +51,14 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
       skip_vlm,
       owner_id, det_model, det_thresh, min_face_size, max_size,
     });
+    const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
     res.json({
       ok: true,
       image_id:    result.imageId,
+      face_count:  result.facesFound,
       faces_found: result.facesFound,
       filepath:    req.file.path,
+      vlm: { description: enriched?.ai_description || null, scene_type: enriched?.ai_scene_type || null },
     });
   } catch (err) {
     // Clean up uploaded file on failure

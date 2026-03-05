@@ -106,11 +106,14 @@ function getDb() {
     console.log('[db] Checking for v2 -> v4 migrations...');
     const imgCols = new Set(_db.pragma('table_info(images)').map(c => c.name));
     const imgMigrations = [
-      ['owner_id',    'ALTER TABLE images ADD COLUMN owner_id INTEGER'],
-      ['visibility',  "ALTER TABLE images ADD COLUMN visibility TEXT DEFAULT 'shared'"],
-      ['rating',      'ALTER TABLE images ADD COLUMN rating INTEGER DEFAULT 0'],
-      ['flag',        'ALTER TABLE images ADD COLUMN flag TEXT'],
-      ['description', 'ALTER TABLE images ADD COLUMN description TEXT'],
+      ['owner_id',        'ALTER TABLE images ADD COLUMN owner_id INTEGER'],
+      ['visibility',      "ALTER TABLE images ADD COLUMN visibility TEXT DEFAULT 'shared'"],
+      ['rating',          'ALTER TABLE images ADD COLUMN rating INTEGER DEFAULT 0'],
+      ['flag',            'ALTER TABLE images ADD COLUMN flag TEXT'],
+      ['description',     'ALTER TABLE images ADD COLUMN description TEXT'],
+      ['ai_description',  'ALTER TABLE images ADD COLUMN ai_description TEXT'],
+      ['ai_scene_type',   'ALTER TABLE images ADD COLUMN ai_scene_type TEXT'],
+      ['ai_tags',         'ALTER TABLE images ADD COLUMN ai_tags TEXT'],
     ];
     for (const [col, sql] of imgMigrations) {
       if (!imgCols.has(col)) {

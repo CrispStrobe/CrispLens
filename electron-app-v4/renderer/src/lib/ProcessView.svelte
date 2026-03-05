@@ -782,7 +782,7 @@
         album_id: selectedAlbum?.id ?? null,
         new_album_name: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null,
       });
-      const jobId = jobResp.job_id;
+      const jobId = jobResp.job_id || jobResp.id;
 
       // 2. Upload files to server and register them in the job
       let uploadIdx = 0;

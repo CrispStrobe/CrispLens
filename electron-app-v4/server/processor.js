@@ -207,14 +207,22 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
       if (flat.vlm_enabled && flat.vlm_provider) {
         console.log(`[processor] Starting VLM enrichment for image ${imageId} (${flat.vlm_provider})...`);
         const { vlmClient } = require('../core/vlm-providers');
-        
-        // Load keys from DB
-        const keyRows = db.prepare('SELECT provider, key_value FROM api_keys').all();
+
+        // Load keys from v4 api_keys table (plaintext)
+        const keyRows = db.prepare('SELECT provider, key_value FROM api_keys ORDER BY scope DESC').all();
         const keys = {};
         for (const r of keyRows) keys[r.provider] = r.key_value;
+
+        // Warn clearly if the key for the configured provider is missing
+        if (!keys[flat.vlm_provider]) {
+          console.warn(`[processor] VLM key for '${flat.vlm_provider}' not found in api_keys table. ` +
+            `If you migrated from the Python backend, please re-enter the API key in Settings → API Keys.`);
+        }
+
         vlmClient.setKeys(keys);
 
-        const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, 'Describe this image in detail.');
+        const vlmPrompt = opts.vlm_prompt || 'Describe this image in detail.';
+        const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, vlmPrompt);
         console.log(`[processor] VLM success for image ${imageId}`);
 
         db.prepare(`

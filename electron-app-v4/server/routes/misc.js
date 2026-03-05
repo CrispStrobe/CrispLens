@@ -590,8 +590,10 @@ router.get('/batch-jobs', requireAuth, (req, res) => {
 router.post('/batch-jobs', requireAuth, (req, res) => {
   const db = getDb();
   ensureBatchTables(db);
-  const { name, source_path, recursive = true, visibility = 'shared',
+  // Accept 'folder' as alias for 'source_path' (ProcessView sends 'folder')
+  const { name, source_path: _sp, folder, recursive = true, visibility = 'shared',
           det_params, tag_ids, new_tag_names, album_id, new_album_name } = req.body || {};
+  const source_path = _sp || folder || null;
 
   const r = db.prepare(`
     INSERT INTO batch_jobs (owner_id, name, status, source_path, recursive, visibility,
@@ -607,7 +609,7 @@ router.post('/batch-jobs', requireAuth, (req, res) => {
   );
   const jobId = r.lastInsertRowid;
 
-  // Enumerate files
+  // Enumerate files from folder
   const { collectImages } = require('../processor');
   if (source_path) {
     const files = collectImages(source_path, !!recursive);
@@ -617,7 +619,42 @@ router.post('/batch-jobs', requireAuth, (req, res) => {
     db.prepare('UPDATE batch_jobs SET total_count=? WHERE id=?').run(files.length, jobId);
   }
 
-  res.json({ id: jobId, status: 'pending' });
+  res.json({ id: jobId, job_id: jobId, status: 'pending' });
+});
+
+// POST /batch-jobs/upload-file — stage a file for later batch processing
+// Returns { server_path } pointing to the saved file in the upload dir.
+router.post('/batch-jobs/upload-file', requireAuth, (() => {
+  const multer = require('multer');
+  const STAGE_DIR = process.env.UPLOAD_DIR ||
+    path.join(__dirname, '..', '..', '..', 'data', 'uploads');
+  fs.mkdirSync(STAGE_DIR, { recursive: true });
+  const storage = multer.diskStorage({
+    destination: STAGE_DIR,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.jpg';
+      cb(null, `${crypto.randomUUID()}${ext}`);
+    },
+  });
+  const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
+  return [upload.single('file'), (req, res) => {
+    if (!req.file) return res.status(400).json({ detail: 'file required' });
+    res.json({ server_path: req.file.path, ok: true });
+  }];
+})());
+
+// POST /batch-jobs/:id/add-file — add an already-staged file to a batch job
+router.post('/batch-jobs/:id/add-file', requireAuth, (req, res) => {
+  const db = getDb();
+  ensureBatchTables(db);
+  const jobId = Number(req.params.id);
+  const job   = db.prepare('SELECT id FROM batch_jobs WHERE id=?').get(jobId);
+  if (!job) return res.status(404).json({ detail: 'Job not found' });
+  const { filepath, local_path } = req.body || {};
+  if (!filepath) return res.status(400).json({ detail: 'filepath required' });
+  db.prepare('INSERT INTO batch_job_files(job_id, filepath) VALUES(?,?)').run(jobId, filepath);
+  db.prepare('UPDATE batch_jobs SET total_count=total_count+1 WHERE id=?').run(jobId);
+  res.json({ ok: true });
 });
 
 router.get('/batch-jobs/:id', requireAuth, (req, res) => {
@@ -690,7 +727,7 @@ router.post('/batch-jobs/:id/start', requireAuth, async (req, res) => {
     try {
       const r = await processImageIntoDb(f.filepath, null, {
         visibility: job.visibility || 'shared',
-        ...det_params,   // det_model, det_thresh, rec_thresh, min_face_size, max_size, skip_faces
+        ...det_params,   // det_model, det_thresh, rec_thresh, min_face_size, max_size, skip_faces, skip_vlm
       });
       db.prepare("UPDATE batch_job_files SET status='done', image_id=?, processed_at=CURRENT_TIMESTAMP WHERE id=?")
         .run(r.imageId, f.id);
