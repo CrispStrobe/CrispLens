@@ -110,9 +110,10 @@ export default defineConfig({
     }),
   ],
 
-  // onnxruntime-web ships pre-built ESM + WASM — exclude from Vite's optimizer
+  // Exclude pre-built WASM packages from Vite's esbuild optimizer.
+  // These packages manage their own WASM initialization; bundling them breaks it.
   optimizeDeps: {
-    exclude: ['onnxruntime-web'],
+    exclude: ['onnxruntime-web', 'voy-search'],
   },
 
   // Treat .wasm files as assets so Rollup doesn't try to parse them

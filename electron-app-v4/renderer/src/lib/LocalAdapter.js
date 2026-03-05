@@ -17,13 +17,26 @@ let _voyIndex = null;
 
 async function _getVoyIndex(forceRebuild = false) {
   if (_voyIndex && !forceRebuild) return _voyIndex;
-  
+
   const mod = await import('voy-search');
   console.log('[LocalAdapter] Voy module loaded:', Object.keys(mod));
-  
+
+  // wasm-pack packages require explicit WASM initialization before any class can be used.
+  // The default export is the async init() function; it must be awaited before new Voy().
+  const initFn = mod.default;
+  if (typeof initFn === 'function' && initFn !== mod.Voy) {
+    try {
+      await initFn();
+      console.log('[LocalAdapter] Voy WASM initialized');
+    } catch (e) {
+      // Ignore "already initialized" errors on subsequent calls
+      if (!String(e).includes('already')) console.warn('[LocalAdapter] Voy WASM init warning:', e);
+    }
+  }
+
   // In minified/Vercel build, the export might be directly on the module or under 'default'
   let Voy = mod.Voy || mod.default?.Voy || mod.default;
-  
+
   // Some versions/bundlers wrap it another level
   if (typeof Voy !== 'function' && Voy?.Voy) Voy = Voy.Voy;
 
