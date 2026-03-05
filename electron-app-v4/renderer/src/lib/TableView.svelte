@@ -1,9 +1,43 @@
 <script>
   import { galleryImages, selectedId, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums } from '../stores.js';
-  import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums } from '../api.js';
+  import { thumbnailUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, fetchImageAsUrl } from '../api.js';
+  import { Capacitor } from '@capacitor/core';
   import ContextMenu from './ContextMenu.svelte';
   import AdjustModal from './AdjustModal.svelte';
   import AIEditModal from './AIEditModal.svelte';
+
+  const localMode = isLocalMode();
+
+  /** 
+   * Svelte action to handle authenticated image loading on mobile.
+   * Standard <img> tags don't send cookies to cross-origin servers on iOS.
+   */
+  function lazySrc(node, url) {
+    let objectUrl = null;
+
+    async function update(newUrl) {
+      if (!newUrl) return;
+      if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
+        node.src = newUrl;
+        return;
+      }
+
+      // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      const blobUrl = await fetchImageAsUrl(newUrl);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = blobUrl;
+      node.src = blobUrl;
+    }
+
+    update(url);
+
+    return {
+      update,
+      destroy() {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }
 
   function openLightbox(id) {
     selectedId.set(id);
@@ -160,7 +194,7 @@
           on:contextmenu={(e) => onContextMenu(e, img)}
         >
           <td class="col-thumb">
-            <img src={thumbnailUrl(img.id, 60)} alt={img.filename} loading="lazy" />
+            <img use:lazySrc={thumbnailUrl(img.id, 60)} alt={img.filename} loading="lazy" />
           </td>
           <td class="people">
             {img.people_names || '-'}

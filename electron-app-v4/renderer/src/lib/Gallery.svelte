@@ -1,10 +1,42 @@
 <script>
   import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags, galleryRefreshTick } from '../stores.js';
-  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, localThumb } from '../api.js';
+  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, localThumb, fetchImageAsUrl } from '../api.js';
 
   const localMode = isLocalMode();
   import { onMount, onDestroy, tick } from 'svelte';
+  import { Capacitor } from '@capacitor/core';
   import ContextMenu from './ContextMenu.svelte';
+  
+  /** 
+   * Svelte action to handle authenticated image loading on mobile.
+   * Standard <img> tags don't send cookies to cross-origin servers on iOS.
+   */
+  function lazySrc(node, url) {
+    let objectUrl = null;
+
+    async function update(newUrl) {
+      if (!newUrl) return;
+      if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
+        node.src = newUrl;
+        return;
+      }
+
+      // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      const blobUrl = await fetchImageAsUrl(newUrl);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = blobUrl;
+      node.src = blobUrl;
+    }
+
+    update(url);
+
+    return {
+      update,
+      destroy() {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }
   import CropModal from './CropModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
   import AdjustModal from './AdjustModal.svelte';
@@ -227,7 +259,7 @@
                 title={img.filename}
               >
                 <img
-                  src={thumbnailUrl(img.id, $thumbSize)}
+                  use:lazySrc={thumbnailUrl(img.id, $thumbSize)}
                   alt={img.filename}
                   loading="lazy"
                   width={$thumbSize}

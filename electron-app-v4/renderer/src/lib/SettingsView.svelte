@@ -267,9 +267,14 @@
     ? (localStorage.getItem('db_mode') || 'server')
     : 'server';
 
-  function switchDbMode(mode) {
+  async function switchDbMode(mode) {
     if (mode === 'local') {
-      import('./LocalDB.js').then(m => m.resetInit()).catch(() => {});
+      try {
+        const { restartEngine } = await import('./LocalDB.js');
+        await restartEngine();
+      } catch (e) {
+        console.warn('[SettingsView] Engine restart during switch failed:', e);
+      }
     }
     setLocalMode(mode === 'local');
     dbMode = mode;

@@ -1,11 +1,45 @@
 <script>
   import { selectedId, galleryImages, t, lightboxKey, galleryRefreshTick } from '../stores.js';
-  import { fetchImage, fullUrl, previewUrl, thumbnailUrl, rotateImage } from '../api.js';
+  import { fetchImage, fullUrl, previewUrl, thumbnailUrl, rotateImage, isLocalMode, fetchImageAsUrl } from '../api.js';
   import { onMount, onDestroy } from 'svelte';
+  import { Capacitor } from '@capacitor/core';
   import MetaPanel from './MetaPanel.svelte';
   import CropModal from './CropModal.svelte';
   import AdjustModal from './AdjustModal.svelte';
   import AIEditModal from './AIEditModal.svelte';
+
+  const localMode = isLocalMode();
+
+  /** 
+   * Svelte action to handle authenticated image loading on mobile.
+   * Standard <img> tags don't send cookies to cross-origin servers on iOS.
+   */
+  function lazySrc(node, url) {
+    let objectUrl = null;
+
+    async function update(newUrl) {
+      if (!newUrl) return;
+      if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
+        node.src = newUrl;
+        return;
+      }
+
+      // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      const blobUrl = await fetchImageAsUrl(newUrl);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = blobUrl;
+      node.src = blobUrl;
+    }
+
+    update(url);
+
+    return {
+      update,
+      destroy() {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }
 
   let image = null;
   let loading = false;
@@ -225,7 +259,7 @@
             <div class="loading">{$t('loading')}…</div>
           {:else if image}
             <img
-              src={imgSrc}
+              use:lazySrc={imgSrc}
               alt={image.filename}
               style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); cursor: {imgCursor};"
               draggable="false"

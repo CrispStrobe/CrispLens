@@ -32,7 +32,8 @@ async function robustFetch(url, options = {}) {
           // Support for cookies/credentials if needed
           ...(options.credentials === 'include' ? { 'X-Capacitor-HTTP-Cookies': 'true' } : {})
         },
-        data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
+        // For non-GET requests, handle the body
+        data: options.method !== 'GET' && options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
       };
 
       const res = await CapacitorHttp.request(capOpts);
@@ -44,6 +45,11 @@ async function robustFetch(url, options = {}) {
         statusText: String(res.status),
         json: async () => res.data,
         text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+        blob: async () => {
+          // CapacitorHttp returns base64 for binary data if requested, or we can convert
+          const blobRes = await CapacitorHttp.get({ ...capOpts, responseType: 'blob' });
+          return blobRes.data;
+        },
         headers: {
           get: (name) => res.headers[name] || res.headers[name.toLowerCase()]
         }
@@ -54,6 +60,66 @@ async function robustFetch(url, options = {}) {
     }
   }
   return fetch(url, options);
+}
+
+/** Specific helper for multipart uploads on mobile */
+async function robustUpload(url, formData, options = {}) {
+  if (Capacitor.isNativePlatform()) {
+    console.log(`[api] Native platform: using CapacitorHttp.upload for ${url}`);
+    
+    // Extract file and other fields from FormData
+    const files = [];
+    const params = {};
+    for (const [key, value] of formData.entries()) {
+      if (value instanceof Blob || value instanceof File) {
+        files.push({ key, blob: value, name: value.name || 'image.jpg' });
+      } else {
+        params[key] = String(value);
+      }
+    }
+
+    try {
+      const res = await CapacitorHttp.upload({
+        url,
+        files,
+        params,
+        headers: {
+          ...options.headers,
+          ...(options.credentials === 'include' ? { 'X-Capacitor-HTTP-Cookies': 'true' } : {})
+        }
+      });
+
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        json: async () => res.data,
+        text: async () => JSON.stringify(res.data)
+      };
+    } catch (err) {
+      console.error('[api] CapacitorHttp.upload error:', err);
+      throw err;
+    }
+  }
+  
+  return fetch(url, { ...options, method: 'POST', body: formData });
+}
+
+/** Fetch an image as an Object URL (bypassing CORS/Cookie issues on mobile) */
+export async function fetchImageAsUrl(url) {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await CapacitorHttp.get({ 
+        url, 
+        responseType: 'blob',
+        headers: { 'X-Capacitor-HTTP-Cookies': 'true' } 
+      });
+      return URL.createObjectURL(res.data);
+    } catch (e) {
+      console.error('[api] fetchImageAsUrl failed:', e);
+      return url;
+    }
+  }
+  return url;
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
@@ -362,10 +428,8 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (newAlbumName)                    form.append('new_album_name', newAlbumName);
   
   try {
-    const res = await robustFetch(`${BASE}/ingest/upload-local`, {
-      method: 'POST',
+    const res = await robustUpload(`${BASE}/ingest/upload-local`, form, {
       credentials: 'include',
-      body: form,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
