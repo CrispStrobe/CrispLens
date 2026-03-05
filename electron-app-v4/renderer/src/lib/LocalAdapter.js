@@ -124,6 +124,9 @@ function _cache(images) {
         b64 = uint8ToBase64(b64);
       }
       thumbCache.set(String(img.id), b64);
+      // Strip from the object so Svelte reactive state doesn't hold 21× 30KB blobs.
+      // The data is now in thumbCache and will be served via fetchThumbnail().
+      delete img.thumbnail_blob;
     }
   }
   return images;
@@ -566,11 +569,12 @@ export const localAdapter = {
     };
     const orderBy = orderMap[sort] ?? 'i.id DESC';
 
-    // Exclude thumbnail_blob — it's large base64 data loaded via fetchThumbnail() on demand.
-    // Loading it here for every gallery page would bloat WASM SQLite memory significantly.
+    // thumbnail_blob is fetched here to populate thumbCache, but _cache() strips it
+    // from the returned objects so Svelte reactive state doesn't hold 20+ large blobs.
     const sql = `
       SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
              i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
+             i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
              (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
               JOIN face_embeddings fe ON fe.face_id = f.id
@@ -608,6 +612,7 @@ export const localAdapter = {
     const sql = `
       SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
              i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
+             i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
              (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
               JOIN face_embeddings fe ON fe.face_id = f.id
