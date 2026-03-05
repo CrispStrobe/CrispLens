@@ -582,18 +582,60 @@ export const localAdapter = {
     return { ok: true };
   },
 
+  async deleteFace(imageId, faceId) {
+    await run('DELETE FROM faces WHERE id=? AND image_id=?', [faceId, imageId]);
+    return { ok: true };
+  },
+
+  async clearIdentifications(imageId) {
+    await run(`
+      UPDATE face_embeddings SET person_id = NULL 
+      WHERE face_id IN (SELECT id FROM faces WHERE image_id = ?)
+    `, [imageId]);
+    _voyIndex = null;
+    return { ok: true };
+  },
+
+  async clearDetections(imageId) {
+    await run('DELETE FROM faces WHERE image_id = ?', [imageId]);
+    _voyIndex = null;
+    return { ok: true };
+  },
+
   async getImageFaces(id) {
-    return query(`
+    console.log(`[LocalAdapter] getImageFaces for imageId=${id}`);
+    const rows = await query(`
       SELECT f.id, f.image_id,
              f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
              f.detection_confidence,
              fe.person_id, fe.embedding_dimension,
-             p.name AS person_name
+             p.name AS person_name,
+             fe.verified
       FROM faces f
       LEFT JOIN face_embeddings fe ON fe.face_id=f.id
       LEFT JOIN people p           ON fe.person_id=p.id
       WHERE f.image_id=?
     `, [id]);
+
+    console.log(`[LocalAdapter] getImageFaces raw rows count: ${rows.length}`);
+
+    // Map to the format the UI expects (matching server API)
+    const mapped = rows.map(r => ({
+      face_id: r.id,
+      image_id: r.image_id,
+      person_id: r.person_id,
+      person_name: r.person_name,
+      detection_confidence: r.detection_confidence,
+      verified: !!r.verified,
+      bbox: {
+        left:   r.bbox_x1,
+        top:    r.bbox_y1,
+        right:  r.bbox_x2,
+        bottom: r.bbox_y2
+      }
+    }));
+    console.log('[LocalAdapter] getImageFaces mapped result sample:', mapped[0] || '(empty)');
+    return mapped;
   },
 
   async patchMetadata(id, { description='', scene_type='', tags_csv='' }) {
@@ -660,10 +702,13 @@ export const localAdapter = {
   async reassignFace(face_id, new_name) {
     const name = new_name.trim();
     await run('INSERT OR IGNORE INTO people(name) VALUES(?)', [name]);
-    const person = (await query('SELECT id FROM people WHERE name=?', [name]))[0];
+    const people = await query('SELECT id FROM people WHERE name=?', [name]);
+    const person = people[0];
+    if (!person) throw new Error('Failed to create or find person');
+    
     await run('UPDATE face_embeddings SET person_id=? WHERE face_id=?', [person.id, face_id]);
-    const cnt = (await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?',
-                             [person.id]))[0]?.n ?? 0;
+    const countRows = await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?', [person.id]);
+    const cnt = countRows[0]?.n ?? 0;
     await run('UPDATE people SET total_appearances=? WHERE id=?', [cnt, person.id]);
     _voyIndex = null; // Invalidate index
     return { ok: true, person_id: person.id };

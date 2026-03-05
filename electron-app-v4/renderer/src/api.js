@@ -209,8 +209,20 @@ export function setRemoteBase(url) {
 /** Helper to block server calls in standalone mode and log them. */
 function _guard(msg, fallbackFn = null) {
   if (_localMode) {
-    console.log(`[api] Standalone mode: intercepting call to ${msg}.`);
-    return fallbackFn ? Promise.resolve(fallbackFn()) : Promise.resolve(null);
+    console.log(`[api] STANDALONE INTERCEPT: ${msg}`);
+    if (fallbackFn) {
+      return (async () => {
+        try {
+          const result = await fallbackFn();
+          console.log(`[api] STANDALONE RESULT for ${msg}:`, result);
+          return result;
+        } catch (err) {
+          console.error(`[api] STANDALONE ERROR for ${msg}:`, err.message || err);
+          throw err;
+        }
+      })();
+    }
+    return Promise.resolve(null);
   }
   return null;
 }
@@ -364,14 +376,18 @@ export function fetchImageFaces(id) {
   if (g) return g;
   return get(`/images/${id}/faces`);
 }
-export function deleteFace(imageId, faceId) { return del(`/images/${imageId}/faces/${faceId}`); }
+export function deleteFace(imageId, faceId) { 
+  const g = _guard('deleteFace', () => localAdapter.deleteFace(imageId, faceId));
+  if (g) return g;
+  return del(`/images/${imageId}/faces/${faceId}`); 
+}
 export function clearIdentifications(imageId) {
-  const g = _guard('clearIdentifications', () => ({ ok: true }));
+  const g = _guard('clearIdentifications', () => localAdapter.clearIdentifications(imageId));
   if (g) return g;
   return post(`/images/${imageId}/clear-identifications`, {});
 }
 export function clearDetections(imageId) {
-  const g = _guard('clearDetections', () => ({ ok: true }));
+  const g = _guard('clearDetections', () => localAdapter.clearDetections(imageId));
   if (g) return g;
   return post(`/images/${imageId}/clear-detections`, {});
 }

@@ -18,16 +18,21 @@
 
     async function update(newUrl) {
       if (!newUrl) return;
+      console.log(`[lazySrc] update | url=${newUrl.slice(0, 100)}`);
       
       // Handle local crop protocol
       if (newUrl.startsWith('local-crop://')) {
+        console.log(`[lazySrc] detected local-crop marker: ${newUrl}`);
         const parts = newUrl.replace('local-crop://', '').split('?');
         const [ids, query] = parts;
         const [imageId, faceId] = ids.split('/');
         const size = new URLSearchParams(query || '').get('size') || 128;
         
+        console.log(`[lazySrc] Requesting local crop imageId=${imageId} faceId=${faceId} size=${size}`);
         const { localAdapter } = await import('./LocalAdapter.js');
         const blobUrl = await localAdapter.getFaceCrop(imageId, faceId, parseInt(size));
+        console.log(`[lazySrc] getFaceCrop result: ${blobUrl ? 'SUCCESS' : 'FAILED'}`);
+        
         if (objectUrl) URL.revokeObjectURL(objectUrl);
         objectUrl = blobUrl;
         node.src = blobUrl;
@@ -40,6 +45,7 @@
       }
 
       // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      console.log(`[lazySrc] Mobile remote: fetching ${newUrl} via fetchImageAsUrl`);
       const blobUrl = await fetchImageAsUrl(newUrl);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = blobUrl;
