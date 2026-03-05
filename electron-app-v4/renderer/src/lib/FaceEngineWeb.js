@@ -770,8 +770,12 @@ export class FaceEngineWeb {
         try {
           this._progress('AI Enrichment (VLM)…');
           console.error('[FaceEngineWeb] Starting VLM enrichment process...');
-          const { vlmClientWeb } = await import('./VlmWeb.js');
-          
+          const vlmMod = await import('./VlmWeb.js');
+          const vlmClientWeb = vlmMod.vlmClientWeb ?? vlmMod.default;
+          if (!vlmClientWeb || typeof vlmClientWeb.setKeys !== 'function') {
+            throw new Error('VlmWeb module failed to provide vlmClientWeb instance (tree-shaking issue?)');
+          }
+
           let keys = opts.vlm_keys;
           if (!keys) {
             console.error('[FaceEngineWeb] No VLM keys passed to processFile. VLM might fail if keys are needed.');

@@ -18,7 +18,6 @@
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
   import { VLM_MODELS } from './VlmData.js';
-  import { DEFAULT_MODELS } from './VlmWeb.js';
 
   // ── Config state ──────────────────────────────────────────────────────────
   let cfg = null;
@@ -189,7 +188,7 @@
 
   // Get the display name for the default model of current provider
   function getDefaultModelName(provider) {
-    return DEFAULT_MODELS[provider] || 'Default';
+    return VLM_MODELS[provider]?.[0] || 'Default';
   }
   let defaultModelLabel = 'Default';
   $: if (vlmProvider) {

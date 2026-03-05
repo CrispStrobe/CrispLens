@@ -300,8 +300,12 @@ export class VlmClientWeb {
       throw new Error(`${provider} returned no choices`);
     }
 
-    const content = data.choices[0].message.content;
+    const msg = data.choices[0].message;
+    const content = msg?.content ?? msg?.text ?? null;
     console.error(`[VlmWeb] ${provider} raw content:`, content);
+    if (content === null || content === undefined) {
+      throw new Error(`${provider} returned null content (model may not support vision or hit a content filter)`);
+    }
     const result = this._parseJson(content);
     return result;
   }
@@ -337,10 +341,12 @@ export class VlmClientWeb {
   }
 
   _parseJson(text) {
+    if (text == null) return { description: '', scene_type: 'unknown', tags: [] };
+    const textStr = String(text);
     try {
-      console.log('[VlmWeb] Attempting to parse JSON from:', text.slice(0, 100) + '...');
+      console.log('[VlmWeb] Attempting to parse JSON from:', textStr.slice(0, 100) + '...');
       // Clean up common VLM artifacts like ```json ... ```
-      let clean = text.trim();
+      let clean = textStr.trim();
       if (clean.includes('```')) {
         const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
         if (match) clean = match[1];
@@ -357,7 +363,7 @@ export class VlmClientWeb {
       };
     } catch (e) {
       console.warn('[VlmWeb] JSON parse failed, falling back to raw:', e.message);
-      return { description: text, scene_type: 'unknown', tags: [] };
+      return { description: textStr, scene_type: 'unknown', tags: [] };
     }
   }
 }
