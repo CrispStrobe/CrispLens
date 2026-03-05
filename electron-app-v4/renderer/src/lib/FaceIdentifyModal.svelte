@@ -1,11 +1,44 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { allPeople, t, processingBackend } from '../stores.js';
-  import { fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs } from '../api.js';
+  import { fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs, isLocalMode, fetchImageAsUrl } from '../api.js';
+  import { Capacitor } from '@capacitor/core';
 
   export let imageId;
 
   const dispatch = createEventDispatcher();
+  const localMode = isLocalMode();
+
+  /** 
+   * Svelte action to handle authenticated image loading on mobile.
+   * Standard <img> tags don't send cookies to cross-origin servers on iOS.
+   */
+  function lazySrc(node, url) {
+    let objectUrl = null;
+
+    async function update(newUrl) {
+      if (!newUrl) return;
+      if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
+        node.src = newUrl;
+        return;
+      }
+
+      // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      const blobUrl = await fetchImageAsUrl(newUrl);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = blobUrl;
+      node.src = blobUrl;
+    }
+
+    update(url);
+
+    return {
+      update,
+      destroy() {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }
 
   let faces = [];
   let imgEl;
@@ -334,12 +367,11 @@
         style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); cursor: {isPanning ? 'grabbing' : zoomLevel > 1 ? 'grab' : 'crosshair'};"
       >
         <img
-          src={imageUrl}
+          use:lazySrc={imageUrl}
           alt=""
           bind:this={imgEl}
           on:load={onImgLoad}
           draggable="false"
-          crossorigin="use-credentials"
         />
         {#if displayW && displayH}
           <svg
@@ -497,8 +529,7 @@
               <div class="face-crop-wrap">
                 <img
                   class="face-crop"
-                  src={faceCropUrl(imageId, face.face_id, 64)}
-                  crossorigin="use-credentials"
+                  use:lazySrc={faceCropUrl(imageId, face.face_id, 64)}
                   alt=""
                 />
               </div>

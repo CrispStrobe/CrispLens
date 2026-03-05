@@ -1,8 +1,42 @@
 <script>
   import { onMount } from 'svelte';
   import { allPeople, t } from '../stores.js';
-  import { fetchImages, fetchPeople, thumbnailUrl } from '../api.js';
+  import { fetchImages, fetchPeople, thumbnailUrl, isLocalMode, fetchImageAsUrl } from '../api.js';
+  import { Capacitor } from '@capacitor/core';
   import FaceIdentifyModal from './FaceIdentifyModal.svelte';
+
+  const localMode = isLocalMode();
+
+  /** 
+   * Svelte action to handle authenticated image loading on mobile.
+   * Standard <img> tags don't send cookies to cross-origin servers on iOS.
+   */
+  function lazySrc(node, url) {
+    let objectUrl = null;
+
+    async function update(newUrl) {
+      if (!newUrl) return;
+      if (!Capacitor.isNativePlatform() || localMode || newUrl.startsWith('data:')) {
+        node.src = newUrl;
+        return;
+      }
+
+      // On Mobile + Remote mode: fetch via Native HTTP to include cookies
+      const blobUrl = await fetchImageAsUrl(newUrl);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = blobUrl;
+      node.src = blobUrl;
+    }
+
+    update(url);
+
+    return {
+      update,
+      destroy() {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }
 
   let images = [];
   let loading = false;
@@ -73,7 +107,7 @@
           <button class="card" on:click={() => identifyImageId = img.id}>
             <div class="thumb-wrap">
               <img
-                src={thumbnailUrl(img.id, 200)}
+                use:lazySrc={thumbnailUrl(img.id, 200)}
                 alt={img.filename}
                 loading="lazy"
               />
