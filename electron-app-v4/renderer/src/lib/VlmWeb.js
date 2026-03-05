@@ -179,7 +179,7 @@ export class VlmClientWeb {
     console.log(`[VlmWeb] enrichImage START | provider=${provider} | model=${model || 'default'}`);
     const key = this.keys[provider];
     if (!key) {
-      console.error(`[VlmWeb] Missing API key for provider: ${provider}`);
+      console.error(`[VlmWeb] Missing API key for provider: ${provider}. Available keys for: ${Object.keys(this.keys).join(', ')}`);
       throw new Error(`API key for ${provider} not found. Please add it in Settings.`);
     }
 
@@ -301,7 +301,7 @@ export class VlmClientWeb {
     }
 
     const content = data.choices[0].message.content;
-    console.log(`[VlmWeb] ${provider} raw content (first 100 chars):`, content.slice(0, 100));
+    console.log(`[VlmWeb] ${provider} raw content:`, content);
     const result = this._parseJson(content);
     return result;
   }

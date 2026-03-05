@@ -165,6 +165,24 @@
   // When "none (VLM only)" is selected, VLM must run — force the toggle on
   $: if (detModel === 'none') alsoRunVlm = true;
 
+  let vlmStatusMsg = '';
+  $: if (alsoRunVlm && localMode) {
+    fetchSettings().then(s => {
+      const provider = s?.vlm?.provider || 'anthropic';
+      import('./LocalAdapter.js').then(la => {
+        la.localAdapter.getVlmKeys().then(keys => {
+          if (!keys[provider]) {
+            vlmStatusMsg = `⚠ No API key for ${provider}`;
+          } else {
+            vlmStatusMsg = '';
+          }
+        });
+      });
+    });
+  } else {
+    vlmStatusMsg = '';
+  }
+
   async function onSvgMouseUp() {
     if (!isDrawing) return;
     isDrawing = false;
@@ -588,6 +606,9 @@
             <input type="checkbox" bind:checked={alsoRunVlm} disabled={detModel === 'none'} />
             {$t('also_run_vlm')}
           </label>
+          {#if vlmStatusMsg}
+            <div class="vlm-status-warn" style="color:#e08080; font-size:10px; margin-top:2px;">{vlmStatusMsg}</div>
+          {/if}
           {#if alsoRunVlm || detModel === 'none'}
           <div class="param-row">
             <label for="id-vlm-size-e">{$t('downsize_before_vlm')}</label>

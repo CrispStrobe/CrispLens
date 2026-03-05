@@ -778,14 +778,10 @@ export class FaceEngineWeb {
           }
           console.log('[FaceEngineWeb] VLM keys available for providers:', Object.keys(keys));
           
-          if (!keys[opts.vlm_provider] && opts.vlm_provider !== 'openrouter') {
-            console.warn(`[FaceEngineWeb] WARNING: No API key found for ${opts.vlm_provider}. VLM call will likely fail.`);
-          }
-
           vlmClientWeb.setKeys(keys);
           
           const prompt = opts.vlm_prompt || 'Describe this image in detail.';
-          const provider = opts.vlm_provider;
+          const provider = opts.vlm_provider || 'anthropic';
           const model = opts.vlm_model || '';
           
           console.log(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);

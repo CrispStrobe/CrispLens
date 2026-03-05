@@ -296,6 +296,15 @@
     // Load tags + albums for pickers
     try { allTags.set(await fetchTags()); } catch {}
     try { allAlbums.set(await fetchAlbums()); } catch {}
+
+    // Initialize VLM toggle from global settings
+    try {
+      const s = await fetchSettings();
+      skipVlm = !(s?.vlm?.enabled ?? false);
+      console.log(`[ProcessView] VLM skip toggle initialized to: ${skipVlm} (global enabled: ${s?.vlm?.enabled})`);
+    } catch (e) {
+      console.warn('[ProcessView] Failed to fetch settings for VLM toggle init:', e);
+    }
   });
 
   // ── Detection settings ─────────────────────────────────────────────────────
@@ -325,13 +334,25 @@
 
   // ── Standalone VLM Status ──
   let vlmStatusMsg = '';
+  let vlmKeys = {}; // track available keys locally for status check
   $: {
     if (localMode) {
       fetchSettings().then(s => {
         if (!s?.vlm?.enabled) {
           vlmStatusMsg = 'AI Enrichment (VLM) is currently disabled in Settings.';
         } else {
-          vlmStatusMsg = '';
+          // Also check if we have a key for the provider
+          const provider = s?.vlm?.provider || 'anthropic';
+          const { localAdapter } = import('./LocalAdapter.js').then(la => {
+            la.localAdapter.getVlmKeys().then(keys => {
+              vlmKeys = keys;
+              if (!keys[provider]) {
+                vlmStatusMsg = `⚠ VLM is enabled but no API key found for ${provider} in Settings.`;
+              } else {
+                vlmStatusMsg = '';
+              }
+            });
+          });
         }
       }).catch(() => {});
     }
@@ -461,9 +482,8 @@
       try {
         console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
         
-        // VLM should run if explicitly requested (!skip_vlm) 
-        // OR if globally enabled and not explicitly skipped.
-        const vlmEnabledFinal = detParams.skip_vlm === false || (vlmCfg.enabled && detParams.skip_vlm !== true);
+        // VLM should run if the user hasn't checked 'Skip VLM' in the dialog.
+        const vlmEnabledFinal = !detParams.skip_vlm;
         
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
