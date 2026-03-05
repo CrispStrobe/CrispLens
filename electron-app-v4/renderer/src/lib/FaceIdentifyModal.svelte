@@ -137,6 +137,7 @@
   let detThresh = 0.5;
   let minFaceSize = 60;
   let recThresh = 0.4;
+  let detRetries = 1;
   let alsoRunVlm = false;   // when true, also re-runs VLM enrichment after face detection
   let detModel = 'auto';    // detection model override
   let maxSize = 0;          // 0 = no resize; >0 = max long-edge px before detection
@@ -277,7 +278,8 @@
   async function onReDetect() {
     reDetecting = true;
     // Persist the chosen model as the user's default (best-effort, silent on failure)
-    saveUserDetPrefs({ det_model: detModel }).catch(() => {});
+    saveUserDetPrefs({ det_model: detModel, det_retries: detRetries }).catch(() => {});
+    console.log(`[FaceIdentifyModal] onReDetect for imageId=${imageId} | model=${detModel} | thresh=${detThresh} | retries=${detRetries}`);
     try {
       await reDetectFaces(imageId, {
         det_thresh:    detThresh,
@@ -285,6 +287,7 @@
         rec_thresh:    recThresh,
         skip_vlm:      !alsoRunVlm,
         det_model:     detModel,
+        max_retries:   detRetries,
         max_size:      maxSize,
         vlm_max_size:  vlmMaxSize,
       });
@@ -361,6 +364,7 @@
     // Load user's preferred detection model
     fetchUserDetPrefs().then(p => {
       detModel = p.effective?.det_model || 'auto';
+      detRetries = p.effective?.det_retries ?? 1;
     }).catch(() => {});
   });
 
@@ -513,6 +517,10 @@
             <input id="id-rec-thresh-e" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
           </div>
           <div class="param-row">
+            <label for="id-det-retries-e">Detection Retries: {detRetries}</label>
+            <input id="id-det-retries-e" type="number" min="0" max="5" step="1" bind:value={detRetries} class="num-input" />
+          </div>
+          <div class="param-row">
             <label for="id-det-model-e">{$t('detection_model')}</label>
             <select id="id-det-model-e" bind:value={detModel}>
               {#each DET_MODELS as m}
@@ -630,6 +638,10 @@
             <div class="param-row">
               <label for="id-rec-thresh">{$t('recognition_certainty')}: {recThresh}</label>
               <input id="id-rec-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThresh} />
+            </div>
+            <div class="param-row">
+              <label for="id-det-retries">Detection Retries: {detRetries}</label>
+              <input id="id-det-retries" type="number" min="0" max="5" step="1" bind:value={detRetries} class="num-input" />
             </div>
             <div class="param-row">
               <label for="id-det-model">{$t('detection_model')}</label>

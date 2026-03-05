@@ -84,6 +84,7 @@ const SCHEMA = `
   INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_model', 'auto');
   INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_threshold', '0.5');
   INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_rec_threshold', '0.4');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_retries', '1');
   INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_language', 'en');
 
   CREATE TABLE IF NOT EXISTS users (
@@ -282,56 +283,51 @@ export async function getDB() {
         console.log('[LocalDB] Database opened');
       }
 
-      console.log('[LocalDB] Step 8: Executing schema...');
-      await _db.execute(SCHEMA);
-
       // ── Migration: ensure columns exist ────────────────────────────────
+      // We run this BEFORE Step 8/9 to ensure any queries triggered by the Svelte 
+      // lifecycle (like getImageFaces) don't hit missing columns.
       try {
-        console.log('[LocalDB] Checking for required columns...');
+        console.log('[LocalDB] Starting migrations check (FORCED)...');
         const isWeb = window.location.protocol !== 'capacitor:';
         
-        // 1. images.thumbnail_blob
-        const imgInfo = await _db.query("PRAGMA table_info(images);");
-        const imgCols = (imgInfo.values || []).map(c => c.name);
-        if (!imgCols.includes('thumbnail_blob')) {
-          console.log('[LocalDB] Migrating: images.thumbnail_blob');
-          await _db.execute("ALTER TABLE images ADD COLUMN thumbnail_blob BLOB;");
+        async function columnExists(table, col) {
+          const res = await _db.query(`PRAGMA table_info(${table});`);
+          const cols = (res.values || []).map(c => c.name.toLowerCase());
+          return cols.includes(col.toLowerCase());
         }
 
-        // 2. faces.face_quality
-        const facesInfo = await _db.query("PRAGMA table_info(faces);");
-        const faceCols = (facesInfo.values || []).map(c => c.name);
-        if (!faceCols.includes('face_quality')) {
-          console.log('[LocalDB] Migrating: faces.face_quality');
-          await _db.execute("ALTER TABLE faces ADD COLUMN face_quality REAL DEFAULT 1.0;");
+        async function safeAddColumn(table, col, definition) {
+          if (!(await columnExists(table, col))) {
+            console.log(`[LocalDB] Migrating: adding ${table}.${col}`);
+            try {
+              await _db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${definition};`);
+              return true;
+            } catch (e) {
+              console.error(`[LocalDB] Failed to add column ${table}.${col}:`, e);
+              return false;
+            }
+          }
+          return false;
         }
 
-        // 3. face_embeddings columns
-        const embInfo = await _db.query("PRAGMA table_info(face_embeddings);");
-        const embCols = (embInfo.values || []).map(c => c.name);
-        
-        if (!embCols.includes('verified')) {
-          console.log('[LocalDB] Migrating: face_embeddings.verified');
-          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN verified INTEGER DEFAULT 0;");
-        }
-        if (!embCols.includes('embedding_model')) {
-          console.log('[LocalDB] Migrating: face_embeddings.embedding_model');
-          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN embedding_model TEXT;");
-        }
-        if (!embCols.includes('recognition_confidence')) {
-          console.log('[LocalDB] Migrating: face_embeddings.recognition_confidence');
-          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN recognition_confidence REAL;");
-        }
+        let changed = false;
+        if (await safeAddColumn('images', 'thumbnail_blob', 'BLOB')) changed = true;
+        if (await safeAddColumn('faces', 'face_quality', 'REAL DEFAULT 1.0')) changed = true;
+        if (await safeAddColumn('face_embeddings', 'verified', 'INTEGER DEFAULT 0')) changed = true;
+        if (await safeAddColumn('face_embeddings', 'embedding_model', 'TEXT')) changed = true;
+        if (await safeAddColumn('face_embeddings', 'recognition_confidence', 'REAL')) changed = true;
 
-        // Persist all migrations
-        if (isWeb && sqlite) {
-          console.log('[LocalDB] Saving migrations to WebStore...');
+        if (changed && isWeb && sqlite) {
+          console.log('[LocalDB] Persisting migrations to WebStore...');
           await sqlite.saveToStore(DB_NAME);
         }
         console.log('[LocalDB] Migrations check complete');
       } catch (migErr) {
-        console.error('[LocalDB] Migration check failed CRITICALLY:', migErr);
+        console.error('[LocalDB] Migration process failed:', migErr);
       }
+
+      console.log('[LocalDB] Step 8: Executing schema...');
+      await _db.execute(SCHEMA);
 
       console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 

@@ -640,10 +640,14 @@ export const localAdapter = {
 
       // 4. Run the engine
       const settings = await this.settings();
+      const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
+      
+      console.log(`[LocalAdapter] Calling engine.processFile | retries=${det_retries}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    params.det_thresh || settings.face_recognition.insightface.detection_threshold,
         min_face_size: params.min_face_size || 60,
         det_model:     params.det_model || settings.face_recognition.insightface.det_model,
+        max_retries:   det_retries,
         vlm_enabled:   !params.skip_vlm && settings.vlm.enabled,
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
@@ -669,18 +673,38 @@ export const localAdapter = {
 
   async getImageFaces(id) {
     console.log(`[LocalAdapter] getImageFaces for imageId=${id}`);
-    const rows = await query(`
-      SELECT f.id, f.image_id,
-             f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
-             f.detection_confidence,
-             fe.person_id, fe.embedding_dimension,
-             p.name AS person_name,
-             fe.verified
-      FROM faces f
-      LEFT JOIN face_embeddings fe ON fe.face_id=f.id
-      LEFT JOIN people p           ON fe.person_id=p.id
-      WHERE f.image_id=?
-    `, [id]);
+    let rows = [];
+    try {
+      rows = await query(`
+        SELECT f.id, f.image_id,
+               f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
+               f.detection_confidence,
+               fe.person_id, fe.embedding_dimension,
+               p.name AS person_name,
+               fe.verified
+        FROM faces f
+        LEFT JOIN face_embeddings fe ON fe.face_id=f.id
+        LEFT JOIN people p           ON fe.person_id=p.id
+        WHERE f.image_id=?
+      `, [id]);
+    } catch (err) {
+      if (err.message?.includes('verified')) {
+        console.warn('[LocalAdapter] verified column missing, falling back to legacy query');
+        rows = await query(`
+          SELECT f.id, f.image_id,
+                 f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
+                 f.detection_confidence,
+                 fe.person_id, fe.embedding_dimension,
+                 p.name AS person_name
+          FROM faces f
+          LEFT JOIN face_embeddings fe ON fe.face_id=f.id
+          LEFT JOIN people p           ON fe.person_id=p.id
+          WHERE f.image_id=?
+        `, [id]);
+      } else {
+        throw err;
+      }
+    }
 
     console.log(`[LocalAdapter] getImageFaces raw rows count: ${rows.length}`);
 
@@ -842,12 +866,15 @@ export const localAdapter = {
 
     // Faces + embeddings
     let faceCount = 0;
+    console.log(`[LocalAdapter] importProcessed: saving ${faces.length} faces for image ${imageId}`);
     for (const face of faces) {
       // FaceEngineWeb.js processFile returns { bbox_left, bbox_top, bbox_right, bbox_bottom, ... }
       const x1 = face.bbox_left ?? 0;
       const y1 = face.bbox_top ?? 0;
       const x2 = face.bbox_right ?? 1;
       const y2 = face.bbox_bottom ?? 1;
+
+      console.log(`[LocalAdapter]   Face ${faceCount+1}: bbox=[${x1.toFixed(3)}, ${y1.toFixed(3)}, ${x2.toFixed(3)}, ${y2.toFixed(3)}] conf=${(face.detection_confidence || 0).toFixed(3)}`);
 
       const faceRes = await run(
         `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence)
