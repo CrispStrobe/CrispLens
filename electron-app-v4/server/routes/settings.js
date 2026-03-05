@@ -297,15 +297,47 @@ router.get('/engine-status', requireAuth, async (req, res) => {
     const { findModelDir } = require('../../core/face-engine');
     const modelDir  = findModelDir();
     const modelName = modelDir ? path.basename(modelDir) : null;
+    const detectors = modelDir ? {
+      scrfd:           { available: true, model_exists: fs.existsSync(path.join(modelDir, 'det_10g.onnx')),                       model_size_kb: _kbSize(path.join(modelDir, 'det_10g.onnx')) },
+      yunet:           { available: true, model_exists: fs.existsSync(path.join(modelDir, 'face_detection_yunet_2023mar.onnx')),   model_size_kb: _kbSize(path.join(modelDir, 'face_detection_yunet_2023mar.onnx')) },
+      mediapipe_local: { available: true, model_exists: fs.existsSync(path.join(modelDir, 'face_landmarker.task')),               model_size_kb: _kbSize(path.join(modelDir, 'face_landmarker.task')) },
+    } : undefined;
+    const flat = loadFlat();
     res.json({
       ok:        !!modelDir,
-      ready:     !!modelDir,       // field the SettingsView reads
+      ready:     !!modelDir,
       model_dir: modelDir || null,
-      model:     modelName,        // field the SettingsView reads (e.g. "buffalo_l")
+      model:     modelName,
       backend:   'onnxruntime-node',
+      providers: {
+        coreml:   flat.ort_use_coreml   || false,
+        cuda:     flat.ort_use_cuda     || false,
+        directml: flat.ort_use_directml || false,
+      },
+      detectors,
     });
   } catch (err) {
     res.json({ ok: false, ready: false, error: err.message });
+  }
+});
+
+function _kbSize(p) {
+  try { return Math.round(fs.statSync(p).size / 1024); } catch { return null; }
+}
+
+// ── POST /settings/download-mediapipe ─────────────────────────────────────────
+// Triggers server-side download of face_landmarker.task into modelDir.
+
+router.post('/download-mediapipe', requireAdmin, async (req, res) => {
+  try {
+    const { findModelDir } = require('../../core/face-engine');
+    const modelDir = findModelDir();
+    if (!modelDir) return res.status(400).json({ error: 'Model directory not found' });
+    const { ensureFaceLandmarker } = require('../../core/model-downloader');
+    const dest = await ensureFaceLandmarker(modelDir);
+    res.json({ ok: true, path: dest });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -33,6 +33,13 @@ export default defineConfig({
           src: 'node_modules/sql.js/dist/sql-wasm.wasm',
           dest: 'ort-wasm',
         },
+        {
+          // MediaPipe tasks-vision WASM runtime — served from /mediapipe/ so
+          // FaceEngineWeb.js can use FilesetResolver.forVisionTasks('/mediapipe/')
+          // without hitting an external CDN (works offline / on LAN).
+          src: 'node_modules/@mediapipe/tasks-vision/wasm/*',
+          dest: 'mediapipe',
+        },
       ],
     }),
 

@@ -23,8 +23,11 @@ async function _getVoyIndex(forceRebuild = false) {
 
   // wasm-pack packages require explicit WASM initialization before any class can be used.
   // The default export is the async init() function; it must be awaited before new Voy().
+  // Always attempt WASM init — safe to call multiple times (idempotent after first call).
+  // Do NOT guard with `initFn !== mod.Voy`: in some bundler configs the guard fires
+  // incorrectly and skips init, leaving voy_new undefined → "t.voy_new is not a function".
   const initFn = mod.default;
-  if (typeof initFn === 'function' && initFn !== mod.Voy) {
+  if (typeof initFn === 'function') {
     try {
       await initFn();
       console.log('[LocalAdapter] Voy WASM initialized');
@@ -58,7 +61,28 @@ async function _getVoyIndex(forceRebuild = false) {
   return _voyIndex;
 }
 
-/** Return the best-matching person above threshold using Voy (HNSW). */
+/** Brute-force cosine fallback — works in all browsers, no WASM required. */
+async function _bruteForceMatch(embedding, threshold = 0.4) {
+  const items = await _loadAllEmbeddings();
+  if (items.length === 0) return null;
+  let best = null, bestSim = -1;
+  for (const item of items) {
+    const sim = _cosine(embedding, item.vec);
+    if (sim > bestSim) { bestSim = sim; best = item; }
+  }
+  return (best && bestSim >= threshold)
+    ? { person_id: best.person_id, name: best.person_name }
+    : null;
+}
+
+function _cosine(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-8);
+}
+
+/** Return the best-matching person above threshold using Voy (HNSW), with brute-force fallback. */
 async function _voyBestMatch(embedding, threshold = 0.4) {
   try {
     const index = await _getVoyIndex();
@@ -70,10 +94,11 @@ async function _voyBestMatch(embedding, threshold = 0.4) {
         return { person_id: parseInt(best.id), name: best.title };
       }
     }
+    return null;
   } catch (err) {
-    console.error('[LocalAdapter] Voy search error:', err);
+    console.warn('[LocalAdapter] Voy search unavailable, using brute-force:', err.message);
+    return _bruteForceMatch(embedding, threshold);
   }
-  return null;
 }
 
 // ── Filepath cache — lets thumbnailUrl() stay synchronous ─────────────────────
@@ -290,7 +315,9 @@ export const localAdapter = {
 
   async getVlmModels(provider) {
     console.log(`[LocalAdapter] getVlmModels for ${provider}`);
-    const { vlmClientWeb } = await import('./VlmWeb.js');
+    const vlmMod = await import('./VlmWeb.js');
+    const vlmClientWeb = vlmMod.vlmClientWeb ?? vlmMod.default;
+    if (!vlmClientWeb || typeof vlmClientWeb.setKeys !== 'function') throw new Error('VlmWeb module failed to provide vlmClientWeb');
     const keys = await this.getVlmKeys();
     vlmClientWeb.setKeys(keys);
     
@@ -341,7 +368,9 @@ export const localAdapter = {
   },
 
   async testApiKey(provider) {
-    const { vlmClientWeb } = await import('./VlmWeb.js');
+    const vlmMod = await import('./VlmWeb.js');
+    const vlmClientWeb = vlmMod.vlmClientWeb ?? vlmMod.default;
+    if (!vlmClientWeb || typeof vlmClientWeb.testKey !== 'function') throw new Error('VlmWeb module failed to provide vlmClientWeb');
     const keys = await this.getVlmKeys();
     const key = keys[provider];
     if (!key) throw new Error(`No key found for ${provider}`);

@@ -114,7 +114,27 @@ async function ensureYuNet(modelDir) {
   return dest;
 }
 
-module.exports = { ensureModels, ensureYuNet, BUFFALO_DIR };
+// ── MediaPipe FaceLandmarker task model ───────────────────────────────────────
+
+const LANDMARKER_URL  = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const LANDMARKER_FILE = 'face_landmarker.task';
+
+/**
+ * Download the MediaPipe FaceLandmarker task model into modelDir.
+ * No-op if already present. Returns the full path.
+ */
+async function ensureFaceLandmarker(modelDir) {
+  const dest = path.join(modelDir, LANDMARKER_FILE);
+  if (fs.existsSync(dest)) return dest;
+
+  console.log('[models] Downloading face_landmarker.task (~25 MB)...');
+  fs.mkdirSync(modelDir, { recursive: true });
+  await download(LANDMARKER_URL, dest);
+  console.log(`[models] FaceLandmarker ready at: ${dest}`);
+  return dest;
+}
+
+module.exports = { ensureModels, ensureYuNet, ensureFaceLandmarker, BUFFALO_DIR };
 
 if (require.main === module) {
   ensureModels().catch(err => { console.error(err); process.exit(1); });

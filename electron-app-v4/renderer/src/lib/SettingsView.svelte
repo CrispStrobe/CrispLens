@@ -517,6 +517,8 @@
   let engineStatus   = null;   // {ready, error, backend, model}
   let engineReloading = false;
   let engineReloadMsg = '';
+  let mpDownloading   = false;
+  let mpDownloadMsg   = '';
 
   onMount(async () => {
     isElectron = typeof window.electronAPI !== 'undefined';
@@ -976,6 +978,21 @@
         }
         sessionStorage.setItem('i18n_cache', JSON.stringify(data));
       } catch { /* ignore */ }
+    }
+  }
+
+  // ── MediaPipe model download (server-side) ────────────────────────────────
+  async function doDownloadMediaPipe() {
+    mpDownloading = true;
+    mpDownloadMsg = '';
+    try {
+      const r = await fetch('/api/settings/download-mediapipe', { method: 'POST' }).then(r => r.json());
+      mpDownloadMsg = r.ok ? '✓ face_landmarker.task downloaded' : '✗ ' + r.error;
+      if (r.ok) engineStatus = await fetchEngineStatus();
+    } catch (e) {
+      mpDownloadMsg = '✗ ' + e.message;
+    } finally {
+      mpDownloading = false;
     }
   }
 
@@ -1878,14 +1895,22 @@
     {/if}
 
     {#if isAdmin}
-    <div class="field-row" style="margin-top:8px;">
+    <div class="field-row" style="margin-top:8px;flex-wrap:wrap;gap:6px;">
       <button class="small" on:click={doReloadEngine} disabled={engineReloading}>
         {engineReloading ? '…' : $t('settings_reload_engine')}
       </button>
       <button class="small" on:click={() => fetchEngineStatus().then(s => { engineStatus = s; engineReloadMsg = ''; })}>
         {$t('logs_refresh')}
       </button>
+      {#if engineStatus?.detectors?.mediapipe_local && !engineStatus.detectors.mediapipe_local.model_exists}
+        <button class="small primary" on:click={doDownloadMediaPipe} disabled={mpDownloading}>
+          {mpDownloading ? '⏳ Downloading…' : '⬇ Download face_landmarker.task'}
+        </button>
+      {/if}
     </div>
+    {#if mpDownloadMsg}
+      <div class="save-msg" class:error-msg={mpDownloadMsg.startsWith('✗')} style="margin-top:4px;">{mpDownloadMsg}</div>
+    {/if}
     {#if engineReloadMsg}
       <div class="save-msg" class:error-msg={engineReloadMsg.startsWith('✗')}>{engineReloadMsg}</div>
     {/if}

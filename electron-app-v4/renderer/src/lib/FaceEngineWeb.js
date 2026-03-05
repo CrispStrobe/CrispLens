@@ -540,32 +540,41 @@ export class FaceEngineWeb {
     const inputTensor = this._canvasToSCRFDTensor(canvas);
     console.log(`[FaceEngineWeb] Input Tensor created. Shape:`, inputTensor.dims);
 
-    console.log('[FaceEngineWeb] Running SCRFD ONNX session...');
-    const start = performance.now();
-    const results = await this._detSession.run({
-      [this._detSession.inputNames[0]]: inputTensor,
-    });
-    const duration = performance.now() - start;
-    console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
-
-    const outputNames = this._detSession.outputNames;
-    console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
-    
-    // Log some raw scores if possible to see if the model is producing anything
-    const topScoreName = outputNames[0]; // usually score_8
-    const topScores = results[topScoreName].data;
-    let maxScore = 0;
-    for (let i = 0; i < topScores.length; i++) if (topScores[i] > maxScore) maxScore = topScores[i];
-    console.log(`[FaceEngineWeb] Max raw score in ${topScoreName}: ${maxScore.toFixed(4)}`);
-
-    let faces = decodeSCRFD(results, outputNames, invScale, detThresh);
-    console.log(`[FaceEngineWeb] decodeSCRFD found ${faces.length} candidates above threshold ${detThresh}`);
-    
-    if (faces.length > 0) {
-      faces.forEach((f, i) => {
-        const [x1, y1, x2, y2] = f.bbox;
-        console.log(`[FaceEngineWeb]   Candidate ${i+1}: score=${f.score.toFixed(4)} | bbox=[${Math.round(x1)}, ${Math.round(y1)}, ${Math.round(x2)}, ${Math.round(y2)}] | size=${Math.round(x2-x1)}x${Math.round(y2-y1)}`);
+    let faces;
+    try {
+      console.log('[FaceEngineWeb] Running SCRFD ONNX session...');
+      const start = performance.now();
+      const results = await this._detSession.run({
+        [this._detSession.inputNames[0]]: inputTensor,
       });
+      const duration = performance.now() - start;
+      console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
+
+      const outputNames = this._detSession.outputNames;
+      console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
+
+      // Log some raw scores if possible to see if the model is producing anything
+      const topScoreName = outputNames[0]; // usually score_8
+      const topScores = results[topScoreName].data;
+      let maxScore = 0;
+      for (let i = 0; i < topScores.length; i++) if (topScores[i] > maxScore) maxScore = topScores[i];
+      console.log(`[FaceEngineWeb] Max raw score in ${topScoreName}: ${maxScore.toFixed(4)}`);
+
+      faces = decodeSCRFD(results, outputNames, invScale, detThresh);
+      console.log(`[FaceEngineWeb] decodeSCRFD found ${faces.length} candidates above threshold ${detThresh}`);
+
+      if (faces.length > 0) {
+        faces.forEach((f, i) => {
+          const [x1, y1, x2, y2] = f.bbox;
+          console.log(`[FaceEngineWeb]   Candidate ${i+1}: score=${f.score.toFixed(4)} | bbox=[${Math.round(x1)}, ${Math.round(y1)}, ${Math.round(x2)}, ${Math.round(y2)}] | size=${Math.round(x2-x1)}x${Math.round(y2-y1)}`);
+        });
+      }
+
+      // Dispose output tensors — WASM heap is not GC'd, must be freed explicitly
+      for (const t of Object.values(results)) t.dispose?.();
+    } finally {
+      // Always dispose input tensor, even if session.run() throws
+      inputTensor.dispose();
     }
 
     faces = applyNMS(faces);
@@ -596,12 +605,22 @@ export class FaceEngineWeb {
     if (this._mpLandmarker) return;
     this._progress('Loading MediaPipe FaceLandmarker…');
     const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
-    const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm',
-    );
+    // Use locally-served WASM files (copied to /mediapipe/ by vite-plugin-static-copy).
+    // This avoids hitting cdn.jsdelivr.net, enabling offline / LAN-only use.
+    const vision = await FilesetResolver.forVisionTasks('/mediapipe/');
+    // Prefer the model served by the connected API server (cached after first fetch).
+    // Fall back to Google's CDN if the server doesn't have the file yet.
+    const localTaskUrl  = '/models/face_landmarker.task';
+    const cdnTaskUrl    = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+    let modelAssetPath  = cdnTaskUrl;
+    try {
+      const probe = await fetch(localTaskUrl, { method: 'HEAD' });
+      if (probe.ok) modelAssetPath = localTaskUrl;
+    } catch { /* server unreachable — use CDN */ }
+    console.log(`[FaceEngineWeb] MediaPipe model source: ${modelAssetPath === localTaskUrl ? 'local server' : 'CDN'}`);
     this._mpLandmarker = await FaceLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        modelAssetPath,
         delegate: 'GPU',
       },
       outputFaceBlendshapes: false,
@@ -656,11 +675,17 @@ export class FaceEngineWeb {
     await this._initRecognizer();
     const faceCanvas = this._cropFace(img, landmarks);
     const inputTensor = this._faceCanvasToArcFaceTensor(faceCanvas);
-    const result = await this._recSession.run({
-      [this._recSession.inputNames[0]]: inputTensor,
-    });
-    const raw = Array.from(result[this._recSession.outputNames[0]].data);
-    return l2normalize(raw);
+    try {
+      const result = await this._recSession.run({
+        [this._recSession.inputNames[0]]: inputTensor,
+      });
+      const raw = Array.from(result[this._recSession.outputNames[0]].data);
+      // Dispose output tensors — WASM heap is not GC'd, must be freed explicitly
+      for (const t of Object.values(result)) t.dispose?.();
+      return l2normalize(raw);
+    } finally {
+      inputTensor.dispose();
+    }
   }
 
   // ── Full pipeline ────────────────────────────────────────────────────────────
