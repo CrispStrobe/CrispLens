@@ -1286,3 +1286,8 @@ Leave it empty if you do not use the Electron lightbox or if the server already 
 | `↩ shared` | Same file content uploaded by **another user** — returned that user's record (cross-user deduplication) |
 
 Progress line shows counts: `N already uploaded` (own) / `N shared by others` (cross-user).
+
+
+## License
+
+GNU Affero General Public License v3.0 (AGPL-3.0). See [`LICENSE`](LICENSE).
