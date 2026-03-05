@@ -2,6 +2,8 @@
 
 A desktop-native photo management and face recognition application. Svelte 4 frontend, FastAPI backend, Electron shell. Ships as a single binary with a first-run wizard — no manual setup required by the user.
 
+**Live Demo (v4 Standalone):** [https://crisplens.vercel.app](https://crisplens.vercel.app)
+
 See the [root README](../README.md) for complete environment variable, config.yaml, and API reference.
 
 ---

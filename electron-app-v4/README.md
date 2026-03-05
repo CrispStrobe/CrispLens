@@ -85,6 +85,46 @@ When using the app in **Standalone Mode** (e.g., via the Vercel demo), you can c
 
 ---
 
+## Three-Axis Connection Architecture
+
+v4 separates three concerns, allowing you to mix and match UI, API, and Inference sources:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Axis 1: UI Source                                          │
+│    Where the HTML/JS bundle comes from                      │
+│    → local v4 Node.js / Vercel / GitHub Pages               │
+├─────────────────────────────────────────────────────────────┤
+│  Axis 2: API + DB Server (Settings → API/Database Server)   │
+│    All browser API calls (images, people, faces, DB) go here│
+│    Options:                                                 │
+│    • Same origin (default) — local v4 at localhost:7861     │
+│    • Standalone — Browser IndexedDB (no server)             │
+│    • Remote — any CrispLens v2 or v4 instance               │
+├─────────────────────────────────────────────────────────────┤
+│  Axis 3: Inference Engine (Settings → Processing Override)  │
+│    Where face detection and embedding runs                  │
+│    Options:                                                 │
+│    • Local — uses your device (ONNX / WASM)                 │
+│    • Remote — sends data to another server for processing   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Server Routes
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/health` | — | Health check + model_ready flag |
+| `GET` | `/api/images` | ✓ | Browse images (filter by person/tag/date/album) |
+| `GET` | `/api/images/:id/thumbnail` | ✓ | Resized thumbnail (Sharp) |
+| `POST` | `/api/images/:id/re-detect` | ✓ | Re-run detection on one image |
+| `POST` | `/api/ingest/import-processed` | ✓ | Accept pre-computed embeddings |
+| `POST` | `/api/process/batch` | ✓ | SSE batch processing (server-side folder) |
+
+---
+
 ## Development Workflow
 
 ### Full dev (hot-reload)
