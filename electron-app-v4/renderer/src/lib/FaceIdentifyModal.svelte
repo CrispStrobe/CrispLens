@@ -196,6 +196,7 @@
     loading = true;
     try {
       faces = await fetchImageFaces(imageId);
+      console.log('[FaceIdentifyModal] loadFaces result:', faces);
       names = {};
       for (const f of faces) {
         names[f.face_id] = f.person_name || '';
@@ -324,6 +325,7 @@
   }
 
   function faceColor(face) {
+    if (!face) return '#e07030';
     if (face.verified && face.person_id) return '#50c878';   // green
     if (face.person_id) return '#f0c040';                    // yellow
     return '#e07030';                                        // orange
@@ -412,32 +414,34 @@
             role="presentation"
           >
             {#each faces as face (face.face_id)}
-              {@const px = bboxPx(face.bbox)}
-              {@const color = faceColor(face)}
-              {@const isActive = activeFaceId === face.face_id}
-              <!-- svelte-ignore a11y-no-static-element-interactions -->
-              <rect
-                x={px.x} y={px.y}
-                width={px.w} height={px.h}
-                fill="none"
-                stroke={color}
-                stroke-width={isActive ? 3 : 1.5}
-                stroke-dasharray={isActive ? 'none' : '4 2'}
-                rx="3"
-                style="cursor:pointer"
-                on:mousedown|stopPropagation
-                on:click|stopPropagation={() => activeFaceId = face.face_id}
-                role="button"
-                aria-label="Select face"
-              />
-              {#if face.person_name}
-                <text
-                  x={px.x + 4} y={px.y - 4}
-                  fill={color}
-                  font-size="10"
-                  font-family="sans-serif"
-                  style="pointer-events: none; user-select: none;"
-                >{face.person_name}</text>
+              {#if face.bbox}
+                {@const px = bboxPx(face.bbox)}
+                {@const color = faceColor(face)}
+                {@const isActive = activeFaceId === face.face_id}
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <rect
+                  x={px.x} y={px.y}
+                  width={px.w} height={px.h}
+                  fill="none"
+                  stroke={color}
+                  stroke-width={isActive ? 3 : 1.5}
+                  stroke-dasharray={isActive ? 'none' : '4 2'}
+                  rx="3"
+                  style="cursor:pointer"
+                  on:mousedown|stopPropagation
+                  on:click|stopPropagation={() => activeFaceId = face.face_id}
+                  role="button"
+                  aria-label="Select face"
+                />
+                {#if face.person_name}
+                  <text
+                    x={px.x + 4} y={px.y - 4}
+                    fill={color}
+                    font-size="10"
+                    font-family="sans-serif"
+                    style="pointer-events: none; user-select: none;"
+                  >{face.person_name}</text>
+                {/if}
               {/if}
             {/each}
 
