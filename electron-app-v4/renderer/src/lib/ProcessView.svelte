@@ -390,6 +390,7 @@
 
     let engine;
     let vlmCfg = {};
+    let vlmKeys = {};
     let syncCfg = {};
     let detRetries = 1;
     let thumb_size_final = 200;
@@ -404,6 +405,13 @@
       console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
       detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
+
+      // In local mode, we need to fetch keys manually to pass to engine
+      if (localMode) {
+        const { localAdapter } = await import('./LocalAdapter.js');
+        vlmKeys = await localAdapter.getVlmKeys();
+        console.log('[ProcessView] Local VLM keys fetched:', Object.keys(vlmKeys));
+      }
 
       // Also get sync settings for thumbnail size
       const { loadSyncSettings } = await import('./SyncManager.js');
@@ -467,6 +475,7 @@
           vlm_provider:  vlmCfg.provider,
           vlm_model:     vlmCfg.model,
           vlm_prompt:    $t('vlm_prompt'),
+          vlm_keys:      vlmKeys,
           thumb_size:    thumb_size_final,
           onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
         });
@@ -486,6 +495,7 @@
               imageId: resp.image_id, 
               faces: resp.face_count ?? faceData.faces.length,
               description: faceData.description || resp.description,
+              sceneType: resp.scene_type || faceData.scene_type,
               tags: faceData.tags || resp.tags,
               people: resp.people || []
             }

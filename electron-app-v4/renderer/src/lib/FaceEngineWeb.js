@@ -770,13 +770,15 @@ export class FaceEngineWeb {
           this._progress('AI Enrichment (VLM)…');
           console.log('[FaceEngineWeb] Starting VLM enrichment process...');
           const { vlmClientWeb } = await import('./VlmWeb.js');
-          const { localAdapter } = await import('./LocalAdapter.js');
           
-          console.log('[FaceEngineWeb] Fetching VLM keys from localAdapter...');
-          const keys = await localAdapter.getVlmKeys();
-          console.log('[FaceEngineWeb] Keys available for providers:', Object.keys(keys));
+          let keys = opts.vlm_keys;
+          if (!keys) {
+            console.warn('[FaceEngineWeb] No VLM keys passed to processFile. VLM might fail if keys are needed.');
+            keys = {};
+          }
+          console.log('[FaceEngineWeb] VLM keys available for providers:', Object.keys(keys));
           
-          if (!keys[opts.vlm_provider]) {
+          if (!keys[opts.vlm_provider] && opts.vlm_provider !== 'openrouter') {
             console.warn(`[FaceEngineWeb] WARNING: No API key found for ${opts.vlm_provider}. VLM call will likely fail.`);
           }
 

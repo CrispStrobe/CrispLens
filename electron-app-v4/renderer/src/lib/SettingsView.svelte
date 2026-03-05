@@ -37,7 +37,7 @@
   let detSize      = 640;
   let detRetries   = 1;
   let vlmEnabled   = false;
-  let vlmProvider  = 'anthropic';
+  let vlmProvider  = '';
   let vlmModel     = '';
   let uploadMaxDim = 0; // 0 = keep full resolution
   // Admin — server management

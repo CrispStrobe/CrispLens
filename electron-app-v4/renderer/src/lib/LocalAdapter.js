@@ -700,6 +700,12 @@ export const localAdapter = {
       // or if globally enabled AND not explicitly disabled.
       const vlm_enabled = params.skip_vlm === false || (settings.vlm.enabled && params.skip_vlm !== true);
 
+      let vlm_keys = params.vlm_keys;
+      if (vlm_enabled && !vlm_keys) {
+        console.log('[LocalAdapter] VLM keys not passed to reDetectFaces, fetching from DB...');
+        vlm_keys = await this.getVlmKeys();
+      }
+
       console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | vlm=${vlm_enabled}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    det_thresh,
@@ -710,6 +716,7 @@ export const localAdapter = {
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
         vlm_prompt:    params.vlm_prompt,
+        vlm_keys:      vlm_keys,
         thumb_size:    thumb_size,
       });
 

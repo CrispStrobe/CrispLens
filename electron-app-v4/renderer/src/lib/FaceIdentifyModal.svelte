@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { allPeople, t, processingBackend } from '../stores.js';
-  import { fetchImage, fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs, isLocalMode, fetchImageAsUrl } from '../api.js';
+  import { fetchImage, fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs, isLocalMode, fetchImageAsUrl, fetchSettings } from '../api.js';
   import { Capacitor } from '@capacitor/core';
 
   export let imageId;
@@ -308,6 +308,12 @@
     saveUserDetPrefs({ det_model: detModel, det_retries: detRetries }).catch(() => {});
     console.log(`[FaceIdentifyModal] onReDetect start for imageId=${imageId} | model=${detModel} | thresh=${detThresh} | retries=${detRetries}`);
     try {
+      let vlmKeys = {};
+      if (localMode) {
+        const { localAdapter } = await import('./LocalAdapter.js');
+        vlmKeys = await localAdapter.getVlmKeys();
+      }
+
       const res = await reDetectFaces(imageId, {
         det_thresh:    detThresh,
         min_face_size: minFaceSize,
@@ -318,6 +324,7 @@
         max_size:      maxSize,
         vlm_max_size:  vlmMaxSize,
         vlm_prompt:    $t('vlm_prompt'),
+        vlm_keys:      vlmKeys,
       });
       console.log('[FaceIdentifyModal] reDetectFaces finished:', res);
       anyChanged = true;
