@@ -393,6 +393,7 @@
       const s = await fetchSettings();
       console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
+      const detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
       
       const modelBase = localMode
         ? '/ort-wasm'
@@ -449,6 +450,7 @@
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
           det_model:     detParams.det_model,
+          max_retries:   detRetries,
           visibility,
           vlm_enabled:   vlmEnabledFinal,
           vlm_provider:  vlmCfg.provider,

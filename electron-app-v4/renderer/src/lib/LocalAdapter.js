@@ -8,7 +8,7 @@
  */
 
 import { Capacitor } from '@capacitor/core';
-import { query, run, exportDatabase, importDatabase, getDatabaseSize, clearDatabase } from './LocalDB.js';
+import { query, run, exportDatabase, importDatabase, getDatabaseSize, clearDatabase, hardResetApp } from './LocalDB.js';
 import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
@@ -228,6 +228,7 @@ export const localAdapter = {
             det_model: prefs.det_model || 'auto',
             recognition_threshold: parseFloat(prefs.rec_threshold || '0.4'),
             detection_threshold: parseFloat(prefs.det_threshold || '0.5'),
+            det_retries: parseInt(prefs.det_retries || '1'),
             det_size: parseInt(prefs.det_size || '640')
           } 
         },
@@ -443,6 +444,10 @@ export const localAdapter = {
     return await clearDatabase();
   },
 
+  async hardResetApp() {
+    return await hardResetApp();
+  },
+
   i18n() {
     return { language: localStorage.getItem('pwa_language') || 'en', translations: {} };
   },
@@ -606,6 +611,60 @@ export const localAdapter = {
     await run('DELETE FROM faces WHERE image_id = ?', [imageId]);
     _voyIndex = null;
     return { ok: true };
+  },
+
+  async reDetectFaces(imageId, params = {}) {
+    console.log(`[LocalAdapter] reDetectFaces for imageId=${imageId}`, params);
+    try {
+      // 1. Get the image record
+      const rows = await query('SELECT * FROM images WHERE id = ?', [imageId]);
+      if (rows.length === 0) throw new Error('Image not found');
+      const imgRow = rows[0];
+
+      // 2. Get the engine
+      const { faceEngineWeb } = await import('./FaceEngineWeb.js');
+      
+      // 3. Prepare the "file" (Blob from thumbnail_blob or filepath)
+      let fileObj;
+      if (imgRow.thumbnail_blob) {
+        const b64 = imgRow.thumbnail_blob.startsWith('data:') ? imgRow.thumbnail_blob : `data:image/jpeg;base64,${imgRow.thumbnail_blob}`;
+        const res = await fetch(b64);
+        const blob = await res.blob();
+        fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });
+      } else {
+        // Fallback to filepath if available
+        const res = await fetch(toWebUrl(imgRow.filepath));
+        const blob = await res.blob();
+        fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });
+      }
+
+      // 4. Run the engine
+      const settings = await this.settings();
+      const faceData = await faceEngineWeb.processFile(fileObj, {
+        det_thresh:    params.det_thresh || settings.face_recognition.insightface.detection_threshold,
+        min_face_size: params.min_face_size || 60,
+        det_model:     params.det_model || settings.face_recognition.insightface.det_model,
+        vlm_enabled:   !params.skip_vlm && settings.vlm.enabled,
+        vlm_provider:  settings.vlm.provider,
+        vlm_model:     settings.vlm.model,
+      });
+
+      // 5. Update the database
+      // First clear old detections if requested (standard server behavior)
+      await this.clearDetections(imageId);
+
+      // Re-import (this will update description/scene_type and add new faces)
+      await this.importProcessed({
+        ...faceData,
+        filepath: imgRow.filepath, // use existing filepath to match record
+        filename: imgRow.filename
+      });
+
+      return { ok: true };
+    } catch (err) {
+      console.error('[LocalAdapter] reDetectFaces failed:', err);
+      throw err;
+    }
   },
 
   async getImageFaces(id) {

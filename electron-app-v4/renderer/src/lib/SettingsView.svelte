@@ -9,7 +9,7 @@
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
-    isLocalMode, setLocalMode, exportDB, importDB, clearDB,
+    isLocalMode, setLocalMode, exportDB, importDB, clearDB, hardResetApp
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
   import syncManager, { loadSyncSettings, saveSyncSettings } from './SyncManager.js';
@@ -35,6 +35,7 @@
   let detThreshold = 0.6;
   let recThreshold = 0.4;
   let detSize      = 640;
+  let detRetries   = 1;
   let vlmEnabled   = false;
   let vlmProvider  = 'anthropic';
   let vlmModel     = '';
@@ -82,6 +83,7 @@
       model        = c?.face_recognition?.insightface?.model ?? 'buffalo_l';
       detThreshold = c?.face_recognition?.insightface?.detection_threshold ?? 0.6;
       recThreshold = c?.face_recognition?.insightface?.recognition_threshold ?? 0.4;
+      detRetries   = c?.face_recognition?.insightface?.det_retries ?? 1;
       const ds     = c?.face_recognition?.insightface?.det_size ?? [640, 640];
       detSize      = Array.isArray(ds) ? ds[0] : ds;
       uploadMaxDim = c?.storage?.upload_max_dimension ?? 0;
@@ -532,6 +534,7 @@
         model        = cfg?.face_recognition?.insightface?.model ?? 'buffalo_l';
         detThreshold = cfg?.face_recognition?.insightface?.detection_threshold ?? 0.6;
         recThreshold = cfg?.face_recognition?.insightface?.recognition_threshold ?? 0.4;
+        detRetries   = cfg?.face_recognition?.insightface?.det_retries ?? 1;
         const ds = cfg?.face_recognition?.insightface?.det_size ?? [640, 640];
         detSize = Array.isArray(ds) ? ds[0] : ds;
           if ($currentUser?.role === 'admin') {
@@ -621,6 +624,7 @@
             backend, model,
             det_threshold: detThreshold,
             rec_threshold: recThreshold,
+            det_retries: detRetries,
             det_size: detSize,
             det_model: detModel || 'auto',
             vlm_enabled: vlmEnabled,
@@ -1013,6 +1017,15 @@
       await clearDB();
       dbMsg = '✓ ' + $t('success') + '. Reloading...';
       setTimeout(() => window.location.reload(), 1500);
+    } catch (e) {
+      dbMsg = '✗ ' + e.message;
+    }
+  }
+
+  async function doHardReset() {
+    if (!confirm('This will purge EVERYTHING: database, settings, and all locally cached data. The app will reload. Continue?')) return;
+    try {
+      await hardResetApp();
     } catch (e) {
       dbMsg = '✗ ' + e.message;
     }
@@ -1718,6 +1731,9 @@
         <button class="small danger" style="margin-left: auto;" on:click={doClearDB}>
           🗑 {$t('settings_db_clear')}
         </button>
+        <button class="small danger" on:click={doHardReset} title="Clear database, settings, and cache">
+          🔥 Hard Reset App (Purge All)
+        </button>
       </div>
       {#if dbMsg}
         <div class="save-msg" class:error-msg={dbMsg.startsWith('✗')}>{dbMsg}</div>
@@ -1896,6 +1912,12 @@
       <div class="slider-row">
         <input id="setting-rec-thresh" type="range" min="0.1" max="0.9" step="0.05" bind:value={recThreshold} />
         <span>{recThreshold.toFixed(2)}</span>
+      </div>
+
+      <label for="setting-det-retries">Detection Retries</label>
+      <div class="slider-row">
+        <input id="setting-det-retries" type="number" min="0" max="5" step="1" bind:value={detRetries} style="width: 60px;" />
+        <span class="hint">Fallback attempts with lower threshold if 0 faces found</span>
       </div>
 
       <label for="setting-det-size">{$t('settings_det_size')}</label>

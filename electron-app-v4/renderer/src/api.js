@@ -392,7 +392,7 @@ export function clearDetections(imageId) {
   return post(`/images/${imageId}/clear-detections`, {});
 }
 export function reDetectFaces(imageId, params = {}) {
-  const g = _guard('reDetectFaces', () => ({ ok: true }));
+  const g = _guard('reDetectFaces', () => localAdapter.reDetectFaces(imageId, params));
   if (g) return g;
   const defaults = { det_thresh: 0.5, min_face_size: 60, rec_thresh: 0.4, skip_vlm: true, det_model: 'auto', max_size: 0 };
   return post(`/images/${imageId}/re-detect`, { ...defaults, ...params });
@@ -620,6 +620,7 @@ export function fetchDbStatus()                     { const g = _guard('fetchDbS
 export function exportDB()                          { const g = _guard('exportDB', () => localAdapter.exportDB()); if (g) return g; throw new Error('Export only supported in local mode'); }
 export function importDB(json)                      { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; throw new Error('Import only supported in local mode'); }
 export function clearDB()                           { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; throw new Error('Clear only supported in local mode'); }
+export function hardResetApp()                      { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; /* server mode reset implemented in App.svelte already */ }
 export function fetchEngineStatus() {
   const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
   if (g) return g;

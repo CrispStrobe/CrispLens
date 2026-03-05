@@ -463,14 +463,19 @@ export class FaceEngineWeb {
       [this._detSession.inputNames[0]]: inputTensor,
     });
 
+    console.log('[FaceEngineWeb] Raw SCRFD model run complete');
     let faces = decodeSCRFD(results, this._detSession.outputNames, invScale, detThresh);
+    console.log(`[FaceEngineWeb] Detections before NMS: ${faces.length} (thresh=${detThresh})`);
+    
     faces = applyNMS(faces);
+    console.log(`[FaceEngineWeb] Detections after NMS: ${faces.length}`);
 
     if (minFaceSize > 0) {
       faces = faces.filter(f => {
         const [x1, y1, x2, y2] = f.bbox;
         return Math.min(x2 - x1, y2 - y1) >= minFaceSize;
       });
+      console.log(`[FaceEngineWeb] Detections after size filter (> ${minFaceSize}px): ${faces.length}`);
     }
 
     return { faces, imageWidth: W, imageHeight: H };
@@ -570,11 +575,42 @@ export class FaceEngineWeb {
     // ── Detection ──────────────────────────────────────────────────────────────
     this._progress('Detecting faces…');
     let detection;
-    if ((opts.det_model || 'auto') === 'mediapipe') {
-      detection = await this.detectFacesMediaPipe(img, opts);
-    } else {
-      detection = await this.detectFaces(img, opts);
+    const runDetection = async (currentOpts) => {
+      if ((currentOpts.det_model || 'auto') === 'mediapipe') {
+        return await this.detectFacesMediaPipe(img, currentOpts);
+      } else {
+        return await this.detectFaces(img, currentOpts);
+      }
+    };
+
+    detection = await runDetection(opts);
+    
+    // Retry logic if 0 faces found and fallback is enabled
+    if (detection.faces.length === 0 && (opts.det_model || 'auto') !== 'none') {
+      const retries = opts.max_retries ?? 1;
+      let currentThresh = opts.det_thresh ?? 0.5;
+      let currentMinSize = opts.min_face_size ?? 0;
+
+      for (let i = 0; i < retries; i++) {
+        currentThresh = Math.max(0.1, currentThresh - 0.15);
+        currentMinSize = Math.max(0, currentMinSize - 20);
+        console.log(`[FaceEngineWeb] 0 faces found. Retry ${i + 1}/${retries} with thresh=${currentThresh.toFixed(2)}, minSize=${currentMinSize}`);
+        
+        this._progress(`Retrying detection (${i + 1}/${retries})…`);
+        const retryDetection = await runDetection({
+          ...opts,
+          det_thresh: currentThresh,
+          min_face_size: currentMinSize
+        });
+
+        if (retryDetection.faces.length > 0) {
+          console.log(`[FaceEngineWeb] Retry ${i + 1} SUCCESS: found ${retryDetection.faces.length} faces`);
+          detection = retryDetection;
+          break;
+        }
+      }
     }
+
     const { faces } = detection;
     this._progress(`${faces.length} face(s) found — computing embeddings…`);
 

@@ -348,9 +348,11 @@ export async function getDB() {
 }
 
 export async function query(sql, params = []) {
+  console.log(`[LocalDB] Query: ${sql.slice(0, 50)}...`, params);
   try {
     const db = await getDB();
     const result = await db.query(sql, params);
+    console.log(`[LocalDB] Query result count: ${result.values?.length || 0}`);
     return result.values ?? [];
   } catch (err) {
     console.error(`[LocalDB] Query failed: ${sql}`, err);
@@ -359,6 +361,7 @@ export async function query(sql, params = []) {
 }
 
 export async function run(sql, params = []) {
+  console.log(`[LocalDB] Run: ${sql.slice(0, 50)}...`, params);
   try {
     const db = await getDB();
     const result = await db.run(sql, params);
@@ -366,8 +369,9 @@ export async function run(sql, params = []) {
     // On Web, we MUST save to store to persist in IndexedDB
     const isWeb = window.location.protocol !== 'capacitor:';
     if (isWeb && sqlite) {
-      console.log(`[LocalDB] Saving ${DB_NAME} to WebStore...`);
+      console.log(`[LocalDB] PERSISTING to WebStore (IndexedDB)...`);
       await sqlite.saveToStore(DB_NAME);
+      console.log(`[LocalDB] Persist COMPLETE.`);
     }
     
     return result;
@@ -378,14 +382,16 @@ export async function run(sql, params = []) {
 }
 
 export async function execute(sql) {
+  console.log(`[LocalDB] Execute script...`);
   try {
     const db = await getDB();
     const result = await db.execute(sql);
     
     const isWeb = window.location.protocol !== 'capacitor:';
     if (isWeb && sqlite) {
-      console.log(`[LocalDB] Saving ${DB_NAME} to WebStore (after execute)...`);
+      console.log(`[LocalDB] PERSISTING to WebStore (IndexedDB) after execute...`);
       await sqlite.saveToStore(DB_NAME);
+      console.log(`[LocalDB] Persist COMPLETE.`);
     }
     
     return result;
@@ -507,21 +513,30 @@ export async function importDatabase(jsonContent) {
 export async function clearDatabase() {
   try {
     console.warn('[LocalDB] Resetting database...');
-    if (!_db) await getDB();
     
-    // We'll drop all tables. 
-    // Alternatively, we could delete the database file using the plugin's deleteDatabase method.
     if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
     
+    // 1. Close connections
     if (_db) {
-      await _db.close();
-      await sqlite.closeConnection(DB_NAME, false);
-      _db = null;
+      try {
+        const isOpen = (await _db.isDBOpen()).result;
+        if (isOpen) await _db.close();
+      } catch (e) { console.warn('[LocalDB] Error closing DB:', e); }
     }
     
-    await sqlite.deleteDatabase(DB_NAME, false);
+    try {
+      await sqlite.closeConnection(DB_NAME, false);
+    } catch (e) { /* ignore */ }
     
-    // Re-initialize with the schema
+    _db = null;
+    resetInit();
+
+    // 2. Delete using the plugin directly (more robust than connection method)
+    console.log(`[LocalDB] Deleting database file: ${DB_NAME}`);
+    await CapacitorSQLite.deleteDatabase({ database: DB_NAME });
+    
+    // 3. Re-initialize with the schema
+    console.log('[LocalDB] Re-initializing fresh database...');
     await getDB();
     
     return { ok: true };
@@ -529,6 +544,41 @@ export async function clearDatabase() {
     console.error('[LocalDB] Reset failed:', err);
     throw err;
   }
+}
+
+/**
+ * Destructive: Clears EVERYTHING. 
+ * LocalStorage, IndexedDB (SQLite), and Service Worker caches.
+ */
+export async function hardResetApp() {
+  console.warn('[LocalDB] HARD RESET requested. Purging all local data.');
+  
+  // 1. Clear database
+  try {
+    await clearDatabase();
+  } catch (e) { console.error('[LocalDB] Could not clear SQLite during reset:', e); }
+
+  // 2. Clear LocalStorage
+  localStorage.clear();
+  
+  // 3. Clear Caches
+  if ('caches' in window) {
+    try {
+      const names = await caches.keys();
+      for (const name of names) await caches.delete(name);
+    } catch (e) { console.error('[LocalDB] Could not clear Caches:', e); }
+  }
+
+  // 4. Unregister Service Workers
+  if ('serviceWorker' in navigator) {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.unregister();
+    } catch (e) { console.error('[LocalDB] Could not unregister SW:', e); }
+  }
+
+  console.log('[LocalDB] Hard reset complete. Reloading...');
+  window.location.reload();
 }
 
 /** 

@@ -388,28 +388,11 @@
               <button on:click={() => sidebarView.set('settings')}>Open Settings</button>
             {/if}
             <button class="danger" on:click={async () => { 
-              if (confirm('Reset app state? This will clear settings, unregister Service Worker and PURGE all PWA caches.')) {
-                localStorage.removeItem('remote_url');
-                localStorage.removeItem('db_mode');
-                localStorage.removeItem('pwa_language');
-                
-                // Clear all PWA caches
-                if ('caches' in window) {
-                  const names = await caches.keys();
-                  console.log('[App] Clearing caches:', names);
-                  for (const name of names) await caches.delete(name);
-                }
-                // Unregister all service workers
-                if ('serviceWorker' in navigator) {
-                  const regs = await navigator.serviceWorker.getRegistrations();
-                  console.log('[App] Unregistering service workers:', regs.length);
-                  for (const r of regs) await r.unregister();
-                }
-                
-                console.log('[App] Hard reset complete, reloading...');
-                window.location.reload();
+              if (confirm('Hard Reset? This will purge EVERYTHING: database, settings, and all locally cached data. The app will reload. Continue?')) {
+                const { hardResetApp } = await import('./lib/LocalDB.js');
+                await hardResetApp();
               }
-            }}>Reset App State</button>
+            }}>Reset App State (Hard Reset)</button>
           </div>
         </div>
       {:else if sessionChecked && !$currentUser && !$isOffline}
