@@ -43,6 +43,7 @@ const SCHEMA = `
     bbox_x2              REAL,
     bbox_y2              REAL,
     detection_confidence REAL,
+    face_quality         REAL DEFAULT 1.0,
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
   );
   CREATE TABLE IF NOT EXISTS face_embeddings (
@@ -51,6 +52,9 @@ const SCHEMA = `
     person_id           INTEGER,
     embedding_vector    BLOB,
     embedding_dimension INTEGER DEFAULT 512,
+    embedding_model     TEXT,
+    recognition_confidence REAL,
+    verified            INTEGER DEFAULT 0,
     FOREIGN KEY (face_id)   REFERENCES faces(id)  ON DELETE CASCADE,
     FOREIGN KEY (person_id) REFERENCES people(id) ON DELETE SET NULL
   );
@@ -281,18 +285,42 @@ export async function getDB() {
       console.log('[LocalDB] Step 8: Executing schema...');
       await _db.execute(SCHEMA);
 
-      // ── Migration: ensure thumbnail_blob exists ──────────────────────────
+      // ── Migration: ensure columns exist ────────────────────────────────
       try {
-        const tableInfo = await _db.query("PRAGMA table_info(images);");
-        const hasThumb = tableInfo.values?.some(c => c.name === 'thumbnail_blob');
-        if (!hasThumb) {
-          console.log('[LocalDB] Migrating: Adding thumbnail_blob to images table...');
+        const isWeb = window.location.protocol !== 'capacitor:';
+        
+        // 1. images.thumbnail_blob
+        const imgInfo = await _db.query("PRAGMA table_info(images);");
+        if (!imgInfo.values?.some(c => c.name === 'thumbnail_blob')) {
+          console.log('[LocalDB] Migrating: images.thumbnail_blob');
           await _db.execute("ALTER TABLE images ADD COLUMN thumbnail_blob BLOB;");
-          console.log('[LocalDB] Migration OK');
-          
-          // Persist the migration
-          if (isWeb && sqlite) await sqlite.saveToStore(DB_NAME);
         }
+
+        // 2. faces.face_quality
+        const facesInfo = await _db.query("PRAGMA table_info(faces);");
+        if (!facesInfo.values?.some(c => c.name === 'face_quality')) {
+          console.log('[LocalDB] Migrating: faces.face_quality');
+          await _db.execute("ALTER TABLE faces ADD COLUMN face_quality REAL DEFAULT 1.0;");
+        }
+
+        // 3. face_embeddings.verified, etc.
+        const embInfo = await _db.query("PRAGMA table_info(face_embeddings);");
+        if (!embInfo.values?.some(c => c.name === 'verified')) {
+          console.log('[LocalDB] Migrating: face_embeddings.verified');
+          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN verified INTEGER DEFAULT 0;");
+        }
+        if (!embInfo.values?.some(c => c.name === 'embedding_model')) {
+          console.log('[LocalDB] Migrating: face_embeddings.embedding_model');
+          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN embedding_model TEXT;");
+        }
+        if (!embInfo.values?.some(c => c.name === 'recognition_confidence')) {
+          console.log('[LocalDB] Migrating: face_embeddings.recognition_confidence');
+          await _db.execute("ALTER TABLE face_embeddings ADD COLUMN recognition_confidence REAL;");
+        }
+
+        // Persist all migrations
+        if (isWeb && sqlite) await sqlite.saveToStore(DB_NAME);
+        console.log('[LocalDB] Migrations check complete');
       } catch (migErr) {
         console.warn('[LocalDB] Migration check failed (non-critical):', migErr.message);
       }

@@ -19,11 +19,17 @@ async function _getVoyIndex(forceRebuild = false) {
   if (_voyIndex && !forceRebuild) return _voyIndex;
   
   const mod = await import('voy-search');
-  const Voy = mod.Voy || mod.default?.Voy || mod.default;
+  console.log('[LocalAdapter] Voy module loaded:', Object.keys(mod));
   
-  if (!Voy) {
-    console.error('[LocalAdapter] Failed to find Voy class in module:', mod);
-    throw new Error('Voy class not found');
+  // In minified/Vercel build, the export might be directly on the module or under 'default'
+  let Voy = mod.Voy || mod.default?.Voy || mod.default;
+  
+  // Some versions/bundlers wrap it another level
+  if (typeof Voy !== 'function' && Voy?.Voy) Voy = Voy.Voy;
+
+  if (typeof Voy !== 'function') {
+    console.error('[LocalAdapter] Voy is not a constructor:', Voy);
+    throw new Error('Voy search engine failed to load (module resolution error)');
   }
 
   const items = await _loadAllEmbeddings();
