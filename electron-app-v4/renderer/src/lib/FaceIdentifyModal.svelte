@@ -235,11 +235,29 @@
   }
 
   async function saveAll() {
+    let savedAny = false;
     for (const face of faces) {
-      if ((names[face.face_id] || '').trim()) {
-        await saveFace(face);
+      const name = (names[face.face_id] || '').trim();
+      if (name) {
+        saving = { ...saving, [face.face_id]: true };
+        try {
+          await reassignFace(face.face_id, name);
+          saved = { ...saved, [face.face_id]: true };
+          anyChanged = true;
+          savedAny = true;
+        } catch (e) {
+          console.error(`Error saving face ${face.face_id}:`, e);
+        } finally {
+          saving = { ...saving, [face.face_id]: false };
+        }
       }
     }
+    if (savedAny) {
+      await refreshPeople();
+      // If we are closing, we don't strictly need to loadFaces() but it's good for state consistency
+      // However, the user wants to return to the main UI, so we just close.
+    }
+    close();
   }
 
   async function onRemoveFace(face_id) {
@@ -627,9 +645,11 @@
         </div>
 
         <div class="save-all-row">
-          <button class="primary" on:click={saveAll}>{$t('save_all')}</button>
+          <button class="primary" on:click={saveAll} disabled={reDetecting || loading}>
+            {reDetecting ? $t('scanning') : $t('save_all')}
+          </button>
+          <button class="btn-sm" on:click={close}>{$t('close')}</button>
           <button class="btn-sm" on:click={() => showParams = !showParams}>{$t('rescan')}</button>
-          <span class="hint">{$t('press_esc_to_close')}</span>
         </div>
 
         {#if showParams}
