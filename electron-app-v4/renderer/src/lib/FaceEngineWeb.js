@@ -762,43 +762,41 @@ export class FaceEngineWeb {
     });
 
     if (opts.vlm_enabled) {
-      try {
-        this._progress('AI Enrichment (VLM)…');
-        console.log('[FaceEngineWeb] Starting VLM enrichment process...');
-        const { vlmClientWeb } = await import('./VlmWeb.js');
-        const { localAdapter } = await import('./LocalAdapter.js');
-        
-        console.log('[FaceEngineWeb] Fetching VLM keys from localAdapter...');
-        const keys = await localAdapter.getVlmKeys();
-        console.log('[FaceEngineWeb] Keys available for:', Object.keys(keys));
-        
-        if (Object.keys(keys).length === 0) {
-          console.warn('[FaceEngineWeb] WARNING: No VLM API keys found in local storage/DB. VLM call will likely fail.');
-        }
+      if (!opts.vlm_provider) {
+        console.warn('[FaceEngineWeb] VLM enabled but no provider specified. Skipping.');
+        this._progress('VLM skipped (no provider)');
+      } else {
+        try {
+          this._progress('AI Enrichment (VLM)…');
+          console.log('[FaceEngineWeb] Starting VLM enrichment process...');
+          const { vlmClientWeb } = await import('./VlmWeb.js');
+          const { localAdapter } = await import('./LocalAdapter.js');
+          
+          console.log('[FaceEngineWeb] Fetching VLM keys from localAdapter...');
+          const keys = await localAdapter.getVlmKeys();
+          console.log('[FaceEngineWeb] Keys available for providers:', Object.keys(keys));
+          
+          if (!keys[opts.vlm_provider]) {
+            console.warn(`[FaceEngineWeb] WARNING: No API key found for ${opts.vlm_provider}. VLM call will likely fail.`);
+          }
 
-        vlmClientWeb.setKeys(keys);
-        
-        const prompt = opts.vlm_prompt || 'Describe this image in detail.';
-        const provider = opts.vlm_provider || 'anthropic';
-        const model = opts.vlm_model || '';
-        
-        console.log(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
-        console.log(`[FaceEngineWeb] Image size: ${file.size} bytes, type: ${file.type}`);
-        
-        vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
-        console.log('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
-        this._progress('AI Enrichment done');
-      } catch (e) {
-        console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);
-        console.error('[FaceEngineWeb] Error stack:', e.stack);
-        this._progress(`AI Enrichment failed (${opts.vlm_provider}): ${e.message}`);
-        // We don't throw here so the image still gets imported even if VLM fails
+          vlmClientWeb.setKeys(keys);
+          
+          const prompt = opts.vlm_prompt || 'Describe this image in detail.';
+          const provider = opts.vlm_provider;
+          const model = opts.vlm_model || '';
+          
+          console.log(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
+          vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
+          console.log('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
+          this._progress('AI Enrichment done');
+        } catch (e) {
+          console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);
+          this._progress(`AI Enrichment failed (${opts.vlm_provider}): ${e.message}`);
+        }
       }
     } else {
-      console.log('[FaceEngineWeb] VLM enrichment SKIPPED (vlm_enabled is false or undefined in opts)');
-      if (opts.skip_vlm) {
-        console.log('[FaceEngineWeb] Reason: opts.skip_vlm is true');
-      }
+      console.log('[FaceEngineWeb] VLM enrichment SKIPPED (vlm_enabled is false/falsy)');
     }
 
     this._progress('Done');

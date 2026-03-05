@@ -401,10 +401,14 @@
     loadFaces();
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', recalcSize);
-    // Load user's preferred detection model
+    // Load user's preferred detection model and VLM status
     fetchUserDetPrefs().then(p => {
       detModel = p.effective?.det_model || 'auto';
       detRetries = p.effective?.det_retries ?? 1;
+    }).catch(() => {});
+
+    fetchSettings().then(s => {
+      alsoRunVlm = s?.vlm?.enabled ?? false;
     }).catch(() => {});
   });
 

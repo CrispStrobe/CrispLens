@@ -234,7 +234,7 @@ export const localAdapter = {
         },
         processing: { backend: 'local' },
         vlm: { 
-          enabled: prefs.vlm_enabled === 'true',
+          enabled: prefs.vlm_enabled === 'true' || prefs.vlm_enabled === true,
           provider: prefs.vlm_provider || 'anthropic',
           model: prefs.vlm_model || ''
         },
@@ -982,6 +982,7 @@ export const localAdapter = {
       face_count: faceCount, 
       people,
       description: description || null,
+      scene_type:  scene_type || null,
       tags: tags || []
     };
   },

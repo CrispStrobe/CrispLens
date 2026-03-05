@@ -452,7 +452,10 @@
       queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
       try {
         console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
-        const vlmEnabledFinal = !detParams.skip_vlm && vlmCfg.enabled;
+        
+        // VLM should run if explicitly requested (!skip_vlm) 
+        // OR if globally enabled and not explicitly skipped.
+        const vlmEnabledFinal = detParams.skip_vlm === false || (vlmCfg.enabled && detParams.skip_vlm !== true);
         
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,

@@ -69,7 +69,8 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
 
 router.post('/import-processed', requireAuth, (req, res) => {
   const { filepath, local_path, width, height, format, file_size,
-          faces = [], visibility = 'shared' } = req.body || {};
+          faces = [], visibility = 'shared',
+          description, scene_type, tags = [] } = req.body || {};
   if (!filepath) return res.status(400).json({ detail: 'filepath required' });
 
   const db       = getDb();
@@ -81,14 +82,29 @@ router.post('/import-processed', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT id FROM images WHERE filepath=?').get(filepath);
   if (existing) {
     imageId = existing.id;
-    db.prepare('UPDATE images SET width=?,height=?,format=?,file_size=?,local_path=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .run(width, height, format, file_size, local_path, imageId);
+    db.prepare(`
+      UPDATE images SET 
+        width=?, height=?, format=?, file_size=?, local_path=?,
+        ai_description = COALESCE(?, ai_description),
+        ai_scene_type = COALESCE(?, ai_scene_type),
+        updated_at=CURRENT_TIMESTAMP 
+      WHERE id=?
+    `).run(width, height, format, file_size, local_path, description || null, scene_type || null, imageId);
   } else {
     const r = db.prepare(`
-      INSERT INTO images (filepath, filename, file_size, width, height, format, local_path, owner_id, visibility)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(filepath, filename, file_size, width, height, format, local_path || filepath, owner_id, visibility);
+      INSERT INTO images (filepath, filename, file_size, width, height, format, local_path, owner_id, visibility, ai_description, ai_scene_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `).run(filepath, filename, file_size, width, height, format, local_path || filepath, owner_id, visibility, description || null, scene_type || null);
     imageId = r.lastInsertRowid;
+  }
+
+  // Tags
+  if (tags && tags.length > 0) {
+    for (const name of tags) {
+      db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+      const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+      db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(imageId, tag.id);
+    }
   }
 
   // Load recognition store for person matching
