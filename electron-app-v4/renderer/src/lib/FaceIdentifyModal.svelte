@@ -63,6 +63,7 @@
   }
 
   let faces = [];
+  let vlmInfo = { description: false, tags: 0 };
   let imgEl;
   let displayW = 0, displayH = 0;
   let loading = true;
@@ -202,6 +203,14 @@
       for (const f of faces) {
         names[f.face_id] = f.person_name || '';
       }
+      
+      // Also fetch image metadata to check VLM results
+      const img = await fetchImage(imageId);
+      vlmInfo = {
+        description: !!(img.ai_description || img.description),
+        tags: img.ai_tags?.length || img.ai_tags_list?.length || 0
+      };
+
       if (faces.length === 0) showParams = true;
     } catch (e) {
       console.error('loadFaces error:', e);
@@ -644,6 +653,16 @@
           {/each}
         </div>
 
+        <div class="result-summary">
+          <span class="badge faces">👤 {faces.length} {$t('pv_faces_identified')}</span>
+          {#if vlmInfo.description}
+            <span class="badge vlm">TXT ✓</span>
+          {/if}
+          {#if vlmInfo.tags > 0}
+            <span class="badge vlm">TAGS: {vlmInfo.tags}</span>
+          {/if}
+        </div>
+
         <div class="save-all-row">
           <button class="primary" on:click={saveAll} disabled={reDetecting || loading}>
             {reDetecting ? $t('scanning') : $t('save_all')}
@@ -920,6 +939,21 @@
     gap: 10px;
     flex-shrink: 0;
   }
+  .result-summary {
+    padding: 8px 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    border-top: 1px solid #2a2a3a;
+  }
+  .badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .badge.faces { background: #1e2a40; color: #6090d0; }
+  .badge.vlm   { background: #3a2a1a; color: #c09040; font-weight: bold; }
   .hint { font-size: 10px; color: #404060; }
 
   .params-box {

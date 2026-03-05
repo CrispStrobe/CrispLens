@@ -1126,10 +1126,16 @@
               {#if item.status === 'done'}
                 <span class="badge done">✓</span>
                 {#if item.faces > 0}
-                  <span class="badge faces">{item.faces} {item.faces !== 1 ? $t('pv_images') : $t('pv_image')}</span>
+                  <span class="badge faces" title={$t('pv_faces_identified')}>{item.faces} 👤</span>
                 {/if}
                 {#if item.people?.length > 0}
-                  <span class="badge people">{item.people.join(', ')}</span>
+                  <span class="badge people" title={$t('pv_matched_in_index')}>{item.people.length} ✓</span>
+                {/if}
+                {#if item.description}
+                  <span class="badge vlm" title={$t('pv_vlm_desc_received')}>TXT</span>
+                {/if}
+                {#if item.tags?.length > 0}
+                  <span class="badge vlm" title={$t('pv_vlm_tags_received')}>TAGS</span>
                 {/if}
               {/if}
               {#if item.status === 'skipped'}
@@ -1427,6 +1433,7 @@
   .badge.queued     { background: #3a2a0a; color: #c09030; }
   .badge.faces      { background: #1e2a40; color: #6090c0; }
   .badge.people     { background: #2a1e3a; color: #9070c0; }
+  .badge.vlm        { background: #3a2a1a; color: #c09040; font-size: 8px; font-weight: bold; }
   .badge.skipped    { background: #252535; color: #707090; }
   .badge.shared-dup { background: #2e2a18; color: #b09040; }
 

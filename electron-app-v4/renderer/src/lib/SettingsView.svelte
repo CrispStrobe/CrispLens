@@ -1214,10 +1214,9 @@
   {:else}
   <!-- Storage Mode selector (browser/PWA/Capacitor) -->
   <section class="card">
-    <h3>Storage Mode</h3>
+    <h3>{$t('settings_storage_mode')}</h3>
     <p class="hint" style="margin-bottom:12px;">
-      Choose how CrispLens stores data. <strong>Server</strong> connects to a v4 Node.js or v2 FastAPI
-      backend. <strong>Standalone (Local)</strong> uses on-device SQLite — no server required, ideal for iOS/Android offline use.
+      {$t('settings_storage_mode_hint')}
     </p>
     <div class="mode-selector">
       <button class="mode-btn" class:active={dbMode === 'server'} on:click={() => dbMode !== 'server' && switchDbMode('server')}>
@@ -1241,7 +1240,7 @@
               Switch back to Server Mode
             </button>
             <button class="small" on:click={runDbDiag} disabled={testingDiag}>
-              {testingDiag ? '...' : 'Run DB Diagnostics'}
+              {testingDiag ? '...' : $t('settings_db_diag')}
             </button>
             <button class="small primary" on:click={doRestartEngine} disabled={restartingEngine}>
               {restartingEngine ? '...' : '🔄 Restart WASM Engine'}
@@ -1253,7 +1252,7 @@
         </div>
       {/if}
       <p class="hint" style="margin-top:10px;color:#a0a060;">
-        ⚡ Standalone mode active. All processing, including VLM API calls and user management, happens locally on this device. Ensure you have downloaded the ONNX models below.
+        {$t('settings_standalone_active')}
       </p>
             {#if !isStandaloneBroken}
               <div style="display:flex; gap:8px; margin-top:6px; flex-wrap: wrap;">
@@ -1272,13 +1271,13 @@
         <div class="model-status-row">
           <span class="model-status-label">SCRFD detector</span>
           <span class="model-badge" class:ok={modelStatus.det_10g} class:missing={!modelStatus.det_10g}>
-            {modelStatus.det_10g ? '✓ cached' : '✗ not downloaded'}
+            {modelStatus.det_10g ? '✓ ' + $t('settings_model_cached') : '✗ ' + $t('settings_model_not_found')}
           </span>
         </div>
         <div class="model-status-row">
           <span class="model-status-label">ArcFace recognizer</span>
           <span class="model-badge" class:ok={modelStatus.w600k_r50} class:missing={!modelStatus.w600k_r50}>
-            {modelStatus.w600k_r50 ? '✓ cached' : '✗ not downloaded'}
+            {modelStatus.w600k_r50 ? '✓ ' + $t('settings_model_cached') : '✗ ' + $t('settings_model_not_found')}
           </span>
         </div>
         {#if modelDownloadMsg}
@@ -1287,8 +1286,7 @@
           </div>
         {/if}
         <p class="hint" style="margin-top:6px;">
-          Models are downloaded from the connected server and cached on-device (~185 MB total).
-          Download once while online, then use offline forever.
+          {$t('settings_models_download_hint')}
         </p>
         <button class="primary" style="margin-top:8px;" on:click={downloadModels}
                 disabled={modelDownloading || (modelStatus.det_10g && modelStatus.w600k_r50)}>
@@ -1304,10 +1302,10 @@
 
       <!-- Sync Target (for standalone mode only) -->
       <div style="margin-top:16px; padding-top:12px; border-top:1px solid #2a2a42;">
-        <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:8px;">Sync Target</div>
-        <p class="hint" style="margin-bottom:8px;">Set the remote server to push/pull data from when in standalone mode.</p>
+        <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:8px;">{$t('settings_sync_target')}</div>
+        <p class="hint" style="margin-bottom:8px;">{$t('settings_sync_target_hint')}</p>
         <div class="form-grid">
-          <label>Server URL</label>
+          <label>{$t('api_server_url_label')}</label>
           <input type="text" bind:value={syncRemoteUrl} placeholder="https://faces.example.com" />
         </div>
       </div>
@@ -1922,10 +1920,10 @@
         <span>{recThreshold.toFixed(2)}</span>
       </div>
 
-      <label for="setting-det-retries">Detection Retries</label>
+      <label for="setting-det-retries">{$t('settings_det_retries')}</label>
       <div class="slider-row">
         <input id="setting-det-retries" type="number" min="0" max="5" step="1" bind:value={detRetries} style="width: 60px;" />
-        <span class="hint">Fallback attempts with lower threshold if 0 faces found</span>
+        <span class="hint">{$t('settings_det_retries_hint')}</span>
       </div>
 
       <label for="setting-det-size">{$t('settings_det_size')}</label>
