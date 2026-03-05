@@ -53,9 +53,15 @@ if (uiDist) {
       if (ext === '.mjs' || ext === '.js') res.setHeader('Content-Type', 'application/javascript');
       else if (ext === '.wasm') res.setHeader('Content-Type', 'application/wasm');
       else if (ext === '.css') res.setHeader('Content-Type', 'text/css');
-      
+
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      // JS/CSS: no-cache so browsers revalidate on every load (filenames are unhashed).
+      // WASM: long-lived immutable (files are stable and huge — no benefit re-fetching).
+      if (ext === '.js' || ext === '.mjs' || ext === '.css') {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
       console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
       return res.sendFile(filePath);
     }
@@ -177,6 +183,11 @@ if (uiDist) {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.mjs')) {
         res.setHeader('Content-Type', 'application/javascript');
+      }
+      // Service worker and entry HTML must never be cached immutably so browsers
+      // always fetch the latest version and pick up new builds.
+      if (filePath.endsWith('sw.js') || filePath.includes('workbox-') || filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
       }
     }
   }));
