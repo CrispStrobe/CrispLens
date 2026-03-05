@@ -268,18 +268,11 @@
     : 'server';
 
   async function switchDbMode(mode) {
-    if (mode === 'local') {
-      try {
-        const { restartEngine } = await import('./LocalDB.js');
-        await restartEngine();
-      } catch (e) {
-        console.warn('[SettingsView] Engine restart during switch failed:', e);
-      }
-    }
     setLocalMode(mode === 'local');
     dbMode = mode;
-    // Reload so the new mode takes effect immediately
-    setTimeout(() => { window.location.reload(); }, 300);
+    // Reload so the new mode takes effect immediately.
+    // App.svelte handles robust initialization on the fresh load.
+    setTimeout(() => { window.location.reload(); }, 500);
   }
 
   // Check standalone availability

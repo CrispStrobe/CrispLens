@@ -206,25 +206,29 @@ async function _waitForJeepSqlite() {
 
 export async function getDB() {
   if (_initFailed) {
-    console.error('[LocalDB] getDB() called but initialization previously failed.');
-    throw new Error('Database initialization previously failed.');
+    console.warn('[LocalDB] getDB() found _initFailed=true. Clearing flag and retrying fresh init.');
+    _initFailed = false;
+    _initPromise = null;
   }
   
   if (_db) {
     try {
+      console.log('[LocalDB] Checking existing _db connection...');
       const isOpen = (await _db.isDBOpen()).result;
       if (isOpen) return _db;
+      console.log('[LocalDB] Existing _db exists but is closed.');
     } catch (e) {
-      console.warn('[LocalDB] _db instance exists but isDBOpen check failed:', e.message);
-      _db = null; // Re-create
+      console.warn('[LocalDB] _db exists but isDBOpen check failed:', e.message);
     }
+    _db = null; // Re-create
   }
   
   if (_initPromise) {
-    console.log('[LocalDB] getDB() returning existing initPromise');
+    console.log('[LocalDB] getDB() waiting for existing initPromise...');
     return _initPromise;
   }
 
+  console.log('[LocalDB] Creating new initialization promise...');
   _initPromise = (async () => {
     console.log('[LocalDB] Opening face_recognition database...');
     try {

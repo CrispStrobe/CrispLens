@@ -234,15 +234,17 @@
     // ── Local (standalone) mode: no server needed ──────────────────────────
     if (isLocalMode()) {
       console.log('[App] Standalone mode detected, ensuring engine is ready...');
-      try {
-        const { restartEngine } = await import('./lib/LocalDB.js');
-        // restartEngine is safer than just getDB because it clears any stale
-        // native connections from a previous session or failed switch.
-        await restartEngine();
-        console.log('[App] Standalone engine initialized');
-      } catch (e) {
-        console.error('[App] Standalone engine initialization failed:', e);
-      }
+      // Small delay to let jeep-sqlite component upgrade in DOM
+      setTimeout(async () => {
+        try {
+          const { getDB } = await import('./lib/LocalDB.js');
+          await getDB();
+          console.log('[App] Standalone engine initialized');
+        } catch (e) {
+          console.error('[App] Standalone engine initialization failed:', e);
+        }
+      }, 500);
+      
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;

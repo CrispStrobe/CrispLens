@@ -46,9 +46,12 @@ async function robustFetch(url, options = {}) {
         json: async () => res.data,
         text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
         blob: async () => {
-          // CapacitorHttp returns base64 for binary data if requested, or we can convert
-          const blobRes = await CapacitorHttp.get({ ...capOpts, responseType: 'blob' });
-          return blobRes.data;
+          // If native HTTP returned base64, convert it
+          if (typeof res.data === 'string') {
+            const contentType = res.headers['Content-Type'] || res.headers['content-type'] || 'application/octet-stream';
+            return base64ToBlob(res.data.replace(/^data:[^;]+;base64,/, ''), contentType);
+          }
+          return res.data; // Already a Blob
         },
         headers: {
           get: (name) => res.headers[name] || res.headers[name.toLowerCase()]
@@ -70,10 +73,26 @@ async function robustUpload(url, formData, options = {}) {
     // Extract file and other fields from FormData
     const files = [];
     const params = {};
+    
+    // Helper to read blob as base64
+    const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
     for (const [key, value] of formData.entries()) {
       if (value instanceof Blob || value instanceof File) {
-        files.push({ key, blob: value, name: value.name || 'image.jpg' });
+        const base64 = await blobToBase64(value);
+        console.log(`[api] Upload: converting field "${key}" to base64 (${base64.length} chars)`);
+        files.push({ 
+          key, 
+          data: base64, 
+          name: value.name || 'file.jpg' 
+        });
       } else {
+        console.log(`[api] Upload: adding form field "${key}" = "${value}"`);
         params[key] = String(value);
       }
     }
@@ -89,19 +108,34 @@ async function robustUpload(url, formData, options = {}) {
         }
       });
 
+      console.log(`[api] CapacitorHttp.upload response: ${res.status}`);
       return {
         ok: res.status >= 200 && res.status < 300,
         status: res.status,
         json: async () => res.data,
-        text: async () => JSON.stringify(res.data)
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
       };
     } catch (err) {
-      console.error('[api] CapacitorHttp.upload error:', err);
-      throw err;
+      const errMsg = err.message || JSON.stringify(err);
+      console.error('[api] CapacitorHttp.upload fatal error:', errMsg);
+      throw new Error(errMsg);
     }
   }
   
   return fetch(url, { ...options, method: 'POST', body: formData });
+}
+
+/** Helper to convert base64 to Blob for Capacitor native HTTP responses */
+function base64ToBlob(base64, contentType = '', sliceSize = 512) {
+  const byteCharacters = atob(base64);
+  const byteArrays = [];
+  for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+    const slice = byteCharacters.slice(offset, offset + sliceSize);
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
+    byteArrays.push(new Uint8Array(byteNumbers));
+  }
+  return new Blob(byteArrays, { type: contentType });
 }
 
 /** Fetch an image as an Object URL (bypassing CORS/Cookie issues on mobile) */
@@ -113,9 +147,25 @@ export async function fetchImageAsUrl(url) {
         responseType: 'blob',
         headers: { 'X-Capacitor-HTTP-Cookies': 'true' } 
       });
-      return URL.createObjectURL(res.data);
+      
+      if (typeof res.data === 'string') {
+        // Native platform often returns base64 string for binary data
+        const contentType = res.headers['Content-Type'] || res.headers['content-type'] || 'image/jpeg';
+        // If it's already a data URL, return it
+        if (res.data.startsWith('data:')) return res.data;
+        // Otherwise convert base64 to Object URL
+        const blob = base64ToBlob(res.data, contentType);
+        return URL.createObjectURL(blob);
+      }
+      
+      if (res.data instanceof Blob) {
+        return URL.createObjectURL(res.data);
+      }
+      
+      return url;
     } catch (e) {
-      console.error('[api] fetchImageAsUrl failed:', e);
+      const errMsg = e.message || JSON.stringify(e);
+      console.error('[api] fetchImageAsUrl failed:', errMsg);
       return url;
     }
   }
