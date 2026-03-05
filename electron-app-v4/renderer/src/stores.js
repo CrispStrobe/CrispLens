@@ -167,6 +167,7 @@ const EN = {
   det_model_yunet: 'YuNet',
   det_model_mediapipe: 'MediaPipe',
   det_model_none: 'None (VLM only)',
+  vlm_prompt: 'Analyze this image and provide: 1. A short description. 2. A scene type (e.g. portrait, landscape, etc). 3. A list of keyword tags.',
   // API server + processing backend (v4)
   api_server_section:         'API / Database Server',
   api_server_url_label:       'Server URL',
@@ -706,6 +707,7 @@ export const TRANSLATIONS = {
     det_model_yunet: 'YuNet',
     det_model_mediapipe: 'MediaPipe',
     det_model_none: 'Keines (nur VLM)',
+    vlm_prompt: 'Analysiere dieses Bild und gib an: 1. Eine kurze Beschreibung. 2. Den Szenentyp (z. B. Porträt, Landschaft usw.). 3. Eine Liste von Stichwort-Tags.',
     // API server + processing backend (v4)
     api_server_section:         'API / Datenbankserver',
     api_server_url_label:       'Server-URL',

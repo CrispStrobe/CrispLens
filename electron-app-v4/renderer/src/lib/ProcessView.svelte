@@ -453,17 +453,7 @@
       try {
         console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
         const vlmEnabledFinal = !detParams.skip_vlm && vlmCfg.enabled;
-        console.log(`[ProcessView] VLM parameters for ${item.name}:`, {
-          vlmEnabledFinal,
-          skip_vlm: detParams.skip_vlm,
-          vlmCfgEnabled: vlmCfg.enabled,
-          provider: vlmCfg.provider,
-          model: vlmCfg.model
-        });
-
-        const s = await fetchSettings();
-        const detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
-
+        
         const faceData = await engine.processFile(fileObj, {
           det_thresh:    detParams.det_thresh,
           min_face_size: detParams.min_face_size,
@@ -487,7 +477,15 @@
         console.log(`[ProcessView] Import OK for ${item.name}, imageId: ${resp.image_id}`);
         
         queue = queue.map(q => q.id === item.id
-          ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? faceData.faces.length }
+          ? { 
+              ...q, 
+              status: 'done', 
+              imageId: resp.image_id, 
+              faces: resp.face_count ?? faceData.faces.length,
+              description: faceData.description || resp.description,
+              tags: faceData.tags || resp.tags,
+              people: resp.people || []
+            }
           : q);
         
         // Short pause to allow GC and UI thread breathing room (especially for Android)

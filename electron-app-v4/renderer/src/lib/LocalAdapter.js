@@ -696,13 +696,17 @@ export const localAdapter = {
         console.log(`[LocalAdapter] Using lenient det_thresh for thumbnail: ${det_thresh}`);
       }
       
-      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | thumb_size=${thumb_size}`);
+      // VLM should run if NOT explicitly skipped in params (requested in modal)
+      // or if it's enabled globally.
+      const vlm_enabled = !params.skip_vlm || settings.vlm.enabled;
+
+      console.log(`[LocalAdapter] Calling engine.processFile | source=${sourceInfo} | retries=${det_retries} | minFaceSize=${effectiveMinFaceSize} | thresh=${det_thresh} | vlm=${vlm_enabled}`);
       const faceData = await faceEngineWeb.processFile(fileObj, {
         det_thresh:    det_thresh,
         min_face_size: effectiveMinFaceSize,
         det_model:     params.det_model || settings.face_recognition.insightface.det_model,
         max_retries:   det_retries,
-        vlm_enabled:   !params.skip_vlm && settings.vlm.enabled,
+        vlm_enabled:   vlm_enabled,
         vlm_provider:  settings.vlm.provider,
         vlm_model:     settings.vlm.model,
         thumb_size:    thumb_size,
@@ -715,14 +719,14 @@ export const localAdapter = {
       await this.clearDetections(imageId);
 
       // Re-import (this will update description/scene_type and add new faces)
-      await this.importProcessed({
+      const result = await this.importProcessed({
         ...faceData,
         filepath: imgRow.filepath, // use existing filepath to match record
         filename: imgRow.filename
       });
 
       console.log(`[LocalAdapter] reDetectFaces COMPLETE for imageId=${imageId}`);
-      return { ok: true, face_count: faceData.faces?.length || 0 };
+      return result;
     } catch (err) {
       console.error('[LocalAdapter] reDetectFaces CRITICAL FAILURE:', err);
       throw err;
@@ -902,11 +906,11 @@ export const localAdapter = {
               [fname, filepath, width ?? null, height ?? null,
                date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
     
-    // If INSERT OR IGNORE skipped, we might need to UPDATE to store VLM results
+    // Favor new VLM results if provided
     await run(`UPDATE images SET 
-               description = COALESCE(description, ?), 
-               scene_type = COALESCE(scene_type, ?),
-               thumbnail_blob = COALESCE(thumbnail_blob, ?)
+               description = COALESCE(?, description), 
+               scene_type = COALESCE(?, scene_type),
+               thumbnail_blob = COALESCE(?, thumbnail_blob)
                WHERE filepath = ?`,
               [description ?? null, scene_type ?? null, thumbnail_b64 || null, filepath]);
 
@@ -926,13 +930,12 @@ export const localAdapter = {
     // Faces + embeddings
     console.log(`[LocalAdapter] importProcessed: processing ${faces.length} faces for image ${imageId}`);
     let faceCount = 0;
+    const people = [];
     for (const face of faces) {
       const x1 = face.bbox_left ?? 0;
       const y1 = face.bbox_top ?? 0;
       const x2 = face.bbox_right ?? 1;
       const y2 = face.bbox_bottom ?? 1;
-
-      console.log(`[LocalAdapter]   Face ${faceCount+1}: bbox=[${x1.toFixed(3)}, ${y1.toFixed(3)}, ${x2.toFixed(3)}, ${y2.toFixed(3)}] conf=${(face.detection_confidence || 0).toFixed(3)}`);
 
       const faceRes = await run(
         `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence)
@@ -949,7 +952,10 @@ export const localAdapter = {
         
         // Match against known people using Voy (WASM HNSW)
         const match = await _voyBestMatch(f32, 0.4);
-        if (match) console.log(`[LocalAdapter]     Face matched: ${match.name} (id=${match.person_id})`);
+        if (match) {
+          console.log(`[LocalAdapter]     Face matched: ${match.name} (id=${match.person_id})`);
+          people.push(match.name);
+        }
         
         // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
         const embStr = Array.from(f32).join(',');
@@ -969,6 +975,13 @@ export const localAdapter = {
 
     _voyIndex = null; // Invalidate index after adding new embeddings
     console.log(`[LocalAdapter] importProcessed DONE for image ${imageId}`);
-    return { ok: true, image_id: imageId, face_count: faceCount };
+    return { 
+      ok: true, 
+      image_id: imageId, 
+      face_count: faceCount, 
+      people,
+      description: description || null,
+      tags: tags || []
+    };
   },
 };

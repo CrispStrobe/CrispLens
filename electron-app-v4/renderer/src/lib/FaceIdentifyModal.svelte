@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { allPeople, t, processingBackend } from '../stores.js';
-  import { fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs, isLocalMode, fetchImageAsUrl } from '../api.js';
+  import { fetchImage, fetchImageFaces, fetchPeople, previewUrl, faceCropUrl, reassignFace, deleteFace, reDetectFaces, addManualFace, clearIdentifications, clearDetections, fetchUserDetPrefs, saveUserDetPrefs, isLocalMode, fetchImageAsUrl } from '../api.js';
   import { Capacitor } from '@capacitor/core';
 
   export let imageId;
@@ -348,6 +348,8 @@
     try { allPeople.set(await fetchPeople()); } catch {}
   }
 
+  $: matchedCount = faces.filter(f => f.person_id).length;
+
   function close() {
     dispatch('close', { saved: anyChanged });
   }
@@ -654,12 +656,15 @@
         </div>
 
         <div class="result-summary">
-          <span class="badge faces">👤 {faces.length} {$t('pv_faces_identified')}</span>
+          <span class="badge faces" title={$t('pv_faces_identified')}>👤 {faces.length}</span>
+          {#if matchedCount > 0}
+            <span class="badge people" title={$t('pv_matched_in_index')}>✓ {matchedCount}</span>
+          {/if}
           {#if vlmInfo.description}
-            <span class="badge vlm">TXT ✓</span>
+            <span class="badge vlm" title={$t('pv_vlm_desc_received')}>TXT ✓</span>
           {/if}
           {#if vlmInfo.tags > 0}
-            <span class="badge vlm">TAGS: {vlmInfo.tags}</span>
+            <span class="badge vlm" title={$t('pv_vlm_tags_received')}>TAGS: {vlmInfo.tags}</span>
           {/if}
         </div>
 
