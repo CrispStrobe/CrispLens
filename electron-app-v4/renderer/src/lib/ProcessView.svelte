@@ -28,7 +28,7 @@
     if (!_engineWebModule) {
       _engineWebModule = await import('./FaceEngineWeb.js');
     }
-    return _engineWebModule.faceEngineWeb;
+    return _engineWebModule.default || _engineWebModule.faceEngineWeb;
   }
 
   const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm']);
@@ -391,6 +391,9 @@
     let engine;
     let vlmCfg = {};
     let syncCfg = {};
+    let detRetries = 1;
+    let thumb_size_final = 200;
+
     try {
       console.log('[ProcessView] Initializing web engine...');
       engine = await _getWebEngine();
@@ -400,12 +403,12 @@
       const s = await fetchSettings();
       console.log('[ProcessView] Settings retrieved:', s);
       vlmCfg = s?.vlm || {};
-      const detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
+      detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
 
       // Also get sync settings for thumbnail size
       const { loadSyncSettings } = await import('./SyncManager.js');
       syncCfg = loadSyncSettings();
-      const thumb_size = syncCfg.thumbSize || 200;
+      thumb_size_final = syncCfg.thumbSize || 200;
       
       const modelBase = localMode
         ? '/ort-wasm'
@@ -419,9 +422,6 @@
       running = false; finished = true;
       return;
     }
-
-    const { loadSyncSettings } = await import('./SyncManager.js');
-    const thumb_size_final = loadSyncSettings().thumbSize || 200;
 
     for (const item of pending) {
       if (cancelled) break;
@@ -515,8 +515,16 @@
     // This is CRITICAL for Android to avoid being killed by the OS for high RAM usage.
     setTimeout(async () => {
       if (!running && finished) {
-        const engine = await _getWebEngine();
-        await engine.releaseModels();
+        try {
+          const e = await _getWebEngine();
+          if (e && typeof e.releaseModels === 'function') {
+            await e.releaseModels();
+          } else {
+            console.warn('[ProcessView] Could not release models: engine instance or method missing', e);
+          }
+        } catch (err) {
+          console.error('[ProcessView] Error during idle model release:', err);
+        }
       }
     }, 5000);
 
