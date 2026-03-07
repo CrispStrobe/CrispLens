@@ -48,9 +48,15 @@ ort.env.wasm.simd = _ortPrefs.simd;
 /** Build execution provider list for a new InferenceSession. */
 function _getOrtProviders() {
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const _ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '';
+  const isFirefox = _ua.includes('firefox');
+  const isSafari = _ua.includes('safari') && !_ua.includes('chrome') && !_ua.includes('chromium');
+  
   const providers = [];
-  // WebGPU: desktop browsers only; experimental
-  if (_ortPrefs.webgpu && !isAndroid) providers.push('webgpu');
+  // WebGPU: desktop browsers only; experimental. 
+  // Skip on Firefox/Safari due to model AveragePool bug in their WebGPU impl.
+  if (_ortPrefs.webgpu && !isAndroid && !isFirefox && !isSafari) providers.push('webgpu');
+  
   // WebGL: stable on desktop, avoid on Android (driver crashes with large models)
   if (_ortPrefs.webgl && !isAndroid) providers.push('webgl');
   providers.push('wasm'); // always keep WASM as final fallback
@@ -1103,54 +1109,59 @@ export class FaceEngineWeb {
    */
 
   
+  
   async runInferenceBenchmark(file, progressCallback) {
     const results = [];
-    const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox');
-    
     const backends = [
       { name: 'WASM', simd: false, webgl: false, webgpu: false },
       { name: 'WASM + SIMD', simd: true, webgl: false, webgpu: false },
-      { name: 'WebGL', simd: true, webgl: true, webgpu: false }
+      { name: 'WebGL', simd: true, webgl: true, webgpu: false },
+      { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
     ];
-    if (!isFirefox) {
-      backends.push({ name: 'WebGPU', simd: true, webgl: true, webgpu: true });
-    }
 
     const originalPrefs = { ..._ortPrefs };
     for (const b of backends) {
       try {
         console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
+        
         await this.releaseModels();
         _ortPrefs.simd = b.simd; _ortPrefs.webgl = b.webgl; _ortPrefs.webgpu = b.webgpu;
         ort.env.wasm.simd = b.simd;
         
-        const startWarmup = performance.now();
-        await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
-        const warmupDuration = performance.now() - startWarmup;
-        
-        const startInference = performance.now();
-        const memStart = window.performance?.memory?.usedJSHeapSize || 0;
-        const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
-        const inferenceDuration = performance.now() - startInference;
-        const memEnd = window.performance?.memory?.usedJSHeapSize || 0;
+        const loadStart = performance.now();
+        let detOk = false; let recOk = false;
+        let detError = ''; let recError = '';
+
+        try { await this._initDetector(); detOk = true; } catch(e) { detError = e.message; }
+        try { await this._initRecognizer(); recOk = true; } catch(e) { recError = e.message; }
+
+        const warmupDuration = performance.now() - loadStart;
+        let inferenceDuration = 0; let faceCount = 0;
+        let finalStatus = '✓';
+
+        if (detOk && recOk) {
+          const startInference = performance.now();
+          const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
+          inferenceDuration = performance.now() - startInference;
+          faceCount = res.faces?.length || 0;
+        } else {
+          finalStatus = 'Partial: ';
+          if (!detOk) finalStatus += 'Det FAIL (' + detError.split('\n')[0].slice(0, 30) + '...) ';
+          if (!recOk) finalStatus += 'Rec FAIL (' + recError.split('\n')[0].slice(0, 30) + '...)';
+        }
         
         results.push({
           backend: b.name,
           warmup_ms: Math.round(warmupDuration),
           duration_ms: Math.round(inferenceDuration),
-          faces: res.faces?.length || 0,
-          memory_mb: memEnd > memStart ? ((memEnd - memStart) / (1024 * 1024)).toFixed(2) : '0',
-          success: true
+          faces: faceCount,
+          status: finalStatus,
+          success: detOk || recOk
         });
-        await this.releaseModels();
       } catch (err) {
-        console.error(`[Benchmark] ${b.name} FAILED:`, err);
-        results.push({ backend: b.name, error: err.message, success: false });
+        results.push({ backend: b.name, error: err.message, success: false, status: '✗ ' + err.message.slice(0, 40) });
       }
-    }
-    if (isFirefox) {
-      results.push({ backend: 'WebGPU', error: 'Skipped on Firefox (model AveragePool bug)', success: false });
     }
     Object.assign(_ortPrefs, originalPrefs);
     ort.env.wasm.simd = _ortPrefs.simd;
