@@ -241,12 +241,16 @@ export class FaceEngineWeb {
     this._recSession  = null;
     this._mpDetector  = null;   // MediaPipe FaceDetector (lazy)
     this._mpLandmarker = null;  // MediaPipe FaceLandmarker (lazy)
-    this.modelBaseUrl = '/models';
+    this.modelBaseUrl = (typeof window !== 'undefined' ? window.location.origin : '') + '/models/';
     this.onProgress   = null;  // optional progress callback(msg: string)
   }
 
   setModelBaseUrl(url) {
-    this.modelBaseUrl = url.endsWith('/') ? url : url + '/';
+    let absolute = url;
+    if (url.startsWith('/')) {
+      absolute = (typeof window !== 'undefined' ? window.location.origin : '') + url;
+    }
+    this.modelBaseUrl = absolute.endsWith('/') ? absolute : absolute + '/';
   }
 
   _progress(msg) {
@@ -554,6 +558,7 @@ export class FaceEngineWeb {
       const duration = performance.now() - start;
       console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
 
+      if (!this._detSession) throw new Error("Detector session is null");
       const outputNames = this._detSession.outputNames;
       console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
 
@@ -928,6 +933,7 @@ export class FaceEngineWeb {
       const duration = performance.now() - start;
       console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
 
+      if (!this._detSession) throw new Error("Detector session is null");
       const outputNames = this._detSession.outputNames;
       console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
 
@@ -1391,6 +1397,7 @@ export class FaceEngineWeb {
       const duration = performance.now() - start;
       console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
 
+      if (!this._detSession) throw new Error("Detector session is null");
       const outputNames = this._detSession.outputNames;
       console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
 
@@ -1765,6 +1772,7 @@ export class FaceEngineWeb {
       const duration = performance.now() - start;
       console.log(`[FaceEngineWeb] SCRFD Session RUN complete in ${duration.toFixed(1)}ms`);
 
+      if (!this._detSession) throw new Error("Detector session is null");
       const outputNames = this._detSession.outputNames;
       console.log(`[FaceEngineWeb] Model Output Names:`, outputNames);
 

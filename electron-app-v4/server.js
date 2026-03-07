@@ -53,10 +53,21 @@ if (uiDist) {
     const folder = req.path.startsWith('/assets') ? 'assets' : 'ort-wasm';
     const filePath = path.join(uiDist, folder, fileName);
     
-    if (fs.existsSync(filePath)) {
+        let finalPath = filePath;
+    if (!fs.existsSync(finalPath) && (ext === '.onnx' || ext === '.task')) {
+      const { findModelDir } = require('./core/face-engine');
+      const mDir = findModelDir();
+      if (mDir) {
+        const fallbackModelPath = path.join(mDir, fileName);
+        if (fs.existsSync(fallbackModelPath)) finalPath = fallbackModelPath;
+      }
+    }
+
+    if (fs.existsSync(finalPath)) {
       if (ext === '.mjs' || ext === '.js') res.setHeader('Content-Type', 'application/javascript');
       else if (ext === '.wasm') res.setHeader('Content-Type', 'application/wasm');
       else if (ext === '.css') res.setHeader('Content-Type', 'text/css');
+      else if (ext === '.onnx' || ext === '.task') res.setHeader('Content-Type', 'application/octet-stream');
 
       res.setHeader('X-Content-Type-Options', 'nosniff');
       // JS/CSS: no-cache so browsers revalidate on every load (filenames are unhashed).
@@ -67,7 +78,7 @@ if (uiDist) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
       console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
-      return res.sendFile(filePath);
+      return res.sendFile(finalPath);
     }
     console.warn(`[server] PRIORITY ASSET NOT FOUND: ${filePath}`);
     res.status(404).send('Asset not found');
