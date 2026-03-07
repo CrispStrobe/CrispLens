@@ -1122,7 +1122,7 @@ export class FaceEngineWeb {
         // Run standard processing (detection + embedding)
         const res = await this.processFile(file, { 
           det_thresh: 0.5, 
-          skip_vlm: true,
+          skip_vlm: true, vlm_enabled: false,
           thumb_size: 200 
         });
         
@@ -1201,7 +1201,7 @@ export class FaceEngineWeb {
         // Run standard processing (detection + embedding)
         const res = await this.processFile(file, { 
           det_thresh: 0.5, 
-          skip_vlm: true,
+          skip_vlm: true, vlm_enabled: false,
           thumb_size: 200 
         });
         
@@ -1237,7 +1237,18 @@ export class FaceEngineWeb {
     return results;
   }
 
-  async processFile(file, opts = {}) {
+  async processFile(fileOrBase64, opts = {}) {
+    let file = fileOrBase64;
+    // If it is a base64 string, convert to blob/file
+    if (typeof fileOrBase64 === 'string' && fileOrBase64.includes(';base64,')) {
+      const parts = fileOrBase64.split(',');
+      const mime = parts[0].match(/:(.*?);/)[1];
+      const bstr = atob(parts[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while(n--) u8arr[n] = bstr.charCodeAt(n);
+      file = new File([u8arr], 'image.jpg', { type: mime });
+    }
     console.log(`[FaceEngineWeb] processFile START | file=${file.name} | size=${file.size} | type=${file.type}`);
     if (opts.onProgress) this.onProgress = opts.onProgress;
 
@@ -1347,7 +1358,13 @@ export class FaceEngineWeb {
         try {
           this._progress('AI Enrichment (VLM)…');
           console.error('[FaceEngineWeb] Starting VLM enrichment process...');
-          const vlmMod = await import('./VlmWeb.js?t=' + Date.now());
+          let vlmMod;
+        try {
+          vlmMod = await import('./VlmWeb.js?t=' + Date.now());
+        } catch (importErr) {
+          console.error('[FaceEngineWeb] Failed to import VlmWeb.js:', importErr);
+          throw new Error("VLM module could not be loaded: " + importErr.message);
+        }
           const vlmClientWeb = vlmMod.vlmClientWeb ?? vlmMod.default;
           if (!vlmClientWeb || typeof vlmClientWeb.setKeys !== 'function') {
             throw new Error('VlmWeb module failed to provide vlmClientWeb instance (tree-shaking issue?)');

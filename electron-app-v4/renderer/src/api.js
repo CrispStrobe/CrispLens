@@ -1101,3 +1101,9 @@ export function startBatchJob(id, onEvent, retry = false) {
   const q = retry ? '?retry=true' : '';
   return _streamSSE(`${BASE}/batch-jobs/${id}/start${q}`, {}, onEvent);
 }
+
+export async function fetchThumbnail(id) {
+  if (isLocalMode()) return localAdapter.fetchThumbnail(id);
+  const res = await get(`/images/${id}/thumbnail`);
+  return res.thumbnail_blob || res;
+}

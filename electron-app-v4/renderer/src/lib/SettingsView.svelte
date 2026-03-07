@@ -630,13 +630,15 @@
 
 
   import { faceEngineWeb } from './FaceEngineWeb.js';
-  import { fetchImages, fetchImageAsUrl } from '../api.js';
+  import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
-        /** Even safer way to get blob from any URL using the browser's image parser */
-  function _getBlobViaImage(url) {
+          /** Even safer way to get base64 from any URL using the browser's image parser */
+  function _getBase64ViaImage(url) {
     return new Promise((resolve, reject) => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+        img.crossOrigin = 'anonymous';
+      }
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
@@ -644,10 +646,7 @@
           canvas.height = img.height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0);
-          canvas.toBlob((blob) => {
-            if (blob) resolve(blob);
-            else reject(new Error('Canvas toBlob failed'));
-          }, 'image/jpeg', 0.9);
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
         } catch (e) { reject(e); }
       };
       img.onerror = () => reject(new Error('Browser failed to load image resource'));
@@ -671,13 +670,25 @@
         img = imgs[0];
       }
       
-      const imgUrl = await fetchImageAsUrl(img.filepath);
-      console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
+      let b64;
+      try {
+        console.log('[Benchmark] Attempting to fetch thumbnail directly for ID:', img.id);
+        const thumb = await fetchThumbnail(img.id);
+        if (thumb) {
+          b64 = thumb.startsWith('data:') ? thumb : `data:image/jpeg;base64,${thumb}`;
+          console.log('[Benchmark] Using direct base64 thumbnail');
+        }
+      } catch (e) {
+        console.warn('[Benchmark] Direct thumbnail fetch failed, falling back to image parser');
+      }
+
+      if (!b64) {
+        const imgUrl = await fetchImageAsUrl(img.filepath);
+        console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
+        b64 = await _getBase64ViaImage(imgUrl);
+      }
       
-      const blob = await _getBlobViaImage(imgUrl);
-      const file = new File([blob], img.filename || 'test.jpg', { type: 'image/jpeg' });
-      
-      browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
+      browserBenchResults = await faceEngineWeb.runInferenceBenchmark(b64, (msg) => {
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
