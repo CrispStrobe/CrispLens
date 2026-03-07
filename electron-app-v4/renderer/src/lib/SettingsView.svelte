@@ -48,6 +48,10 @@
   let testLines   = [];
   let testRunning = false;
   let exemptPaths     = ['/mnt'];
+  let benchmarkRunning = false;
+  let browserBenchResults = null;
+  let serverBenchResults = null;
+  let benchProgress = '';
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
   let globalDetModelHint = null; // for non-admin hint
@@ -622,6 +626,55 @@
       if (vlmProvider) doFetchModels();
     }
   });
+
+
+  import { faceEngineWeb } from './FaceEngineWeb.js';
+  import { fetchImages } from '../api.js';
+
+  async function doBrowserBenchmark() {
+    benchmarkRunning = true;
+    browserBenchResults = null;
+    try {
+      benchProgress = 'Loading sample image...';
+      const imgs = await fetchImages({ unidentified: false, sort: 'most_faces', limit: 1 });
+      if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
+      
+      const res = await fetch(imgs[0].filepath);
+      const blob = await res.blob();
+      const file = new File([blob], imgs[0].filename, { type: blob.type });
+      
+      browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
+        benchProgress = msg;
+      });
+      benchProgress = '✓ Benchmark complete';
+    } catch (err) {
+      console.error('Browser benchmark failed:', err);
+      benchProgress = '✗ Failed: ' + err.message;
+    } finally {
+      benchmarkRunning = false;
+    }
+  }
+
+  async function doServerBenchmark() {
+    benchmarkRunning = true;
+    serverBenchResults = null;
+    try {
+      benchProgress = 'Starting server-side benchmark...';
+      const resp = await fetch('/api/benchmark/server', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Server error');
+      serverBenchResults = data;
+      benchProgress = '✓ Server benchmark complete';
+    } catch (err) {
+      console.error('Server benchmark failed:', err);
+      benchProgress = '✗ Failed: ' + err.message;
+    } finally {
+      benchmarkRunning = false;
+    }
+  }
 
   async function doSaveSettings() {
     console.log('[SettingsView] doSaveSettings() start');
@@ -1643,6 +1696,80 @@
     </div>
   </section>
   {/if}
+
+
+  <!-- Benchmarking -->
+  <section class="card">
+    <h3>{$t('tab_benchmark')}</h3>
+    <p class="hint">Test performance of different inference backends on this device.</p>
+    
+    <div class="flex-row" style="margin-top:10px; gap:10px;">
+      <button class="btn-primary" on:click={doBrowserBenchmark} disabled={benchmarkRunning}>
+        {benchmarkRunning ? 'Running...' : 'Run Browser Benchmark'}
+      </button>
+      {#if isAdmin}
+      <button class="btn-primary" on:click={doServerBenchmark} disabled={benchmarkRunning}>
+        {benchmarkRunning ? 'Running...' : 'Run Server Benchmark'}
+      </button>
+      {/if}
+    </div>
+
+    {#if benchProgress}
+      <div class="save-msg" style="margin-top:10px;">{benchProgress}</div>
+    {/if}
+
+    {#if browserBenchResults}
+      <div class="benchmark-results" style="margin-top:15px;">
+        <div style="font-size:12px; font-weight:600; margin-bottom:5px;">Browser Benchmark Results</div>
+        <table style="width:100%; font-size:11px; border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid #333;">
+              <th style="padding:4px;">Backend</th>
+              <th style="padding:4px;">Time</th>
+              <th style="padding:4px;">Faces</th>
+              <th style="padding:4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each browserBenchResults as r}
+              <tr style="border-bottom:1px solid #222;">
+                <td style="padding:4px;">{r.backend}</td>
+                <td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
+                <td style="padding:4px;">{r.success ? r.faces : '-'}</td>
+                <td style="padding:4px;">{r.success ? '✓' : '✗ ' + r.error}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
+    {#if serverBenchResults}
+      <div class="benchmark-results" style="margin-top:15px;">
+        <div style="font-size:12px; font-weight:600; margin-bottom:5px;">Server Benchmark Results (Image: {serverBenchResults.sample_image})</div>
+        <table style="width:100%; font-size:11px; border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid #333;">
+              <th style="padding:4px;">Provider</th>
+              <th style="padding:4px;">Time</th>
+              <th style="padding:4px;">Faces</th>
+              <th style="padding:4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each serverBenchResults.results as r}
+              <tr style="border-bottom:1px solid #222;">
+                <td style="padding:4px;">{r.provider}</td>
+                <td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
+                <td style="padding:4px;">{r.success ? r.faces : '-'}</td>
+                <td style="padding:4px;">{r.success ? '✓' : '✗ ' + r.error}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
 
   <!-- Browser ONNX backend settings (browser/PWA only) -->
   {#if !isElectron}

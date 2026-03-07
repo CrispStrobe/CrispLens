@@ -135,6 +135,7 @@ const searchRouter  = require('./server/routes/search');
 const processRouter = require('./server/routes/process');
 const ingestRouter  = require('./server/routes/ingest');
 const settingsRouter = require('./server/routes/settings');
+const benchmarkRouter = require('./server/routes/benchmark');
 
 // Health (no auth required) — model_ready checked lazily
 app.get('/api/health', (req, res) => {
@@ -161,6 +162,7 @@ app.use('/api/search',     searchRouter);
 app.use('/api/process',    processRouter);
 app.use('/api/ingest',     ingestRouter);
 app.use('/api/settings',   settingsRouter);
+app.use('/api/benchmark',  benchmarkRouter);
 
 // Misc routes (tags, albums, events, watchfolders, filesystem, duplicates, batch-jobs, etc.)
 app.use('/api',            miscRouter);
