@@ -631,6 +631,33 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl } from '../api.js';
 
+      /** Helper to fetch blob safely across all browser contexts */
+  function _getBlobSafe(url) {
+    return new Promise((resolve, reject) => {
+      if (url.startsWith('data:')) {
+        try {
+          const parts = url.split(',');
+          const mime = parts[0].match(/:(.*?);/)[1];
+          const bstr = atob(parts[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while(n--) u8arr[n] = bstr.charCodeAt(n);
+          resolve(new Blob([u8arr], {type:mime}));
+        } catch (e) { reject(e); }
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url);
+      xhr.responseType = 'blob';
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
+        else reject(new Error(`HTTP ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error('Network error or CORS block'));
+      xhr.send();
+    });
+  }
+
   async function doBrowserBenchmark() {
     benchmarkRunning = true;
     browserBenchResults = null;
@@ -640,9 +667,10 @@
       if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
       
       const imgUrl = await fetchImageAsUrl(imgs[0].filepath);
-      const res = await fetch(imgUrl);
-      const blob = await res.blob();
-      const file = new File([blob], imgs[0].filename, { type: blob.type || 'image/jpeg' });
+      console.log('[Benchmark] Loading blob from:', imgUrl.slice(0, 100));
+      
+      const blob = await _getBlobSafe(imgUrl);
+      const file = new File([blob], imgs[0].filename || 'test.jpg', { type: blob.type || 'image/jpeg' });
       
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
         benchProgress = msg;
