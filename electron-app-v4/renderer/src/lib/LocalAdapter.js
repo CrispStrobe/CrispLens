@@ -691,7 +691,7 @@ export const localAdapter = {
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
       
       // Ensure engine knows where to find models in this session
-      const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
+      const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models/';
       console.log(`[LocalAdapter] Configuring engine modelBaseUrl: ${modelBase}`);
       faceEngineWeb.setModelBaseUrl(modelBase);
       
