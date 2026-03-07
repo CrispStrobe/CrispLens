@@ -32,6 +32,7 @@ class VLMConfig:
     max_retries: int = 3
     timeout_seconds: int = 90
     max_image_size_mb: float = 5.0
+    vlm_max_size: int = 0
     supported_formats: set = None
     
     def __post_init__(self):
@@ -186,6 +187,11 @@ class AnthropicVLM(VLMProvider):
         if not valid:
             return {"error": msg}
 
+        
+        # Use config default if parameter is 0
+        if vlm_max_size == 0 and hasattr(self.config, "vlm_max_size") and self.config.vlm_max_size > 0:
+            vlm_max_size = self.config.vlm_max_size
+            
         image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
@@ -511,6 +517,11 @@ class OpenAICompatibleVLM(VLMProvider):
         if not valid:
             return {"error": msg}
 
+        
+        # Use config default if parameter is 0
+        if vlm_max_size == 0 and hasattr(self.config, "vlm_max_size") and self.config.vlm_max_size > 0:
+            vlm_max_size = self.config.vlm_max_size
+            
         image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
@@ -593,11 +604,17 @@ class OpenRouterVLM(OpenAICompatibleVLM):
 class MistralVLM(OpenAICompatibleVLM):
     BASE_URL = "https://api.mistral.ai/v1"
     DEFAULT_MODEL = "ministral-14b-2512"
+    def __init__(self, api_key: str, model: str = None, config: VLMConfig = None):
+        if config and config.vlm_max_size == 0: config.vlm_max_size = 900
+        super().__init__(api_key, model, config)
 
 
 class GroqVLM(OpenAICompatibleVLM):
     BASE_URL = "https://api.groq.com/openai/v1"
     DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+    def __init__(self, api_key: str, model: str = None, config: VLMConfig = None):
+        if config and config.vlm_max_size == 0: config.vlm_max_size = 1024
+        super().__init__(api_key, model, config)
 
 
 class PoeVLM(OpenAICompatibleVLM):

@@ -89,7 +89,7 @@ const EN = {
   backend: 'Backend', model: 'Model', detection_threshold: 'Detection Threshold',
   recognition_threshold: 'Recognition Threshold', use_gpu: 'Use GPU',
   ai_enrichment: 'AI Enrichment', enable_vlm: 'Enable VLM',
-  vlm_provider: 'VLM Provider', vlm_api_key: 'API Key', vlm_model: 'Model',
+  vlm_provider: 'VLM Provider', vlm_api_key: 'API Key', vlm_model: 'Model', vlm_max_size: 'Downsizing (Max Dim)',
   ui_settings: 'User Interface', language: 'Language',
   save_settings: 'Save Settings', reset_settings: 'Reset',
   user_management: 'User Management', username: 'Username', password: 'Password',

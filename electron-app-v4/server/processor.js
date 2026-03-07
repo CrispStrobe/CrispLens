@@ -223,7 +223,7 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
         vlmClient.setKeys(keys);
 
         const vlmPrompt = opts.vlm_prompt || 'Describe this image in detail.';
-        const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, vlmPrompt);
+        const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, vlmPrompt, flat.vlm_max_size);
         console.log(`[processor] VLM success for image ${imageId}`);
 
         db.prepare(`

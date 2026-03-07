@@ -56,6 +56,7 @@ PROVIDER_CONFIGS: Dict[str, Dict] = {
     },
     'mistral': {
         'display_name': 'Mistral AI',
+        'default_vlm_max_size': 900,
         'base_url': 'https://api.mistral.ai/v1',
         'models_endpoint': 'https://api.mistral.ai/v1/models',
         'default_model': 'pixtral-large-latest',
@@ -63,6 +64,7 @@ PROVIDER_CONFIGS: Dict[str, Dict] = {
     },
     'groq': {
         'display_name': 'Groq',
+        'default_vlm_max_size': 1024,
         'base_url': 'https://api.groq.com/openai/v1',
         'models_endpoint': 'https://api.groq.com/openai/v1/models',
         'default_model': 'llama-3.2-11b-vision-preview',

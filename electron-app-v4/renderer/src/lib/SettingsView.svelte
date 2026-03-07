@@ -38,6 +38,7 @@
   let vlmEnabled   = false;
   let vlmProvider  = '';
   let vlmModel     = '';
+  let vlmMaxSize   = 0;
   let uploadMaxDim = 0; // 0 = keep full resolution
   // Admin — server management
   let showUpdateModal = false;
@@ -136,6 +137,7 @@
         vlmEnabled  = p.effective.vlm_enabled  ?? false;
         vlmProvider = p.effective.vlm_provider ?? 'anthropic';
         vlmModel    = p.effective.vlm_model    ?? '';
+        vlmMaxSize  = p.effective.vlm_max_size  ?? 0;
         globalVlmHint = p.global;
       }).catch(e => console.warn('[SettingsView] fetchUserVlmPrefs failed:', e));
       // Load personal detection model pref
@@ -168,6 +170,13 @@
   $: if (vlmProvider) {
     console.log('[SettingsView] VLM provider changed:', vlmProvider);
     doFetchModels();
+  }
+
+
+  // Reactive default for VLM max size
+  $: if (vlmProvider && vlmMaxSize === 0) {
+    if (vlmProvider === 'mistral') vlmMaxSize = 900;
+    else if (vlmProvider === 'groq') vlmMaxSize = 1024;
   }
 
   let vlmFetchMsg = '';
@@ -575,6 +584,7 @@
           vlmEnabled  = cfg?.vlm?.enabled ?? false;
           vlmProvider = cfg?.vlm?.provider ?? 'anthropic';
           vlmModel    = cfg?.vlm?.model ?? '';
+          vlmMaxSize  = cfg?.vlm?.max_size ?? 0;
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
           console.log(`[SettingsView] onMount: VLM initialized: enabled=${vlmEnabled}, provider=${vlmProvider}, model=${vlmModel}`);
           procBackend    = cfg?.processing?.backend         ?? 'local';
@@ -666,6 +676,7 @@
             vlm_enabled: vlmEnabled,
             vlm_provider: vlmProvider,
             vlm_model: vlmModel || null,
+            vlm_max_size: vlmMaxSize,
             upload_max_dimension: uploadMaxDim,
             copy_exempt_paths:    exemptPaths.filter(p => p.trim()),
             fix_db_path:          fixDbPath.trim(),
@@ -687,6 +698,7 @@
             vlm_enabled:  vlmEnabled,
             vlm_provider: vlmProvider,
             vlm_model:    vlmModel || null,
+            vlm_max_size: vlmMaxSize,
           });
           // Personal detection model preference
           await saveUserDetPrefs({ det_model: detModel || null });

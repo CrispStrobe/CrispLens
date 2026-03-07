@@ -19,6 +19,7 @@ const DEFAULTS = {
   vlm_enabled:           false,
   vlm_provider:          '',
   vlm_model:             '',
+  vlm_max_size:          0,
   upload_max_dimension:  0,
   copy_exempt_paths:     [],
   fix_db_path:           '',
@@ -76,6 +77,7 @@ function flatToNested(f) {
       enabled:  f.vlm_enabled,
       provider: f.vlm_provider,
       model:    f.vlm_model,
+      max_size: f.vlm_max_size,
     },
     storage: {
       upload_max_dimension: f.upload_max_dimension,
@@ -366,7 +368,7 @@ router.post('/check-credentials', requireAuth, (req, res) => {
 
 router.get('/user-vlm', requireAuth, (req, res) => {
   const f = loadFlat();
-  const global_ = { vlm_enabled: f.vlm_enabled, vlm_provider: f.vlm_provider, vlm_model: f.vlm_model };
+  const global_ = { vlm_enabled: f.vlm_enabled, vlm_provider: f.vlm_provider, vlm_model: f.vlm_model, vlm_max_size: f.vlm_max_size };
   res.json({ effective: { ...global_ }, global: global_ });
 });
 

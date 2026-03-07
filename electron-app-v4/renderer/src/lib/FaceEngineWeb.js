@@ -832,7 +832,7 @@ export class FaceEngineWeb {
           const model = opts.vlm_model || '';
           
           console.error(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
-          vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt);
+          vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt, opts.vlm_max_size || 0);
           console.error('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
           this._progress('AI Enrichment done');
         } catch (e) {

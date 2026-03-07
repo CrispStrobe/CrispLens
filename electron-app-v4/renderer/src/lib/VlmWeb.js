@@ -63,6 +63,47 @@ export const DEFAULT_MODELS = {
 };
 
 export class VlmClientWeb {
+  async _resizeImage(image, maxDimension) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width <= maxDimension && height <= maxDimension) {
+          resolve(null); // No resize needed
+          return;
+        }
+
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+
+        console.log(`[VlmWeb] Resizing browser image from ${img.width}x${img.height} to ${width}x${height}`);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.onerror = reject;
+      
+      if (typeof image === 'string') {
+        img.src = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
+      } else if (image instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = (e) => { img.src = e.target.result; };
+        reader.onerror = reject;
+        reader.readAsDataURL(image);
+      } else {
+        reject(new Error('Unsupported image format for resize'));
+      }
+    });
+  }
+
   constructor() {
     this.keys = {}; // provider -> key
   }
@@ -175,7 +216,7 @@ export class VlmClientWeb {
   /**
    * Enrich an image using a Cloud VLM.
    */
-  async enrichImage(image, provider, model, prompt) {
+  async enrichImage(image, provider, model, prompt, maxDimension = 0) {
     console.error(`[VlmWeb] enrichImage START | provider=${provider} | model=${model || 'default'}`);
     const key = this.keys[provider];
     if (!key) {
@@ -184,12 +225,35 @@ export class VlmClientWeb {
     }
 
     let base64;
+    
+    // Handle defaults for Mistral/Groq if not explicitly set
+    if (!maxDimension || maxDimension === 0) {
+      if (provider === 'mistral') maxDimension = 900;
+      if (provider === 'groq') maxDimension = 1024;
+    }
+
     try {
-      base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
-      console.log(`[VlmWeb] Image converted to base64. Length: ${base64.length} chars (~${Math.round(base64.length * 0.75 / 1024)} KB)`);
+      if (maxDimension > 0) {
+        console.log(`[VlmWeb] Checking if resize needed (max ${maxDimension}px)...`);
+        const resized = await this._resizeImage(image, maxDimension);
+        if (resized) {
+          base64 = resized;
+          console.log(`[VlmWeb] Image resized successfully. New length: ${base64.length}`);
+        }
+      }
+      
+      if (!base64) {
+        base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
+        console.log(`[VlmWeb] Using original image. Length: ${base64.length} chars (~${Math.round(base64.length * 0.75 / 1024)} KB)`);
+      }
     } catch (err) {
-      console.error('[VlmWeb] Failed to convert image to base64:', err);
-      throw new Error(`Image conversion failed: ${err.message}`);
+      console.error('[VlmWeb] Image preparation failed:', err);
+      // Fallback to basic conversion if resize failed
+      try {
+        base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
+      } catch (inner) {
+        throw new Error(`Image conversion failed: ${err.message}`);
+      }
     }
 
     const modelId = model || DEFAULT_MODELS[provider];

@@ -32,7 +32,11 @@ const app = express();
 // ── Consolidate UI path resolution ────────────────────────────────────────────
 const v4dist = path.join(__dirname, 'renderer', 'dist');
 const v2dist = path.join(__dirname, '..', 'electron-app-v2', 'renderer', 'dist');
-const uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist : null);
+// Electron production: extraResources puts it in Resources/renderer/dist
+const resourcesDist = process.resourcesPath ? path.join(process.resourcesPath, 'renderer', 'dist') : null;
+
+let uiDist = fs.existsSync(v4dist) ? v4dist : (fs.existsSync(v2dist) ? v2dist : null);
+if (!uiDist && resourcesDist && fs.existsSync(resourcesDist)) uiDist = resourcesDist;
 
 // ── Strict Static Assets (WASM/MJS/Assets) ───────────────────────────────────
 // These MUST be handled first to prevent any middleware or SPA fallback from interfering.
@@ -212,7 +216,11 @@ if (uiDist) {
     }
 
     console.log(`[server] SPA fallback: ${p}`);
-    res.sendFile(path.join(uiDist, 'index.html'));
+    if (uiDist && fs.existsSync(path.join(uiDist, 'index.html'))) {
+      res.sendFile(path.join(uiDist, 'index.html'));
+    } else {
+      res.status(404).send('SPA Entry point not found');
+    }
   });
 } else {
   console.warn('[server] No renderer/dist found. API-only mode.');

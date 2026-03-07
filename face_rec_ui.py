@@ -137,7 +137,7 @@ class AppState:
                     api_key=api_key,
                     endpoint=endpoint,
                     model=model,
-                    config=VLMConfig()
+                    config=VLMConfig(vlm_max_size=vlm_max_size)
                 )
                 if self.vlm_provider:
                     logger.info(f"VLM provider auto-activated: {provider}")
@@ -1240,7 +1240,7 @@ def fetch_models_for_provider(provider: str) -> Tuple[List[str], str]:
     return models, f"✅ {len(models)} models fetched" + (f" (default: {default})" if default in models else "")
 
 
-def activate_vlm_provider(enable_vlm: bool, provider: str, model: str) -> str:
+def activate_vlm_provider(enable_vlm: bool, provider: str, model: str, vlm_max_size: int = 0) -> str:
     """
     Create and activate a VLM provider instance using the stored key.
     Called when the user clicks 'Activate VLM'.
@@ -1266,7 +1266,7 @@ def activate_vlm_provider(enable_vlm: bool, provider: str, model: str) -> str:
         provider=provider,
         api_key=api_key,
         model=model or None,
-        config=VLMConfig()
+        config=VLMConfig(vlm_max_size=vlm_max_size)
     )
     if provider_obj:
         app_state.vlm_provider = provider_obj
@@ -2256,6 +2256,16 @@ def build_ui():
                                 interactive=True
                             )
                         fetch_models_status = gr.Markdown()
+                        vlm_max_size = gr.Slider(
+                            minimum=0, maximum=2048, value=0, step=16,
+                            label="VLM Downsizing (Max Dimension)",
+                            info="0 = disabled. Recommended for Mistral: 900px, Groq: 1024px."
+                        )
+                        
+                        def _update_vlm_max_size(provider):
+                            default = PROVIDER_CONFIGS.get(provider, {}).get('default_vlm_max_size', 0)
+                            return gr.update(value=default)
+
                         activate_vlm_btn = gr.Button("Activate VLM", variant="primary")
                         vlm_activation_result = gr.Markdown()
 
@@ -2272,7 +2282,7 @@ def build_ui():
                         )
                         activate_vlm_btn.click(
                             fn=activate_vlm_provider,
-                            inputs=[vlm_enable_chk, vlm_act_provider, vlm_act_model],
+                            inputs=[vlm_enable_chk, vlm_act_provider, vlm_act_model, vlm_max_size],
                             outputs=vlm_activation_result
                         )
                 

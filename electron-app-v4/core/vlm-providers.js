@@ -7,6 +7,8 @@
  */
 
 const fs = require('fs');
+const sharp = require('sharp');
+const sharp = require('sharp');
 
 const OPENAI_COMPATIBLE = {
   'openai':     'https://api.openai.com/v1',
@@ -31,6 +33,52 @@ const DEFAULT_MODELS = {
 };
 
 class VlmClient {
+  async _prepareImage(imagePath, maxDimension) {
+    let buffer = fs.readFileSync(imagePath);
+    let mediaType = 'image/jpeg';
+    
+    if (maxDimension > 0) {
+      try {
+        const image = sharp(buffer);
+        const metadata = await image.metadata();
+        if (metadata.width > maxDimension || metadata.height > maxDimension) {
+          console.log(`[VlmClient] Resizing image to max ${maxDimension}px`);
+          buffer = await image
+            .resize(maxDimension, maxDimension, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          mediaType = 'image/jpeg';
+        }
+      } catch (err) {
+        console.warn('[VlmClient] Resize failed, using original:', err.message);
+      }
+    }
+    return { base64: buffer.toString('base64'), mediaType };
+  }
+
+  async _prepareImage(imagePath, maxDimension) {
+    let buffer = fs.readFileSync(imagePath);
+    let mediaType = 'image/jpeg';
+    
+    if (maxDimension > 0) {
+      try {
+        const image = sharp(buffer);
+        const metadata = await image.metadata();
+        if (metadata.width > maxDimension || metadata.height > maxDimension) {
+          console.log();
+          buffer = await image
+            .resize(maxDimension, maxDimension, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          mediaType = 'image/jpeg';
+        }
+      } catch (err) {
+        console.warn('[VlmClient] Resize failed, using original:', err.message);
+      }
+    }
+    return { base64: buffer.toString('base64'), mediaType };
+  }
+
   constructor() {
     this.keys = {}; // provider -> key
   }
@@ -42,26 +90,30 @@ class VlmClient {
   /**
    * Enrich an image using a Cloud VLM.
    */
-  async enrichImage(imagePath, provider, model, prompt) {
+  async enrichImage(imagePath, provider, model, prompt, maxDimension = 0) {
     console.log(`[VlmClient] enrichImage start. Provider: ${provider}, Model: ${model || 'default'}`);
     const key = this.keys[provider];
     if (!key) {
       throw new Error(`API key for ${provider} not found in database.`);
     }
 
-    // Read image and convert to base64
-    const buffer = fs.readFileSync(imagePath);
-    const base64 = buffer.toString('base64');
+    // Handle defaults for Mistral/Groq if not explicitly set
+    if (!maxDimension || maxDimension === 0) {
+      if (provider === 'mistral') maxDimension = 900;
+      if (provider === 'groq') maxDimension = 1024;
+    }
+
+    const { base64, mediaType } = await this._prepareImage(imagePath, maxDimension);
     
     const modelId = model || DEFAULT_MODELS[provider];
 
     try {
       if (provider === 'anthropic') {
-        return await this._callAnthropic(key, modelId, base64, prompt);
+        return await this._callAnthropic(key, modelId, base64, prompt, mediaType);
       } else if (provider === 'google') {
-        return await this._callGemini(key, modelId, base64, prompt);
+        return await this._callGemini(key, modelId, base64, prompt, mediaType);
       } else if (OPENAI_COMPATIBLE[provider]) {
-        return await this._callOpenAICompatible(provider, key, modelId, base64, prompt);
+        return await this._callOpenAICompatible(provider, key, modelId, base64, prompt, mediaType);
       } else {
         throw new Error(`Provider ${provider} not yet supported in Node.js backend.`);
       }
@@ -71,7 +123,7 @@ class VlmClient {
     }
   }
 
-  async _callAnthropic(key, model, base64, prompt) {
+  async _callAnthropic(key, model, base64, prompt, mediaType) {
     console.log('[VlmClient] Calling Anthropic API...');
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -86,7 +138,7 @@ class VlmClient {
         messages: [{
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
             { type: 'text', text: `${prompt}
 Respond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` }
           ]
@@ -99,7 +151,7 @@ Respond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["ta
     return this._parseJson(data.content[0].text);
   }
 
-  async _callOpenAICompatible(provider, key, model, base64, prompt) {
+  async _callOpenAICompatible(provider, key, model, base64, prompt, mediaType) {
     const baseUrl = OPENAI_COMPATIBLE[provider];
     console.log(`[VlmClient] Calling OpenAI-compatible API (${provider}) at ${baseUrl}...`);
     
@@ -110,7 +162,7 @@ Respond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["ta
         content: [
           { type: 'text', text: `${prompt}
 IMPORTANT: Respond with a valid JSON object ONLY. No markdown, no extra text. Format: {"description": "...", "scene_type": "...", "tags": ["tag1", "tag2"]}` },
-          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+          { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } }
         ]
       }]
     };
@@ -135,7 +187,7 @@ IMPORTANT: Respond with a valid JSON object ONLY. No markdown, no extra text. Fo
     return this._parseJson(content);
   }
 
-  async _callGemini(key, model, base64, prompt) {
+  async _callGemini(key, model, base64, prompt, mediaType) {
     console.log('[VlmClient] Calling Gemini API...');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
     const res = await fetch(url, {
@@ -146,7 +198,7 @@ IMPORTANT: Respond with a valid JSON object ONLY. No markdown, no extra text. Fo
           parts: [
             { text: `${prompt}
 Respond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["tag1", "tag2"] }` },
-            { inline_data: { mime_type: 'image/jpeg', data: base64 } }
+            { inline_data: { mime_type: mediaType, data: base64 } }
           ]
         }],
         generationConfig: { response_mime_type: "application/json" }
