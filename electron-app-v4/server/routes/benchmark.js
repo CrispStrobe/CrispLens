@@ -66,6 +66,7 @@ router.post('/server', async (req, res) => {
       const engine = new FaceEngine(modelDir);
       
       // Pass 1: Warmup (includes session creation and first inference)
+      console.log(`[Benchmark]   Pass 1: Warmup...`);
       const startWarmup = Date.now();
       await engine.init([p.id === 'cpu' ? 'cpu' : p.id, 'cpu']);
       if (!engine.detModel) throw new Error('detModel not initialized');
@@ -73,8 +74,10 @@ router.post('/server', async (req, res) => {
       // First dummy inference
       await engine.detectFaces(imagePath, { det_thresh: 0.5, det_model: 'auto' });
       const warmupDuration = Date.now() - startWarmup;
+      console.log(`[Benchmark]   Warmup done in ${warmupDuration}ms`);
       
       // Pass 2: Measured Inference (sessions already optimized)
+      console.log(`[Benchmark]   Pass 2: Measuring inference...`);
       const startInference = Date.now();
       const memStart = process.memoryUsage().heapUsed;
       
@@ -89,6 +92,7 @@ router.post('/server', async (req, res) => {
       }
       
       const inferenceDuration = Date.now() - startInference;
+      console.log(`[Benchmark]   Inference done in ${inferenceDuration}ms`);
       const memEnd = process.memoryUsage().heapUsed;
       const memDiff = memEnd - memStart;
 

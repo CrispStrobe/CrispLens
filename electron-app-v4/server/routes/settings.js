@@ -1,3 +1,4 @@
+const os = require('os');
 'use strict';
 
 const express = require('express');
@@ -6,6 +7,9 @@ const path    = require('path');
 const { getDb, getDbPath } = require('../db');
 const { requireAuth, requireAdmin } = require('../auth');
 
+
+// Detect platform-specific acceleration defaults
+const isAppleSilicon = os.platform() === 'darwin' && os.arch() === 'arm64';
 // ── Internal flat defaults (keys stored in DB) ────────────────────────────────
 
 const DEFAULTS = {
@@ -30,7 +34,7 @@ const DEFAULTS = {
   remote_v2_pass:      '',
   remote_v2_mode:      'upload_bytes',   // 'upload_bytes' | 'local_infer'
   // Server-side ONNX execution providers (Node.js face engine)
-  ort_use_coreml:      false,
+  ort_use_coreml:      isAppleSilicon,
   ort_use_cuda:        false,
   ort_use_directml:    false,
 };
@@ -51,6 +55,9 @@ function loadFlat() {
     out[r.key] = val;
   }
   if (process.env.DEBUG) console.log("[settings] Loaded flat settings:", out);
+  if (isAppleSilicon && !rows.find(r => r.key === 'ort_use_coreml')) {
+    console.log("[settings] Platform is macOS (arm64) — Auto-enabling CoreML acceleration (default)");
+  }
   return out;
 }
 

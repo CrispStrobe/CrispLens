@@ -53,6 +53,10 @@
   let serverBenchResults = null;
   let benchProgress = '';
   let benchImageId = null;
+  $: isAppleSiliconClient = typeof navigator !== 'undefined' && /Macintosh/i.test(navigator.userAgent) && (navigator.maxTouchPoints > 0 || /Apple/i.test(navigator.vendor));
+  $: isWindowsClient = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+  $: isLinuxClient = typeof navigator !== 'undefined' && /Linux/i.test(navigator.userAgent);
+
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
   let globalDetModelHint = null; // for non-admin hint
@@ -634,22 +638,30 @@
 
           /** Even safer way to get base64 from any URL using the browser's image parser */
   function _getBase64ViaImage(url) {
+    console.log('[Benchmark] _getBase64ViaImage START for:', url.slice(0, 50));
     return new Promise((resolve, reject) => {
       const img = new Image();
-      if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+      if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.startsWith('filesystem:')) {
         img.crossOrigin = 'anonymous';
       }
+      const timeout = setTimeout(() => { img.src = ''; reject(new Error('Image load timeout (10s)')); }, 10000);
       img.onload = () => {
+        clearTimeout(timeout);
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
+          const maxDim = 1024;
+          let w = img.width, h = img.height;
+          if (w > maxDim || h > maxDim) {
+            const scale = maxDim / Math.max(w, h);
+            w = Math.round(w * scale); h = Math.round(h * scale);
+          }
+          canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
         } catch (e) { reject(e); }
       };
-      img.onerror = () => reject(new Error('Browser failed to load image resource'));
+      img.onerror = () => { clearTimeout(timeout); reject(new Error('Browser failed to load image resource')); };
       img.src = url;
     });
   }
@@ -658,6 +670,7 @@
     benchmarkRunning = true;
     browserBenchResults = null;
     try {
+      console.log('%c[Benchmark] BROWSER benchmark starting...', 'color: #4090d0; font-weight: bold');
       benchProgress = 'Loading sample image...';
       let img;
       if (benchImageId) {
@@ -685,15 +698,18 @@
       if (!b64) {
         const imgUrl = await fetchImageAsUrl(img.filepath);
         console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
+        benchProgress = 'Parsing image data...';
         b64 = await _getBase64ViaImage(imgUrl);
       }
       
+      console.log('[Benchmark] Running Inference benchmark on engine...');
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(b64, (msg) => {
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
+      console.log('%c[Benchmark] BROWSER benchmark success', 'color: #50c878; font-weight: bold', browserBenchResults);
     } catch (err) {
-      console.error('Browser benchmark failed:', err);
+      console.error('%c[Benchmark] BROWSER benchmark failed:', 'color: #ff0000; font-weight: bold', err);
       benchProgress = '✗ Failed: ' + err.message;
     } finally {
       benchmarkRunning = false;
@@ -1727,17 +1743,17 @@
         <label title={$t('ort_use_coreml_hint')}>{$t('ort_use_coreml')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseCoreML} />
-          <span class="hint">{$t('ort_use_coreml_hint')}</span>
+          <span class="hint">{$t('ort_use_coreml_hint')}</span>{#if isAppleSiliconClient}<span class="recommendation" style="color:#50c878; font-size:10px; margin-left:8px;">★ Recommended for this platform</span>{/if}
         </div>
         <label title={$t('ort_use_cuda_hint')}>{$t('ort_use_cuda')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseCUDA} />
-          <span class="hint">{$t('ort_use_cuda_hint')}</span>
+          <span class="hint">{$t('ort_use_cuda_hint')}</span>{#if isLinuxClient || isWindowsClient}<span class="recommendation" style="color:#8090b0; font-size:10px; margin-left:8px;">★ Recommended if NVIDIA GPU present</span>{/if}
         </div>
         <label title={$t('ort_use_directml_hint')}>{$t('ort_use_directml')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseDirectML} />
-          <span class="hint">{$t('ort_use_directml_hint')}</span>
+          <span class="hint">{$t('ort_use_directml_hint')}</span>{#if isWindowsClient}<span class="recommendation" style="color:#8090b0; font-size:10px; margin-left:8px;">★ Recommended for AMD/Intel GPUs</span>{/if}
         </div>
       </div>
     </div>
