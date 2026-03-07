@@ -1102,30 +1102,33 @@ export class FaceEngineWeb {
    * Tests WASM, SIMD, WebGL, and WebGPU in turn.
    */
 
+  
   async runInferenceBenchmark(file, progressCallback) {
     const results = [];
+    const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox');
+    
     const backends = [
       { name: 'WASM', simd: false, webgl: false, webgpu: false },
       { name: 'WASM + SIMD', simd: true, webgl: false, webgpu: false },
-      { name: 'WebGL', simd: true, webgl: true, webgpu: false },
-      { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
+      { name: 'WebGL', simd: true, webgl: true, webgpu: false }
     ];
+    if (!isFirefox) {
+      backends.push({ name: 'WebGPU', simd: true, webgl: true, webgpu: true });
+    }
+
     const originalPrefs = { ..._ortPrefs };
     for (const b of backends) {
       try {
         console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
         await this.releaseModels();
-        _ortPrefs.simd = b.simd;
-        _ortPrefs.webgl = b.webgl;
-        _ortPrefs.webgpu = b.webgpu;
+        _ortPrefs.simd = b.simd; _ortPrefs.webgl = b.webgl; _ortPrefs.webgpu = b.webgpu;
         ort.env.wasm.simd = b.simd;
         
         const startWarmup = performance.now();
         await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
         const warmupDuration = performance.now() - startWarmup;
-        console.log(`[Benchmark] ${b.name} warmup: ${Math.round(warmupDuration)}ms`);
-
+        
         const startInference = performance.now();
         const memStart = window.performance?.memory?.usedJSHeapSize || 0;
         const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
@@ -1140,11 +1143,14 @@ export class FaceEngineWeb {
           memory_mb: memEnd > memStart ? ((memEnd - memStart) / (1024 * 1024)).toFixed(2) : '0',
           success: true
         });
-        console.log(`[Benchmark] ${b.name} inference: ${Math.round(inferenceDuration)}ms`);
+        await this.releaseModels();
       } catch (err) {
         console.error(`[Benchmark] ${b.name} FAILED:`, err);
         results.push({ backend: b.name, error: err.message, success: false });
       }
+    }
+    if (isFirefox) {
+      results.push({ backend: 'WebGPU', error: 'Skipped on Firefox (model AveragePool bug)', success: false });
     }
     Object.assign(_ortPrefs, originalPrefs);
     ort.env.wasm.simd = _ortPrefs.simd;
@@ -1330,7 +1336,7 @@ export class FaceEngineWeb {
 
     this._progress('Done');
 
-    return {
+    const finalResult = {
       local_path:    file.name,
       filename:      file.name,
       width:         W,
@@ -1345,6 +1351,10 @@ export class FaceEngineWeb {
       scene_type:    vlmResult?.scene_type || null,
       tags:          vlmResult?.tags || [],
     };
+    try {
+      if (img && img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    } catch(e) {}
+    return finalResult;
   }
 }
 
