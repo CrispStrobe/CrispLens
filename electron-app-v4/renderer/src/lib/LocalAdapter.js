@@ -1,3 +1,5 @@
+/* LOCAL_ADAPTER_VERSION: v4.0.260307.1020 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260307.1019 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -179,6 +181,8 @@ function _csvToFloat32(str) {
 
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
+
+console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260307.1114", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
   health() {
@@ -800,7 +804,8 @@ export const localAdapter = {
       console.log(`[LocalAdapter] reDetectFaces COMPLETE for imageId=${imageId}`);
       return result;
     } catch (err) {
-      console.error('[LocalAdapter] reDetectFaces CRITICAL FAILURE:', err);
+      console.error(`%c[LocalAdapter] reDetectFaces CRITICAL FAILURE | imageId=${imageId} | error=${err.message}`, 'color: #ff0000; font-weight: bold');
+      console.error(err.stack);
       throw err;
     }
   },
@@ -978,13 +983,19 @@ export const localAdapter = {
               [fname, filepath, width ?? null, height ?? null,
                date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
     
-    // Favor new VLM results if provided
-    await run(`UPDATE images SET 
-               description = COALESCE(?, description), 
-               scene_type = COALESCE(?, scene_type),
-               thumbnail_blob = COALESCE(?, thumbnail_blob)
-               WHERE filepath = ?`,
-              [description ?? null, scene_type ?? null, thumbnail_b64 || null, filepath]);
+    // Favor new VLM results if provided (only update if truthy)
+    if (description || scene_type || thumbnail_b64) {
+      const updates = [];
+      const params = [];
+      if (description) { updates.push('description = ?'); params.push(description); }
+      if (scene_type) { updates.push('scene_type = ?'); params.push(scene_type); }
+      if (thumbnail_b64) { updates.push('thumbnail_blob = ?'); params.push(thumbnail_b64); }
+      
+      if (updates.length > 0) {
+        params.push(filepath);
+        await run(`UPDATE images SET ${updates.join(', ')} WHERE filepath = ?`, params);
+      }
+    }
 
     const imgRows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
     const imageId = imgRows[0]?.id;
