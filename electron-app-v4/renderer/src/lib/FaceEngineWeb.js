@@ -1,3 +1,4 @@
+/* FACE_ENGINE_WEB_VERSION: v4.0.260307.1006 */
 /**
  * FaceEngineWeb.js — browser-compatible face engine for PWA / mobile (Capacitor)
  *
@@ -233,6 +234,7 @@ function blobToBase64(blob) {
 
 // ── Main engine class ─────────────────────────────────────────────────────────
 
+console.log("%c[FaceEngineWeb] Module Loaded | Version: v4.0.260307.1006", "color: #60c060; font-weight: bold");
 export class FaceEngineWeb {
   constructor() {
     this._detSession  = null;
@@ -832,6 +834,9 @@ export class FaceEngineWeb {
           const model = opts.vlm_model || '';
           
           console.error(`[FaceEngineWeb] Calling vlmClientWeb.enrichImage | provider=${provider} | model=${model || '(default)'}`);
+          if (!vlmClientWeb) {
+            throw new Error("vlmClientWeb is not initialized or imported correctly");
+          }
           vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt, opts.vlm_max_size || 0);
           console.error('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
           this._progress('AI Enrichment done');

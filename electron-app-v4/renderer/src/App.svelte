@@ -73,7 +73,8 @@
       // Validate it's actually a CrispLens backend response (not an HTML fallback page)
       if (!h || typeof h !== 'object' || !h.ok) throw new Error('Not a CrispLens backend — is the URL correct?');
       lastError = '';
-      dbg(`→ 200 OK  model_ready=${h.model_ready}`);
+      dbg(`→ 200 OK | Version: ${h.version || '4.0.0'} | Model Ready: ${h.model_ready}`);
+      console.log('%c[System] Backend Version:', 'color: #e89050; font-weight: bold', h.version, '| Server Time:', h.server_time);
       
       // Stop polling as soon as we get a valid response
       if (checkTimer) {

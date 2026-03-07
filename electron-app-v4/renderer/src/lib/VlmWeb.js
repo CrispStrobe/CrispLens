@@ -1,3 +1,4 @@
+/* VLM_MODULE_VERSION: v4.0.260307.1006 */
 /**
  * VlmWeb.js — Direct Cloud VLM access from the browser/mobile app.
  * 
@@ -62,6 +63,7 @@ export const DEFAULT_MODELS = {
   'google':     'gemini-1.5-flash'
 };
 
+console.log("%c[VlmWeb] Module Loaded | Version: v4.0.260307.1006", "color: #4090d0; font-weight: bold");
 export class VlmClientWeb {
   async _resizeImage(image, maxDimension) {
     return new Promise((resolve, reject) => {

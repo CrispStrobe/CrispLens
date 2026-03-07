@@ -140,7 +140,17 @@ const settingsRouter = require('./server/routes/settings');
 app.get('/api/health', (req, res) => {
   const { findModelDir } = require('./core/face-engine');
   const modelReady = !!findModelDir();
-  res.json({ ok: true, version: '4.0.0', backend: 'node-js', model_ready: modelReady });
+  let appVersion = '4.0.0-unknown';
+  try {
+    appVersion = fs.readFileSync(path.join(__dirname, 'app_version.txt'), 'utf8').trim();
+  } catch (e) {}
+  res.json({ 
+    ok: true, 
+    version: appVersion, 
+    backend: 'node-js', 
+    model_ready: modelReady,
+    server_time: new Date().toISOString()
+  });
 });
 
 app.use('/api/auth',       authRouter);
