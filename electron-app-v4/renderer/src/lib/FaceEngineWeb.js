@@ -371,7 +371,7 @@ export class FaceEngineWeb {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
-    const buf = await this._fetchModelCached('det_10g_int8.onnx').catch(() => this._fetchModelCached('det_10g.onnx'));
+    const buf = await this._fetchModelCached('det_10g.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
@@ -389,7 +389,7 @@ export class FaceEngineWeb {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
-    const buf = await this._fetchModelCached('w600k_r50_int8.onnx').catch(() => this._fetchModelCached('w600k_r50.onnx'));
+    const buf = await this._fetchModelCached('w600k_r50.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
@@ -746,7 +746,7 @@ export class FaceEngineWeb {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
-    const buf = await this._fetchModelCached('det_10g_int8.onnx').catch(() => this._fetchModelCached('det_10g.onnx'));
+    const buf = await this._fetchModelCached('det_10g.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
@@ -764,7 +764,7 @@ export class FaceEngineWeb {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
-    const buf = await this._fetchModelCached('w600k_r50_int8.onnx').catch(() => this._fetchModelCached('w600k_r50.onnx'));
+    const buf = await this._fetchModelCached('w600k_r50.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
@@ -1210,7 +1210,7 @@ export class FaceEngineWeb {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
-    const buf = await this._fetchModelCached('det_10g_int8.onnx').catch(() => this._fetchModelCached('det_10g.onnx'));
+    const buf = await this._fetchModelCached('det_10g.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
@@ -1228,7 +1228,7 @@ export class FaceEngineWeb {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
-    const buf = await this._fetchModelCached('w600k_r50_int8.onnx').catch(() => this._fetchModelCached('w600k_r50.onnx'));
+    const buf = await this._fetchModelCached('w600k_r50.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
@@ -1585,7 +1585,7 @@ export class FaceEngineWeb {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
-    const buf = await this._fetchModelCached('det_10g_int8.onnx').catch(() => this._fetchModelCached('det_10g.onnx'));
+    const buf = await this._fetchModelCached('det_10g.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
@@ -1603,7 +1603,7 @@ export class FaceEngineWeb {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
-    const buf = await this._fetchModelCached('w600k_r50_int8.onnx').catch(() => this._fetchModelCached('w600k_r50.onnx'));
+    const buf = await this._fetchModelCached('w600k_r50.onnx');
     
     const providers = _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);

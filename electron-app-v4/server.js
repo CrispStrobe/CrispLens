@@ -54,12 +54,14 @@ if (uiDist) {
     const filePath = path.join(uiDist, folder, fileName);
     
         let finalPath = filePath;
-    if (!fs.existsSync(finalPath) && (ext === '.onnx' || ext === '.task')) {
-      const { findModelDir } = require('./core/face-engine');
-      const mDir = findModelDir();
+    const { findModelDir } = require('./core/face-engine');
+    const mDir = findModelDir();
+
+    if (ext === '.onnx' || ext === '.task') {
+      // Prioritize modelDir for models
       if (mDir) {
-        const fallbackModelPath = path.join(mDir, fileName);
-        if (fs.existsSync(fallbackModelPath)) finalPath = fallbackModelPath;
+        const modelPath = path.join(mDir, fileName);
+        if (fs.existsSync(modelPath)) finalPath = modelPath;
       }
     }
 
@@ -70,17 +72,14 @@ if (uiDist) {
       else if (ext === '.onnx' || ext === '.task') res.setHeader('Content-Type', 'application/octet-stream');
 
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      // JS/CSS: no-cache so browsers revalidate on every load (filenames are unhashed).
-      // WASM: long-lived immutable (files are stable and huge — no benefit re-fetching).
       if (ext === '.js' || ext === '.mjs' || ext === '.css') {
         res.setHeader('Cache-Control', 'no-cache');
       } else {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
-      console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')}`);
+      console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')} from ${finalPath}`);
       return res.sendFile(finalPath);
-    }
-    console.warn(`[server] PRIORITY ASSET NOT FOUND: ${filePath}`);
+    }`);
     res.status(404).send('Asset not found');
   });
 }
