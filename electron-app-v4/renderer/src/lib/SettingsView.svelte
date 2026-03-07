@@ -52,6 +52,7 @@
   let browserBenchResults = null;
   let serverBenchResults = null;
   let benchProgress = '';
+  let benchImageId = null;
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
   let globalDetModelHint = null; // for non-admin hint
@@ -659,14 +660,22 @@
     browserBenchResults = null;
     try {
       benchProgress = 'Loading sample image...';
-      const imgs = await fetchImages({ unidentified: false, sort: 'most_faces', limit: 1 });
-      if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
+      let img;
+      if (benchImageId) {
+        const { fetchImage } = await import('../api.js');
+        img = await fetchImage(benchImageId);
+        if (!img) throw new Error(`Image ID ${benchImageId} not found`);
+      } else {
+        const imgs = await fetchImages({ unidentified: false, sort: 'most_faces', limit: 1 });
+        if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
+        img = imgs[0];
+      }
       
-      const imgUrl = await fetchImageAsUrl(imgs[0].filepath);
+      const imgUrl = await fetchImageAsUrl(img.filepath);
       console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
       
       const blob = await _getBlobViaImage(imgUrl);
-      const file = new File([blob], imgs[0].filename || 'test.jpg', { type: 'image/jpeg' });
+      const file = new File([blob], img.filename || 'test.jpg', { type: 'image/jpeg' });
       
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
         benchProgress = msg;
@@ -688,7 +697,8 @@
       const resp = await fetch('/api/benchmark/server', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
+        credentials: 'include',
+        body: JSON.stringify({ image_id: benchImageId })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Server error');
@@ -1729,7 +1739,12 @@
     <h3>{$t('tab_benchmark')}</h3>
     <p class="hint">Test performance of different inference backends on this device.</p>
     
-    <div class="flex-row" style="margin-top:10px; gap:10px;">
+    <div class="flex-row" style="margin-top:10px; gap:15px; align-items:center;">
+      <div style="display:flex; align-items:center; gap:5px;">
+        <label for="bench-img-id" style="font-size:11px; color:#8090b0; margin:0;">Image ID (opt):</label>
+        <input id="bench-img-id" type="number" bind:value={benchImageId} placeholder="auto" 
+               class="num-input" style="width:60px; margin:0;" />
+      </div>
       <button class="btn-primary" on:click={doBrowserBenchmark} disabled={benchmarkRunning}>
         {benchmarkRunning ? 'Running...' : 'Run Browser Benchmark'}
       </button>

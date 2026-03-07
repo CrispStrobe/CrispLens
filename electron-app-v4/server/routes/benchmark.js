@@ -10,32 +10,41 @@ const { FaceEngine, findModelDir } = require('../../core/face-engine');
 
 router.post('/server', async (req, res) => {
   // Relaxed auth for benchmarks: allow if user is admin OR if request is from localhost
-  const isLocal = req.ip === '127.0.0.1' || req.ip === "::1" || req.ip === "::ffff:127.0.0.1" || req.headers.host.includes("localhost");
+  const isLocal = req.ip === '127.0.0.1' || req.ip === "::1" || req.ip === "::ffff:127.0.0.1" || (req.headers.host && req.headers.host.includes("localhost"));
   if (!isLocal && (!req.user || req.user.role !== "admin")) {
     return res.status(401).json({ error: "Unauthorized. Admin or local access required." });
   }
-  console.log('[Benchmark] Server benchmark started');
+  
+  const { image_id } = req.body || {};
+  console.log(`[Benchmark] Server benchmark started. Requested image_id: ${image_id || 'auto'}`);
   
   const results = [];
   const db = getDb();
   
-  // 1. Pick a sample image from DB that has some faces if possible
-  let sample = db.prepare(`
-    SELECT i.filepath, i.id, COUNT(f.id) as face_count 
-    FROM images i 
-    LEFT JOIN faces f ON f.image_id = i.id 
-    GROUP BY i.id 
-    HAVING face_count > 0 
-    ORDER BY face_count DESC 
-    LIMIT 1
-  `).get();
-  
-  if (!sample) {
-    sample = db.prepare('SELECT filepath, id FROM images LIMIT 1').get();
+  // 1. Pick or use provided image
+  let sample;
+  if (image_id) {
+    sample = db.prepare('SELECT filepath, id, filename FROM images WHERE id = ?').get(image_id);
+    if (!sample) return res.status(404).json({ error: `Image ID ${image_id} not found in database.` });
+  } else {
+    // Pick a sample image from DB that has some faces if possible
+    sample = db.prepare(`
+      SELECT i.filepath, i.id, i.filename, COUNT(f.id) as face_count 
+      FROM images i 
+      LEFT JOIN faces f ON f.image_id = i.id 
+      GROUP BY i.id 
+      HAVING face_count > 0 
+      ORDER BY face_count DESC 
+      LIMIT 1
+    `).get();
+    
+    if (!sample) {
+      sample = db.prepare('SELECT filepath, id, filename FROM images LIMIT 1').get();
+    }
   }
   
   if (!sample || !fs.existsSync(sample.filepath)) {
-    return res.status(400).json({ error: 'No suitable sample image found in database or disk.' });
+    return res.status(400).json({ error: 'No suitable sample image found on disk.' });
   }
 
   const imagePath = sample.filepath;
@@ -48,7 +57,6 @@ router.post('/server', async (req, res) => {
     { id: 'cuda', label: 'CUDA (NVIDIA)' },
     { id: 'directml', label: 'DirectML (Windows)' }
   ];
-
 
   for (const p of providers) {
     try {
@@ -95,8 +103,20 @@ router.post('/server', async (req, res) => {
       
       engine.detModel = null;
       engine.recModel = null;
+      
+    } catch (err) {
+      console.error(`[Benchmark] ${p.label} failed: ${err.message}`);
+      results.push({
+        provider: p.label,
+        error: err.message,
+        success: false
+      });
+    }
+  }
+
   res.json({
-    sample_image: path.basename(imagePath),
+    sample_image: sample.filename || path.basename(imagePath),
+    image_id: sample.id,
     results
   });
 });
