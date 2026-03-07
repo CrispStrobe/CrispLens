@@ -1347,7 +1347,7 @@ export class FaceEngineWeb {
         try {
           this._progress('AI Enrichment (VLM)…');
           console.error('[FaceEngineWeb] Starting VLM enrichment process...');
-          const vlmMod = await import('./VlmWeb.js');
+          const vlmMod = await import('./VlmWeb.js?t=' + Date.now());
           const vlmClientWeb = vlmMod.vlmClientWeb ?? vlmMod.default;
           if (!vlmClientWeb || typeof vlmClientWeb.setKeys !== 'function') {
             throw new Error('VlmWeb module failed to provide vlmClientWeb instance (tree-shaking issue?)');
@@ -1369,12 +1369,15 @@ export class FaceEngineWeb {
           if (!vlmClientWeb) {
             throw new Error("vlmClientWeb is not initialized or imported correctly");
           }
-          vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt, opts.vlm_max_size || 0);
-          console.error('[FaceEngineWeb] VLM enrichment SUCCESS object:', JSON.stringify(vlmResult, null, 2));
-          // Safety: Ensure vlmResult is an object and has expected keys
-          if (!vlmResult || typeof vlmResult !== 'object') {
-            vlmResult = { description: '', scene_type: 'unknown', tags: [] };
+          try {
+            vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt, opts.vlm_max_size || 0);
+          } catch (vlmErr) {
+            console.error('[FaceEngineWeb] vlmClientWeb.enrichImage inner error:', vlmErr);
+            vlmResult = { description: 'Error: ' + vlmErr.message, scene_type: 'error', tags: [] };
           }
+          
+          if (!vlmResult) vlmResult = { description: '', scene_type: 'unknown', tags: [] };
+          console.error('[FaceEngineWeb] VLM enrichment result:', JSON.stringify(vlmResult));
           this._progress('AI Enrichment done');
         } catch (e) {
           console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);

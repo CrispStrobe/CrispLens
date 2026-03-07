@@ -54,22 +54,24 @@ router.post('/server', async (req, res) => {
     try {
       console.log(`[Benchmark] Testing server provider: ${p.label}`);
       
-      // CREATE A COMPLETELY INDEPENDENT ENGINE INSTANCE
       const { FaceEngine } = require('../../core/face-engine');
       const engine = new FaceEngine(modelDir);
       
-      const start = Date.now();
+      // Pass 1: Warmup (includes session creation and first inference)
+      const startWarmup = Date.now();
+      await engine.init([p.id === 'cpu' ? 'cpu' : p.id, 'cpu']);
+      if (!engine.detModel) throw new Error('detModel not initialized');
+      
+      // First dummy inference
+      await engine.detectFaces(imagePath, { det_thresh: 0.5, det_model: 'auto' });
+      const warmupDuration = Date.now() - startWarmup;
+      
+      // Pass 2: Measured Inference (sessions already optimized)
+      const startInference = Date.now();
       const memStart = process.memoryUsage().heapUsed;
       
-      // Initialize with explicit providers to bypass DB
-      await engine.init([p.id === 'cpu' ? 'cpu' : p.id, 'cpu']);
-      
-      if (!engine.detModel) throw new Error('detModel not initialized');
-
-      // 1. Detection
       const detRes = await engine.detectFaces(imagePath, { det_thresh: 0.5, det_model: 'auto' });
       
-      // 2. Embedding
       const faces = [];
       if (detRes.faces && detRes.faces.length > 0) {
         for (const f of detRes.faces) {
@@ -78,31 +80,21 @@ router.post('/server', async (req, res) => {
         }
       }
       
-      const duration = Date.now() - start;
+      const inferenceDuration = Date.now() - startInference;
       const memEnd = process.memoryUsage().heapUsed;
       const memDiff = memEnd - memStart;
 
       results.push({
         provider: p.label,
-        duration_ms: duration,
+        warmup_ms: warmupDuration,
+        duration_ms: inferenceDuration,
         faces: faces.length,
         memory_mb: (memDiff / (1024 * 1024)).toFixed(2),
         success: true
       });
       
-      // Forced cleanup
       engine.detModel = null;
       engine.recModel = null;
-    } catch (err) {
-      console.error(`[Benchmark] ${p.label} failed: ${err.message}`, err.stack);
-      results.push({
-        provider: p.label,
-        error: err.message,
-        success: false
-      });
-    }
-  }
-
   res.json({
     sample_image: path.basename(imagePath),
     results

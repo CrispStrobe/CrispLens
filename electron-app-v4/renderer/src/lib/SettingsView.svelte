@@ -631,30 +631,26 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl } from '../api.js';
 
-      /** Helper to fetch blob safely across all browser contexts */
-  function _getBlobSafe(url) {
+        /** Even safer way to get blob from any URL using the browser's image parser */
+  function _getBlobViaImage(url) {
     return new Promise((resolve, reject) => {
-      if (url.startsWith('data:')) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
         try {
-          const parts = url.split(',');
-          const mime = parts[0].match(/:(.*?);/)[1];
-          const bstr = atob(parts[1]);
-          let n = bstr.length;
-          const u8arr = new Uint8Array(n);
-          while(n--) u8arr[n] = bstr.charCodeAt(n);
-          resolve(new Blob([u8arr], {type:mime}));
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('Canvas toBlob failed'));
+          }, 'image/jpeg', 0.9);
         } catch (e) { reject(e); }
-        return;
-      }
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url);
-      xhr.responseType = 'blob';
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
-        else reject(new Error(`HTTP ${xhr.status}`));
       };
-      xhr.onerror = () => reject(new Error('Network error or CORS block'));
-      xhr.send();
+      img.onerror = () => reject(new Error('Browser failed to load image resource'));
+      img.src = url;
     });
   }
 
@@ -667,15 +663,15 @@
       if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
       
       const imgUrl = await fetchImageAsUrl(imgs[0].filepath);
-      console.log('[Benchmark] Loading blob from:', imgUrl.slice(0, 100));
+      console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
       
-      const blob = await _getBlobSafe(imgUrl);
-      const file = new File([blob], imgs[0].filename || 'test.jpg', { type: blob.type || 'image/jpeg' });
+      const blob = await _getBlobViaImage(imgUrl);
+      const file = new File([blob], imgs[0].filename || 'test.jpg', { type: 'image/jpeg' });
       
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
         benchProgress = msg;
       });
-      benchProgress = '✓ Benchmark complete';
+      benchProgress = '✓ Browser benchmark complete';
     } catch (err) {
       console.error('Browser benchmark failed:', err);
       benchProgress = '✗ Failed: ' + err.message;
@@ -1755,7 +1751,7 @@
           <thead>
             <tr style="text-align:left; border-bottom:1px solid #333;">
               <th style="padding:4px;">Backend</th>
-              <th style="padding:4px;">Time</th>
+              <th style="padding:4px;">Warmup</th><th style="padding:4px;">Inference</th>
               <th style="padding:4px;">Faces</th>
               <th style="padding:4px;">Status</th>
             </tr>
@@ -1764,7 +1760,7 @@
             {#each browserBenchResults as r}
               <tr style="border-bottom:1px solid #222;">
                 <td style="padding:4px;">{r.backend}</td>
-                <td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
+                <td style="padding:4px;">{r.success ? r.warmup_ms + 'ms' : '-'}</td><td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
                 <td style="padding:4px;">{r.success ? r.faces : '-'}</td>
                 <td style="padding:4px;">{r.success ? '✓' : '✗ ' + r.error}</td>
               </tr>
@@ -1781,7 +1777,7 @@
           <thead>
             <tr style="text-align:left; border-bottom:1px solid #333;">
               <th style="padding:4px;">Provider</th>
-              <th style="padding:4px;">Time</th>
+              <th style="padding:4px;">Warmup</th><th style="padding:4px;">Inference</th>
               <th style="padding:4px;">Faces</th>
               <th style="padding:4px;">Status</th>
             </tr>
@@ -1790,7 +1786,7 @@
             {#each serverBenchResults.results as r}
               <tr style="border-bottom:1px solid #222;">
                 <td style="padding:4px;">{r.provider}</td>
-                <td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
+                <td style="padding:4px;">{r.success ? r.warmup_ms + 'ms' : '-'}</td><td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
                 <td style="padding:4px;">{r.success ? r.faces : '-'}</td>
                 <td style="padding:4px;">{r.success ? '✓' : '✗ ' + r.error}</td>
               </tr>

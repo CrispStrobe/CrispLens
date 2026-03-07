@@ -974,7 +974,7 @@ export const localAdapter = {
     const fname = filename || filepath.split('/').pop();
 
     console.log(`[LocalAdapter] importProcessed: saving image ${fname} | filepath=${filepath} | dims=${width}x${height} | vlm_max_size=${arguments[0].vlm_max_size || '0'}`);
-    console.log(`[LocalAdapter] VLM results:`, { description: description?.slice(0, 50) + '...', scene_type, tagsCount: tags?.length });
+    console.log(`[LocalAdapter] VLM results:`, { description: (description || '').slice(0, 50) + '...', scene_type, tagsCount: tags?.length });
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
