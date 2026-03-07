@@ -636,9 +636,27 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
-          /** Even safer way to get base64 from any URL using the browser's image parser */
-  function _getBase64ViaImage(url) {
+          /** Even safer way to get base64 from any URL using the browser's image parser or fetch */
+  async function _getBase64ViaImage(url) {
     console.log('[Benchmark] _getBase64ViaImage START for:', url.slice(0, 50));
+    
+    // If it is a blob URL, we can usually fetch it directly even if Image() fails
+    if (url.startsWith('blob:')) {
+      try {
+        console.log('[Benchmark] URL is a blob, using fetch + FileReader');
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn('[Benchmark] Fetching blob URL failed, falling back to Image parser:', e.message);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const img = new Image();
       if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.startsWith('filesystem:')) {
@@ -648,6 +666,7 @@
       img.onload = () => {
         clearTimeout(timeout);
         try {
+          console.log();
           const canvas = document.createElement('canvas');
           const maxDim = 1024;
           let w = img.width, h = img.height;
@@ -659,7 +678,10 @@
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
           resolve(canvas.toDataURL('image/jpeg', 0.8));
-        } catch (e) { reject(e); }
+        } catch (e) { 
+          console.error('[Benchmark] Canvas conversion failed:', e);
+          reject(e); 
+        }
       };
       img.onerror = () => { clearTimeout(timeout); reject(new Error('Browser failed to load image resource')); };
       img.src = url;
