@@ -31,7 +31,8 @@ sharp.cache(false);
 // ── Build ONNX execution providers from server settings ──────────────────────
 // Reads ort_use_coreml / ort_use_cuda / ort_use_directml from settings DB.
 // Always falls back to 'cpu' as the last provider.
-function _buildExecProviders() {
+function _buildExecProviders(forceProviders = null) {
+  if (forceProviders) return forceProviders;
   try {
     const { loadFlat } = require('../server/routes/settings');
     const flat = loadFlat();
@@ -231,53 +232,60 @@ class FaceEngine {
     this.yunetOutputNames = null;
     this.initialized     = false;
     this._outputNames    = null;     // cached SCRFD output names
+    this.currentProviders = ['cpu'];
   }
 
-  async init() {
-    if (this.initialized) return;
+  async init(providers = null) {
+    if (this.initialized && !providers) return;
 
     if (!this.modelDir || !fs.existsSync(path.join(this.modelDir, 'det_10g.onnx'))) {
-      throw new Error(
-        `buffalo_l models not found.\n` +
-        `Run 'node core/model-downloader.js' to download them, or install\n` +
-        `InsightFace (Python) which will place them in ~/.insightface/models/buffalo_l/`
-      );
+      throw new Error('buffalo_l models not found');
     }
 
-    const execProviders = _buildExecProviders();
+    let execProviders = providers;
+    if (!execProviders) {
+      try {
+        // Only require settings if needed
+        const { loadFlat } = require('../server/routes/settings');
+        const flat = loadFlat();
+        execProviders = [];
+        if (flat.ort_use_cuda)     execProviders.push('cuda');
+        if (flat.ort_use_coreml)   execProviders.push('coreml');
+        if (flat.ort_use_directml) execProviders.push('directml');
+        execProviders.push('cpu');
+      } catch (e) {
+        execProviders = ['cpu'];
+      }
+    }
+    
+    this.currentProviders = execProviders;
     const opts = {
       executionProviders: execProviders,
       intraOpNumThreads:  4,
       interOpNumThreads:  1,
     };
 
-    console.log(`[FaceEngine] Loading models from: ${this.modelDir} | providers: ${execProviders.join(',')}`);
-    this.detModel = await ort.InferenceSession.create(
-      path.join(this.modelDir, 'det_10g.onnx'), opts
-    );
-    this.recModel = await ort.InferenceSession.create(
-      path.join(this.modelDir, 'w600k_r50.onnx'), opts
-    );
-
-    // Cache output names — expected order for buffalo_l det_10g.onnx:
-    // [score_8, score_16, score_32, bbox_8, bbox_16, bbox_32, kps_8, kps_16, kps_32]
-    this._outputNames = this.detModel.outputNames;
-    if (this._outputNames.length !== 9) {
-      throw new Error(`Expected 9 detection outputs, got ${this._outputNames.length}`);
+    console.log(`[FaceEngine] Loading models with providers: ${execProviders.join(',')}`);
+    this.detModel = await ort.InferenceSession.create(path.join(this.modelDir, 'det_10g.onnx'), opts);
+    this.recModel = await ort.InferenceSession.create(path.join(this.modelDir, 'w600k_r50.onnx'), opts);
+    
+    if (!this.detModel || !this.recModel) {
+      throw new Error('Failed to create InferenceSession (null returned)');
     }
-
+    
+    this._outputNames = this.detModel.outputNames;
     this.initialized = true;
     console.log('[FaceEngine] Models ready.');
     console.log('[FaceEngine] Detection output names:', this._outputNames.join(', '));
   }
 
   /** Lazy-load YuNet ONNX model (downloads if not present). */
-  async initYuNet() {
+  async initYuNet(providers = null) {
     if (this.yunetModel) return;
     const yunetPath = require('path').join(this.modelDir, 'face_detection_yunet_2023mar.onnx');
     if (!fs.existsSync(yunetPath)) await ensureYuNet(this.modelDir);
     this.yunetModel = await ort.InferenceSession.create(yunetPath, {
-      executionProviders: _buildExecProviders(),
+      executionProviders: providers || this.currentProviders || ['cpu'],
       intraOpNumThreads:  2,
       interOpNumThreads:  1,
     });
@@ -296,7 +304,7 @@ class FaceEngine {
    * Returns { faces, imageWidth, imageHeight }
    */
   async detectFaces(imagePath, opts = {}) {
-    await this.init();
+    if (!this.initialized) await this.init();
 
     const detThresh   = parseFloat(opts.det_thresh)   || 0.5;
     const minFaceSize = parseInt(opts.min_face_size)  || 0;
@@ -474,7 +482,7 @@ class FaceEngine {
    * Returns a Float32Array of length 512, L2-normalized.
    */
   async embedFace(imagePath, landmarks, imageWidth, imageHeight) {
-    await this.init();
+    if (!this.initialized) await this.init();
 
     // Read the source image as raw RGB (apply EXIF rotation so landmarks align).
     // Use flatten() to composite any transparency on white — no-op for JPEGs.

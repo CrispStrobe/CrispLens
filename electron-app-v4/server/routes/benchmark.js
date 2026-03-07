@@ -44,33 +44,34 @@ router.post('/server', requireAdmin, async (req, res) => {
     { id: 'directml', label: 'DirectML (Windows)' }
   ];
 
+
   for (const p of providers) {
     try {
       console.log(`[Benchmark] Testing server provider: ${p.label}`);
       
+      // CREATE A COMPLETELY INDEPENDENT ENGINE INSTANCE
+      const { FaceEngine } = require('../../core/face-engine');
       const engine = new FaceEngine(modelDir);
       
-      // Override init to force specific provider
-      engine.init = async function() {
-        const ort = require('onnxruntime-node');
-        const sessionOpts = {
-          executionProviders: [p.id === 'cpu' ? 'cpu' : p.id, 'cpu'],
-          graphOptimizationLevel: 'all'
-        };
-        
-        const detPath = path.join(this.modelDir, 'det_10g.onnx');
-        const recPath = path.join(this.modelDir, 'w600k_r50.onnx');
-        
-        this.detSession = await ort.InferenceSession.create(detPath, sessionOpts);
-        this.recSession = await ort.InferenceSession.create(recPath, sessionOpts);
-        this.initialized = true;
-      };
-
       const start = Date.now();
       const memStart = process.memoryUsage().heapUsed;
       
-      await engine.init();
-      const resData = await engine.processImage(imagePath, { det_thresh: 0.5 });
+      // Initialize with explicit providers to bypass DB
+      await engine.init([p.id === 'cpu' ? 'cpu' : p.id, 'cpu']);
+      
+      if (!engine.detModel) throw new Error('detModel not initialized');
+
+      // 1. Detection
+      const detRes = await engine.detectFaces(imagePath, { det_thresh: 0.5, det_model: 'auto' });
+      
+      // 2. Embedding
+      const faces = [];
+      if (detRes.faces && detRes.faces.length > 0) {
+        for (const f of detRes.faces) {
+          const emb = await engine.embedFace(imagePath, f.landmarks, detRes.imageWidth, detRes.imageHeight);
+          faces.push({ ...f, embedding: emb });
+        }
+      }
       
       const duration = Date.now() - start;
       const memEnd = process.memoryUsage().heapUsed;
@@ -79,17 +80,16 @@ router.post('/server', requireAdmin, async (req, res) => {
       results.push({
         provider: p.label,
         duration_ms: duration,
-        faces: resData.faces.length,
+        faces: faces.length,
         memory_mb: (memDiff / (1024 * 1024)).toFixed(2),
         success: true
       });
       
-      // Cleanup
-      engine.detSession = null;
-      engine.recSession = null;
-      
+      // Forced cleanup
+      engine.detModel = null;
+      engine.recModel = null;
     } catch (err) {
-      console.error(`[Benchmark] ${p.label} failed: ${err.message}`);
+      console.error(`[Benchmark] ${p.label} failed: ${err.message}`, err.stack);
       results.push({
         provider: p.label,
         error: err.message,

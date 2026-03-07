@@ -1,5 +1,5 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260307.1020 */
-/* LOCAL_ADAPTER_VERSION: v4.0.260307.1019 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260307.1200 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260307.1200 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -182,7 +182,7 @@ function _csvToFloat32(str) {
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
 
-console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260307.1114", "color: #e07030; font-weight: bold");
+console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260307.1200", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
   health() {

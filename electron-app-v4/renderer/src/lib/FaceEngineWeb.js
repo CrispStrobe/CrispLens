@@ -1,4 +1,4 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260307.1006 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260307.1200 */
 /**
  * FaceEngineWeb.js — browser-compatible face engine for PWA / mobile (Capacitor)
  *
@@ -234,7 +234,7 @@ function blobToBase64(blob) {
 
 // ── Main engine class ─────────────────────────────────────────────────────────
 
-console.log("%c[FaceEngineWeb] Module Loaded | Version: v4.0.260307.1006", "color: #60c060; font-weight: bold");
+console.log("%c[FaceEngineWeb] Module Loaded | Version: v4.0.260307.1200", "color: #60c060; font-weight: bold");
 export class FaceEngineWeb {
   constructor() {
     this._detSession  = null;

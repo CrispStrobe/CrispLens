@@ -10,7 +10,7 @@ echo "==> CrispLens v4 restart"
 echo "    Port:    $PORT"
 echo "    DB:      $DB_PATH"
 
-echo "v4.0.260307.1006 (started 2026-03-07 10:06)" > app_version.txt
+echo "v4.0.$(date +%y%m%d.%H%M) (started $(date +"%Y-%m-%d %H:%M"))" > app_version.txt
 # ── Kill any process holding the port ────────────────────────────────────────
 OLD_PID=$(lsof -ti tcp:"$PORT" 2>/dev/null || true)
 if [ -n "$OLD_PID" ]; then
