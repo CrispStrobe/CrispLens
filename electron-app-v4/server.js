@@ -79,7 +79,7 @@ if (uiDist) {
       }
       console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')} from ${finalPath}`);
       return res.sendFile(finalPath);
-    }`);
+    }
     res.status(404).send('Asset not found');
   });
 }
@@ -124,7 +124,7 @@ app.use((req, res, next) => {
     const ms = Date.now() - start;
     const color = res.statusCode >= 500 ? '\x1b[31m' : res.statusCode >= 400 ? '\x1b[33m' : '\x1b[32m';
     // Use originalUrl to see the full path including /api
-    console.log(`${color}${req.method}\x1b[0m ${req.originalUrl} [host: ${req.headers.host}] → ${res.statusCode} (${ms}ms)`);
+    console.log(color + req.method + " " + req.originalUrl + " " + res.statusCode + " (" + ms + "ms)");
   });
   next();
 });
