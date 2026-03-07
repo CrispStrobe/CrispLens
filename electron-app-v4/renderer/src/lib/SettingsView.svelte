@@ -629,7 +629,7 @@
 
 
   import { faceEngineWeb } from './FaceEngineWeb.js';
-  import { fetchImages } from '../api.js';
+  import { fetchImages, fetchImageAsUrl } from '../api.js';
 
   async function doBrowserBenchmark() {
     benchmarkRunning = true;
@@ -639,9 +639,10 @@
       const imgs = await fetchImages({ unidentified: false, sort: 'most_faces', limit: 1 });
       if (!imgs || imgs.length === 0) throw new Error('No images in database to test with');
       
-      const res = await fetch(imgs[0].filepath);
+      const imgUrl = await fetchImageAsUrl(imgs[0].filepath);
+      const res = await fetch(imgUrl);
       const blob = await res.blob();
-      const file = new File([blob], imgs[0].filename, { type: blob.type });
+      const file = new File([blob], imgs[0].filename, { type: blob.type || 'image/jpeg' });
       
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(file, (msg) => {
         benchProgress = msg;
@@ -662,7 +663,8 @@
       benchProgress = 'Starting server-side benchmark...';
       const resp = await fetch('/api/benchmark/server', { 
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Server error');
