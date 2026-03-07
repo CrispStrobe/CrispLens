@@ -2231,7 +2231,14 @@ export class FaceEngineWeb {
           }
           
           if (!vlmResult) vlmResult = { description: '', scene_type: 'unknown', tags: [] };
-          console.error('[FaceEngineWeb] VLM enrichment result:', JSON.stringify(vlmResult));
+          if (!vlmResult || typeof vlmResult !== 'object') {
+            vlmResult = { description: 'Invalid result format', scene_type: 'unknown', tags: [] };
+          }
+          try {
+            console.error('[FaceEngineWeb] VLM enrichment result:', JSON.stringify(vlmResult));
+          } catch(e) {
+            console.error('[FaceEngineWeb] Could not stringify vlmResult:', vlmResult);
+          }
           this._progress('AI Enrichment done');
         } catch (e) {
           console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);

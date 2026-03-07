@@ -636,18 +636,35 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
-          /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
-  function _getBase64ViaImage(url) {
+            /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
+  async function _getBase64ViaImage(url) {
+    console.log('[Benchmark] _getBase64ViaImage START for:', url.slice(0, 50));
+    
+    // Firefox FIX: Blobs must be fetched and read as data URLs to bypass Security Error
+    if (url.startsWith('blob:')) {
+      try {
+        console.log('[Benchmark] URL is a blob, using fetch + FileReader');
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn('[Benchmark] Fetching blob URL failed, falling back to Image parser:', e.message);
+      }
+    }
+
     return new Promise((resolve, reject) => {
-      console.log('[Benchmark] _getBase64ViaImage loading:', url.slice(0, 100));
       const img = new Image();
-      
-      // Security: only use anonymous for remote URLs to avoid CORS tainting
-      if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+      if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.startsWith('filesystem:')) {
         img.crossOrigin = 'anonymous';
       }
-      
+      const timeout = setTimeout(() => { img.src = ''; reject(new Error('Image load timeout (10s)')); }, 10000);
       img.onload = () => {
+        clearTimeout(timeout);
         try {
           const canvas = document.createElement('canvas');
           const maxDim = 1024;
@@ -662,7 +679,7 @@
           resolve(canvas.toDataURL('image/jpeg', 0.85));
         } catch (e) { reject(new Error('Canvas conversion failed: ' + e.message)); }
       };
-      img.onerror = () => reject(new Error('Browser failed to load image resource (Security or Network error)'));
+      img.onerror = () => { clearTimeout(timeout); reject(new Error('Browser failed to load image resource (Security or Network error)')); };
       img.src = url;
     });
   }
@@ -671,6 +688,7 @@
     benchmarkRunning = true;
     browserBenchResults = null;
     try {
+      console.log('%c[Benchmark] BROWSER benchmark starting...', 'color: #4090d0; font-weight: bold');
       benchProgress = 'Preparing benchmark image...';
       let img;
       if (benchImageId) {
@@ -706,8 +724,9 @@
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
+      console.log('%c[Benchmark] BROWSER benchmark success', 'color: #50c878; font-weight: bold', browserBenchResults);
     } catch (err) {
-      console.error('BROWSER benchmark failed:', err);
+      console.error('%c[Benchmark] BROWSER benchmark failed:', 'color: #ff0000; font-weight: bold', err);
       benchProgress = '✗ Failed: ' + err.message;
     } finally {
       benchmarkRunning = false;
