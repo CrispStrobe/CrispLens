@@ -118,7 +118,7 @@ app.use((req, res, next) => {
   const start = Date.now();
   if (process.env.DEBUG && ['POST', 'PUT', 'PATCH'].includes(req.method) && req.body) {
     const bodyStr = JSON.stringify(req.body);
-    if (bodyStr.length < 512) console.log(`  body: ${bodyStr}`);
+    if (bodyStr.length < 512) console.log("  body: " + bodyStr);
   }
   res.on('finish', () => {
     const ms = Date.now() - start;
