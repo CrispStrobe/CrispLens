@@ -636,37 +636,19 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
-          /** Even safer way to get base64 from any URL using the browser's image parser or fetch */
-  async function _getBase64ViaImage(url) {
-    console.log('[Benchmark] _getBase64ViaImage START for:', url.slice(0, 50));
-    
-    // If it is a blob URL, we can usually fetch it directly even if Image() fails
-    if (url.startsWith('blob:')) {
-      try {
-        console.log('[Benchmark] URL is a blob, using fetch + FileReader');
-        const res = await fetch(url);
-        const blob = await res.blob();
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } catch (e) {
-        console.warn('[Benchmark] Fetching blob URL failed, falling back to Image parser:', e.message);
-      }
-    }
-
+          /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
+  function _getBase64ViaImage(url) {
     return new Promise((resolve, reject) => {
+      console.log('[Benchmark] _getBase64ViaImage loading:', url.slice(0, 100));
       const img = new Image();
-      if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.startsWith('filesystem:')) {
+      
+      // Security: only use anonymous for remote URLs to avoid CORS tainting
+      if (!url.startsWith('blob:') && !url.startsWith('data:')) {
         img.crossOrigin = 'anonymous';
       }
-      const timeout = setTimeout(() => { img.src = ''; reject(new Error('Image load timeout (10s)')); }, 10000);
+      
       img.onload = () => {
-        clearTimeout(timeout);
         try {
-          console.log();
           const canvas = document.createElement('canvas');
           const maxDim = 1024;
           let w = img.width, h = img.height;
@@ -677,13 +659,10 @@
           canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
-        } catch (e) { 
-          console.error('[Benchmark] Canvas conversion failed:', e);
-          reject(e); 
-        }
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch (e) { reject(new Error('Canvas conversion failed: ' + e.message)); }
       };
-      img.onerror = () => { clearTimeout(timeout); reject(new Error('Browser failed to load image resource')); };
+      img.onerror = () => reject(new Error('Browser failed to load image resource (Security or Network error)'));
       img.src = url;
     });
   }
@@ -692,8 +671,7 @@
     benchmarkRunning = true;
     browserBenchResults = null;
     try {
-      console.log('%c[Benchmark] BROWSER benchmark starting...', 'color: #4090d0; font-weight: bold');
-      benchProgress = 'Loading sample image...';
+      benchProgress = 'Preparing benchmark image...';
       let img;
       if (benchImageId) {
         const { fetchImage } = await import('../api.js');
@@ -705,33 +683,31 @@
         img = imgs[0];
       }
       
-      let b64;
+      let b64 = null;
+      // Step A: Try direct thumbnail from DB (safest)
       try {
-        console.log('[Benchmark] Attempting to fetch thumbnail directly for ID:', img.id);
         const thumb = await fetchThumbnail(img.id);
         if (thumb) {
           b64 = thumb.startsWith('data:') ? thumb : `data:image/jpeg;base64,${thumb}`;
-          console.log('[Benchmark] Using direct base64 thumbnail');
+          console.log('[Benchmark] Using direct base64 from DB');
         }
-      } catch (e) {
-        console.warn('[Benchmark] Direct thumbnail fetch failed, falling back to image parser');
-      }
+      } catch (e) { console.warn('[Benchmark] DB fetch failed'); }
 
+      // Step B: Fallback to URL conversion
       if (!b64) {
         const imgUrl = await fetchImageAsUrl(img.filepath);
-        console.log('[Benchmark] Using Image parser for URL:', imgUrl.slice(0, 100));
-        benchProgress = 'Parsing image data...';
+        benchProgress = 'Converting image URL...';
         b64 = await _getBase64ViaImage(imgUrl);
       }
       
-      console.log('[Benchmark] Running Inference benchmark on engine...');
+      if (!b64) throw new Error('Failed to obtain image data');
+      
       browserBenchResults = await faceEngineWeb.runInferenceBenchmark(b64, (msg) => {
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
-      console.log('%c[Benchmark] BROWSER benchmark success', 'color: #50c878; font-weight: bold', browserBenchResults);
     } catch (err) {
-      console.error('%c[Benchmark] BROWSER benchmark failed:', 'color: #ff0000; font-weight: bold', err);
+      console.error('BROWSER benchmark failed:', err);
       benchProgress = '✗ Failed: ' + err.message;
     } finally {
       benchmarkRunning = false;
