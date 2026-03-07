@@ -46,20 +46,13 @@ console.log(`[FaceEngineWeb] ORT prefs: simd=${_ortPrefs.simd} webgl=${_ortPrefs
 ort.env.wasm.simd = _ortPrefs.simd;
 
 /** Build execution provider list for a new InferenceSession. */
-function _getOrtProviders() {
+function _getOrtProviders(forceProvider = null) {
+  if (forceProvider) return [forceProvider];
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-  const _ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '';
-  const isFirefox = _ua.includes('firefox');
-  const isSafari = _ua.includes('safari') && !_ua.includes('chrome') && !_ua.includes('chromium');
-  
   const providers = [];
-  // WebGPU: desktop browsers only; experimental. 
-  // Skip on Firefox/Safari due to model AveragePool bug in their WebGPU impl.
-  if (_ortPrefs.webgpu && !isAndroid && !isFirefox && !isSafari) providers.push('webgpu');
-  
-  // WebGL: stable on desktop, avoid on Android (driver crashes with large models)
+  if (_ortPrefs.webgpu && !isAndroid) providers.push('webgpu');
   if (_ortPrefs.webgl && !isAndroid) providers.push('webgl');
-  providers.push('wasm'); // always keep WASM as final fallback
+  providers.push('wasm');
   return providers;
 }
 
@@ -373,13 +366,13 @@ export class FaceEngineWeb {
     return { det_10g: hasDet, w600k_r50: hasRec };
   }
 
-  async _initDetector() {
+  async _initDetector(forceProvider = null) {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
     const buf = await this._fetchModelCached('det_10g.onnx');
     
-    const providers = _getOrtProviders();
+    const providers = _getOrtProviders(forceProvider);
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
 
     this._detSession = await ort.InferenceSession.create(buf, {
@@ -391,13 +384,13 @@ export class FaceEngineWeb {
     this._progress('Detector ready');
   }
 
-  async _initRecognizer() {
+  async _initRecognizer(forceProvider = null) {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
     const buf = await this._fetchModelCached('w600k_r50.onnx');
     
-    const providers = _getOrtProviders();
+    const providers = _getOrtProviders(forceProvider);
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
 
     this._recSession = await ort.InferenceSession.create(buf, {
@@ -749,13 +742,13 @@ export class FaceEngineWeb {
     return { det_10g: hasDet, w600k_r50: hasRec };
   }
 
-  async _initDetector() {
+  async _initDetector(forceProvider = null) {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
     // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
     const buf = await this._fetchModelCached('det_10g.onnx');
     
-    const providers = _getOrtProviders();
+    const providers = _getOrtProviders(forceProvider);
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
 
     this._detSession = await ort.InferenceSession.create(buf, {
@@ -767,13 +760,13 @@ export class FaceEngineWeb {
     this._progress('Detector ready');
   }
 
-  async _initRecognizer() {
+  async _initRecognizer(forceProvider = null) {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
     const buf = await this._fetchModelCached('w600k_r50.onnx');
     
-    const providers = _getOrtProviders();
+    const providers = _getOrtProviders(forceProvider);
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
 
     this._recSession = await ort.InferenceSession.create(buf, {
@@ -1110,36 +1103,41 @@ export class FaceEngineWeb {
 
   
   
+  
   async runInferenceBenchmark(file, progressCallback) {
     const results = [];
     const backends = [
-      { name: 'WASM', simd: false, webgl: false, webgpu: false },
-      { name: 'WASM + SIMD', simd: true, webgl: false, webgpu: false },
-      { name: 'WebGL', simd: true, webgl: true, webgpu: false },
-      { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
+      { name: 'WASM', ep: 'wasm', simd: false },
+      { name: 'WASM + SIMD', ep: 'wasm', simd: true },
+      { name: 'WebGL', ep: 'webgl', simd: true },
+      { name: 'WebGPU', ep: 'webgpu', simd: true }
     ];
-
     const originalPrefs = { ..._ortPrefs };
     for (const b of backends) {
       try {
         console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
-        
         await this.releaseModels();
-        _ortPrefs.simd = b.simd; _ortPrefs.webgl = b.webgl; _ortPrefs.webgpu = b.webgpu;
+        _ortPrefs.simd = b.simd;
         ort.env.wasm.simd = b.simd;
-        
         const loadStart = performance.now();
         let detOk = false; let recOk = false;
         let detError = ''; let recError = '';
-
-        try { await this._initDetector(); detOk = true; } catch(e) { detError = e.message; }
-        try { await this._initRecognizer(); recOk = true; } catch(e) { recError = e.message; }
-
+        try { 
+          await this._initDetector(b.ep); 
+          detOk = true; 
+        } catch(e) { 
+          detError = e.message; 
+        }
+        try { 
+          await this._initRecognizer(b.ep); 
+          recOk = true; 
+        } catch(e) { 
+          recError = e.message;
+        }
         const warmupDuration = performance.now() - loadStart;
         let inferenceDuration = 0; let faceCount = 0;
         let finalStatus = '✓';
-
         if (detOk && recOk) {
           const startInference = performance.now();
           const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
@@ -1147,20 +1145,21 @@ export class FaceEngineWeb {
           faceCount = res.faces?.length || 0;
         } else {
           finalStatus = 'Partial: ';
-          if (!detOk) finalStatus += 'Det FAIL (' + detError.split('\n')[0].slice(0, 30) + '...) ';
-          if (!recOk) finalStatus += 'Rec FAIL (' + recError.split('\n')[0].slice(0, 30) + '...)';
+          if (!detOk) finalStatus += 'Det FAIL ';
+          if (!recOk) finalStatus += 'Rec FAIL';
+          if (!detOk && !recOk) finalStatus = '✗ Failed';
         }
-        
         results.push({
           backend: b.name,
           warmup_ms: Math.round(warmupDuration),
           duration_ms: Math.round(inferenceDuration),
           faces: faceCount,
           status: finalStatus,
-          success: detOk || recOk
+          error: detError || recError,
+          success: detOk && recOk
         });
       } catch (err) {
-        results.push({ backend: b.name, error: err.message, success: false, status: '✗ ' + err.message.slice(0, 40) });
+        results.push({ backend: b.name, error: err.message, success: false, status: '✗ Fatal' });
       }
     }
     Object.assign(_ortPrefs, originalPrefs);
