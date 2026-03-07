@@ -1107,76 +1107,45 @@ export class FaceEngineWeb {
       { name: 'WebGL', simd: true, webgl: true, webgpu: false },
       { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
     ];
-
-    // Save current prefs
     const originalPrefs = { ..._ortPrefs };
-    
     for (const b of backends) {
       try {
         console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
-        
-        // 1. DISPOSE PREVIOUS SESSIONS FULLY to avoid WebGPU recursive call errors
         await this.releaseModels();
-        
-        // 2. Apply backend flags
         _ortPrefs.simd = b.simd;
         _ortPrefs.webgl = b.webgl;
         _ortPrefs.webgpu = b.webgpu;
         ort.env.wasm.simd = b.simd;
         
-        // 3. PASS 1: WARMUP (Session creation + first inference)
         const startWarmup = performance.now();
-        // We call processFile which triggers lazy init
-        const resWarmup = await this.processFile(file, { 
-          det_thresh: 0.5, 
-          skip_vlm: true,
-          vlm_enabled: false,
-          thumb_size: 200 
-        });
+        await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
         const warmupDuration = performance.now() - startWarmup;
         console.log(`[Benchmark] ${b.name} warmup: ${Math.round(warmupDuration)}ms`);
 
-        // 4. PASS 2: INFERENCE (Session is already "hot")
         const startInference = performance.now();
-        const memStart = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        
-        const resInference = await this.processFile(file, { 
-          det_thresh: 0.5, 
-          skip_vlm: true,
-          vlm_enabled: false,
-          thumb_size: 200 
-        });
-        
+        const memStart = window.performance?.memory?.usedJSHeapSize || 0;
+        const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
         const inferenceDuration = performance.now() - startInference;
-        const memEnd = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        const memDiff = memEnd - memStart;
+        const memEnd = window.performance?.memory?.usedJSHeapSize || 0;
         
         results.push({
           backend: b.name,
           warmup_ms: Math.round(warmupDuration),
           duration_ms: Math.round(inferenceDuration),
-          faces: resInference.faces?.length || 0,
-          memory_mb: memDiff > 0 ? (memDiff / (1024 * 1024)).toFixed(2) : 'N/A',
+          faces: res.faces?.length || 0,
+          memory_mb: memEnd > memStart ? ((memEnd - memStart) / (1024 * 1024)).toFixed(2) : '0',
           success: true
         });
-        
-        console.log(`[Benchmark] ${b.name} result: ${Math.round(inferenceDuration)}ms, ${resInference.faces?.length || 0} faces`);
+        console.log(`[Benchmark] ${b.name} inference: ${Math.round(inferenceDuration)}ms`);
       } catch (err) {
         console.error(`[Benchmark] ${b.name} FAILED:`, err);
-        results.push({
-          backend: b.name,
-          error: err.message,
-          success: false
-        });
+        results.push({ backend: b.name, error: err.message, success: false });
       }
     }
-    
-    // Restore original prefs and cleanup
     Object.assign(_ortPrefs, originalPrefs);
     ort.env.wasm.simd = _ortPrefs.simd;
     await this.releaseModels();
-    
     return results;
   }
 
@@ -1941,65 +1910,45 @@ export class FaceEngineWeb {
       { name: 'WebGL', simd: true, webgl: true, webgpu: false },
       { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
     ];
-
-    // Save current prefs
     const originalPrefs = { ..._ortPrefs };
-    
     for (const b of backends) {
       try {
-        console.log(`%c[Benchmark] Testing backend: ${b.name}`, 'color: #e89050; font-weight: bold');
+        console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
-        
-        // Apply backend flags
+        await this.releaseModels();
         _ortPrefs.simd = b.simd;
         _ortPrefs.webgl = b.webgl;
         _ortPrefs.webgpu = b.webgpu;
         ort.env.wasm.simd = b.simd;
         
-        // Force re-initialization of sessions
-        this._detSession = null;
-        this._recSession = null;
-        this._yunetSession = null;
-        
-        const start = performance.now();
-        const memStart = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        
-        // Run standard processing (detection + embedding)
-        const res = await this.processFile(file, { 
-          det_thresh: 0.5, 
-          skip_vlm: true, vlm_enabled: false,
-          thumb_size: 200 
-        });
-        
-        const duration = performance.now() - start;
-        const memEnd = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        const memDiff = memEnd - memStart;
+        const startWarmup = performance.now();
+        await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
+        const warmupDuration = performance.now() - startWarmup;
+        console.log(`[Benchmark] ${b.name} warmup: ${Math.round(warmupDuration)}ms`);
+
+        const startInference = performance.now();
+        const memStart = window.performance?.memory?.usedJSHeapSize || 0;
+        const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
+        const inferenceDuration = performance.now() - startInference;
+        const memEnd = window.performance?.memory?.usedJSHeapSize || 0;
         
         results.push({
           backend: b.name,
-          duration_ms: Math.round(duration),
+          warmup_ms: Math.round(warmupDuration),
+          duration_ms: Math.round(inferenceDuration),
           faces: res.faces?.length || 0,
-          memory_mb: memDiff > 0 ? (memDiff / (1024 * 1024)).toFixed(2) : 'N/A',
+          memory_mb: memEnd > memStart ? ((memEnd - memStart) / (1024 * 1024)).toFixed(2) : '0',
           success: true
         });
-        
-        console.log(`[Benchmark] ${b.name} result: ${Math.round(duration)}ms, ${res.faces?.length || 0} faces`);
+        console.log(`[Benchmark] ${b.name} inference: ${Math.round(inferenceDuration)}ms`);
       } catch (err) {
         console.error(`[Benchmark] ${b.name} FAILED:`, err);
-        results.push({
-          backend: b.name,
-          error: err.message,
-          success: false
-        });
+        results.push({ backend: b.name, error: err.message, success: false });
       }
     }
-    
-    // Restore original prefs
     Object.assign(_ortPrefs, originalPrefs);
     ort.env.wasm.simd = _ortPrefs.simd;
-    this._detSession = null;
-    this._recSession = null;
-    
+    await this.releaseModels();
     return results;
   }
 
@@ -2020,65 +1969,45 @@ export class FaceEngineWeb {
       { name: 'WebGL', simd: true, webgl: true, webgpu: false },
       { name: 'WebGPU', simd: true, webgl: true, webgpu: true }
     ];
-
-    // Save current prefs
     const originalPrefs = { ..._ortPrefs };
-    
     for (const b of backends) {
       try {
-        console.log(`%c[Benchmark] Testing backend: ${b.name}`, 'color: #e89050; font-weight: bold');
+        console.log(`%c[Benchmark] Testing browser backend: ${b.name}`, 'color: #e89050; font-weight: bold');
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
-        
-        // Apply backend flags
+        await this.releaseModels();
         _ortPrefs.simd = b.simd;
         _ortPrefs.webgl = b.webgl;
         _ortPrefs.webgpu = b.webgpu;
         ort.env.wasm.simd = b.simd;
         
-        // Force re-initialization of sessions
-        this._detSession = null;
-        this._recSession = null;
-        this._yunetSession = null;
-        
-        const start = performance.now();
-        const memStart = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        
-        // Run standard processing (detection + embedding)
-        const res = await this.processFile(file, { 
-          det_thresh: 0.5, 
-          skip_vlm: true, vlm_enabled: false,
-          thumb_size: 200 
-        });
-        
-        const duration = performance.now() - start;
-        const memEnd = window.performance && window.performance.memory ? window.performance.memory.usedJSHeapSize : 0;
-        const memDiff = memEnd - memStart;
+        const startWarmup = performance.now();
+        await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
+        const warmupDuration = performance.now() - startWarmup;
+        console.log(`[Benchmark] ${b.name} warmup: ${Math.round(warmupDuration)}ms`);
+
+        const startInference = performance.now();
+        const memStart = window.performance?.memory?.usedJSHeapSize || 0;
+        const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
+        const inferenceDuration = performance.now() - startInference;
+        const memEnd = window.performance?.memory?.usedJSHeapSize || 0;
         
         results.push({
           backend: b.name,
-          duration_ms: Math.round(duration),
+          warmup_ms: Math.round(warmupDuration),
+          duration_ms: Math.round(inferenceDuration),
           faces: res.faces?.length || 0,
-          memory_mb: memDiff > 0 ? (memDiff / (1024 * 1024)).toFixed(2) : 'N/A',
+          memory_mb: memEnd > memStart ? ((memEnd - memStart) / (1024 * 1024)).toFixed(2) : '0',
           success: true
         });
-        
-        console.log(`[Benchmark] ${b.name} result: ${Math.round(duration)}ms, ${res.faces?.length || 0} faces`);
+        console.log(`[Benchmark] ${b.name} inference: ${Math.round(inferenceDuration)}ms`);
       } catch (err) {
         console.error(`[Benchmark] ${b.name} FAILED:`, err);
-        results.push({
-          backend: b.name,
-          error: err.message,
-          success: false
-        });
+        results.push({ backend: b.name, error: err.message, success: false });
       }
     }
-    
-    // Restore original prefs
     Object.assign(_ortPrefs, originalPrefs);
     ort.env.wasm.simd = _ortPrefs.simd;
-    this._detSession = null;
-    this._recSession = null;
-    
+    await this.releaseModels();
     return results;
   }
 

@@ -636,7 +636,7 @@
   import { faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
-            /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
+              /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
   async function _getBase64ViaImage(url) {
     console.log('[Benchmark] _getBase64ViaImage START for:', url.slice(0, 50));
     
@@ -704,6 +704,7 @@
       let b64 = null;
       // Step A: Try direct thumbnail from DB (safest)
       try {
+        console.log('[Benchmark] Attempting to fetch thumbnail directly for ID:', img.id);
         const thumb = await fetchThumbnail(img.id);
         if (thumb) {
           b64 = thumb.startsWith('data:') ? thumb : `data:image/jpeg;base64,${thumb}`;
@@ -724,9 +725,8 @@
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
-      console.log('%c[Benchmark] BROWSER benchmark success', 'color: #50c878; font-weight: bold', browserBenchResults);
     } catch (err) {
-      console.error('%c[Benchmark] BROWSER benchmark failed:', 'color: #ff0000; font-weight: bold', err);
+      console.error('BROWSER benchmark failed:', err);
       benchProgress = '✗ Failed: ' + err.message;
     } finally {
       benchmarkRunning = false;
