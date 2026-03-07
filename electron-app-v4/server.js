@@ -93,7 +93,7 @@ app.use(cors({
       'capacitor://localhost',
       'http://localhost',
       'http://localhost:5173', // Vite dev
-      'http://localhost:7861'  // Self
+      'http://localhost:7861', 'http://127.0.0.1:7861'  // Self
     ];
     
     if (allowedOrigins.includes(origin) || origin.startsWith('http://192.168.') || origin.startsWith('http://10.')) {
