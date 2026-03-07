@@ -609,6 +609,35 @@ const EN = {
   pv_local_pick_btn:         'Select Photos',
 };
 
+
+// -- Initial language logic ---------------------------------------------------
+function _getInitialLanguage() {
+  const stored = localStorage.getItem('pwa_language');
+  if (stored) {
+    console.log(`[stores] Found stored language in localStorage: "${stored}"`);
+    return stored;
+  }
+  try {
+    const cached = JSON.parse(sessionStorage.getItem('i18n_cache'));
+    if (cached && (cached.language || cached.lang)) {
+      const l = cached.language || cached.lang;
+      console.log(`[stores] Found cached language in sessionStorage: "${l}"`);
+      return l;
+    }
+  } catch (e) {}
+  console.log('[stores] No stored language found, defaulting to "en"');
+  return 'en';
+}
+
+function _getInitialTranslations(l) {
+  const base = EN; // defined above
+  const target = (TRANSLATIONS && TRANSLATIONS[l]) ? TRANSLATIONS[l] : {};
+  console.log(`[stores] Initializing translations for "${l}". Target keys: ${Object.keys(target).length}`);
+  return { ...base, ...target };
+}
+
+const _initLang = _getInitialLanguage();
+const _initStrings = _getInitialTranslations(_initLang);
 export const TRANSLATIONS = {
   en: EN,
   de: {
@@ -1168,8 +1197,8 @@ export const TRANSLATIONS = {
   },
 };
 
-export const translations = writable(EN);
-export const lang = writable('en');
+export const translations = writable(_initStrings);
+export const lang = writable(_initLang);
 
 export const t = derived(translations, $t => (key) => $t[key] || key);
 

@@ -133,6 +133,9 @@
                     {img.face_count}
                   </span>
                 {/if}
+                {#if img.ai_description}
+                  <span class="badge vlm-badge" title="AI Description present">TXT</span>
+                {/if}
               </div>
             </div>
             <div class="card-label" title={img.filename}>{img.filename}</div>
@@ -218,6 +221,7 @@
     font-weight: 600;
   }
   .face-badge { background: rgba(220,100,40,0.85); color: #fff; }
+  .vlm-badge { background: rgba(60,140,240,0.85); color: #fff; }
   .card-label {
     padding: 5px 7px;
     font-size: 10px;

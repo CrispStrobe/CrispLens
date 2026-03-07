@@ -150,20 +150,39 @@
 
     // Load i18n — apply language from backend settings
     try {
-      dbg('Fetching translations...');
+      dbg('Fetching translations from backend...');
       const data = await fetchTranslations(true);
       const language = data.language ?? data.lang ?? 'en';
+      dbg(`[i18n] Backend reported language: "${language}"`);
+      
       lang.set(language);
-      dbg(`Language set to: ${language}`);
+      
       // Apply translations: prefer local TRANSLATIONS bundle for non-EN languages
-      // (the backend sends an empty translations object for EN since it's baked in)
-      const localStrings = language !== 'en' ? (TRANSLATIONS[language] ?? {}) : {};
-      const backendStrings = (data.translations && Object.keys(data.translations).length > 0) ? data.translations : {};
-      const merged = { ...backendStrings, ...localStrings };  // local wins over backend
-      if (Object.keys(merged).length > 0)
-        translations.update(cur => ({ ...cur, ...merged }));
+      const localStrings = TRANSLATIONS[language] ?? {};
+      const backendStrings = data.translations ?? {};
+      
+      dbg(`[i18n] Local strings for "${language}": ${Object.keys(localStrings).length} keys`);
+      dbg(`[i18n] Backend strings: ${Object.keys(backendStrings).length} keys`);
+      
+      // Reset translations to EN first if switching to a known language to ensure a clean base
+      const merged = { ...backendStrings, ...localStrings };
+      
+      if (Object.keys(merged).length > 0) {
+        dbg(`[i18n] Applying ${Object.keys(merged).length} merged strings to UI`);
+        // We MUST use translations.set() with a full object to ensure Svelte store subscribers trigger
+        // and we include EN as base for any missing keys in the target language.
+        translations.set({ ...TRANSLATIONS.en, ...merged });
+        dbg(`[i18n] UI update successful. Current app_title: "${merged.app_title || 'N/A'}"`);
+      } else {
+        dbg('[i18n] No strings found to merge, staying with default (EN)');
+        translations.set(TRANSLATIONS.en);
+      }
+      
       sessionStorage.setItem('i18n_cache', JSON.stringify({ ...data, language, lang: language }));
-    } catch (e) { dbg(`i18n load failed: ${e.message}`); }
+    } catch (e) { 
+      dbg(`i18n load failed: ${e.message}`);
+      console.error('[i18n] Critical error loading translations:', e);
+    }
 
     // Load initial data
     try {

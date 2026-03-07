@@ -72,6 +72,7 @@
   let names  = {};       // { [face_id]: string } — controlled autocomplete inputs
   let activeFaceId = null;
   let anyChanged = false;
+  let vlmSaved = false; // flash on success
 
   // ── Zoom & pan ──────────────────────────────────────────────────────────────
   let zoomLevel = 1;
@@ -345,6 +346,10 @@
         vlm_keys:      vlmKeys,
       });
       console.log('[FaceIdentifyModal] reDetectFaces finished:', res);
+      if (alsoRunVlm || detModel === "none") {
+        vlmSaved = true;
+        setTimeout(() => { vlmSaved = false; }, 3000);
+      }
       anyChanged = true;
       
       if (localMode) {
@@ -991,7 +996,8 @@
     white-space: nowrap;
   }
   .badge.faces { background: #1e2a40; color: #6090d0; }
-  .badge.vlm   { background: #3a2a1a; color: #c09040; font-weight: bold; }
+  .badge.vlm   { background: #3a2a1a; color: #c09040; font-weight: bold; transition: all 0.3s; }
+  .badge.vlm.saved-flash { background: #2a5040; color: #50c878; transform: scale(1.1); box-shadow: 0 0 8px #50c878; }
   .hint { font-size: 10px; color: #404060; }
 
   .params-box {

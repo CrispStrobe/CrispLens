@@ -50,6 +50,7 @@ function loadFlat() {
     if (r.value_type === 'json')  { try { val = JSON.parse(val); } catch {} }
     out[r.key] = val;
   }
+  if (process.env.DEBUG) console.log("[settings] Loaded flat settings:", out);
   return out;
 }
 
@@ -245,7 +246,10 @@ router.put('/', requireAuth, (req, res) => {
 // already baked into the Svelte bundle (stores.js const EN).
 
 router.get('/i18n', (req, res) => {
-  const language = loadFlat().language || 'en';
+  const settings = loadFlat();
+  const language = settings.language || 'en';
+  console.log(`[i18n] Serving language preference: "${language}" (from DB: ${settings.language || 'unset'})`);
+  
   // EN strings are baked into stores.js — send empty object so the bundle wins.
   // For other languages the strings come from the stored language record.
   // EN strings are baked into the Svelte bundle; non-EN strings come from
