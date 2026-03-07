@@ -838,7 +838,11 @@ export class FaceEngineWeb {
             throw new Error("vlmClientWeb is not initialized or imported correctly");
           }
           vlmResult = await vlmClientWeb.enrichImage(file, provider, model, prompt, opts.vlm_max_size || 0);
-          console.error('[FaceEngineWeb] VLM enrichment SUCCESS:', vlmResult);
+          console.error('[FaceEngineWeb] VLM enrichment SUCCESS object:', JSON.stringify(vlmResult, null, 2));
+          // Safety: Ensure vlmResult is an object and has expected keys
+          if (!vlmResult || typeof vlmResult !== 'object') {
+            vlmResult = { description: '', scene_type: 'unknown', tags: [] };
+          }
           this._progress('AI Enrichment done');
         } catch (e) {
           console.error('[FaceEngineWeb] VLM enrichment CRITICAL FAILURE:', e);

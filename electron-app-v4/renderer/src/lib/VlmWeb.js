@@ -411,25 +411,41 @@ export class VlmClientWeb {
     const textStr = String(text);
     try {
       console.log('[VlmWeb] Attempting to parse JSON from:', textStr.slice(0, 100) + '...');
-      // Clean up common VLM artifacts like ```json ... ```
+      
       let clean = textStr.trim();
-      if (clean.includes('```')) {
-        const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-        if (match) clean = match[1];
+      
+      // Basic validation: must contain at least one { and one }
+      if (clean.includes('{') && clean.includes('}')) {
+        // Clean up common VLM artifacts like ```json ... ```
+        if (clean.includes('```')) {
+          const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+          if (match) clean = match[1];
+        }
+        
+        const match = clean.match(/\{[\s\S]*\}/);
+        if (match) clean = match[0];
+
+        try {
+          const parsed = JSON.parse(clean);
+          return {
+            description: parsed.description || parsed.caption || parsed.text || '',
+            scene_type:  parsed.scene_type || parsed.category || 'unknown',
+            tags:        Array.isArray(parsed.tags) ? parsed.tags : []
+          };
+        } catch (inner) {
+          console.warn('[VlmWeb] inner JSON.parse failed:', inner.message);
+        }
       }
       
-      const match = clean.match(/\{[\s\S]*\}/);
-      if (match) clean = match[0];
-
-      const parsed = JSON.parse(clean);
-      return {
-        description: parsed.description || parsed.caption || parsed.text || '',
-        scene_type:  parsed.scene_type || parsed.category || 'unknown',
-        tags:        Array.isArray(parsed.tags) ? parsed.tags : []
+      // Fallback: return raw text as description if it doesn't look like JSON or parse failed
+      return { 
+        description: textStr.slice(0, 1000), 
+        scene_type: 'unknown', 
+        tags: [] 
       };
     } catch (e) {
-      console.warn('[VlmWeb] JSON parse failed, falling back to raw:', e.message);
-      return { description: textStr, scene_type: 'unknown', tags: [] };
+      console.warn('[VlmWeb] _parseJson critical failure:', e.message);
+      return { description: textStr.slice(0, 1000), scene_type: 'unknown', tags: [] };
     }
   }
 }
