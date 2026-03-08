@@ -1,4 +1,4 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260308.2350 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260308.2400 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -85,6 +85,11 @@ async function _initVoyOnce() {
   const items = await _loadAllEmbeddings();
   _embCache = items; // warm the embedding cache for brute-force too
 
+  if (items.length === 0) {
+    console.warn('[LocalAdapter] Voy: 0 known-person embeddings found — no faces have been identified yet. Face matching will find nothing until you assign names to faces.');
+    // Build empty index anyway so Voy is marked ready (not retried on every face)
+  }
+
   const embeddings = items.map(p => ({
     id:         String(p.face_id),
     title:      p.person_name,
@@ -92,7 +97,7 @@ async function _initVoyOnce() {
     embeddings: Array.from(p.vec),
   }));
   _voyIndex = new Voy({ embeddings });
-  console.log(`[LocalAdapter] Voy index built with ${embeddings.length} embeddings`);
+  console.log(`[LocalAdapter] Voy index built: ${embeddings.length} known-person embeddings`);
   return _voyIndex;
 }
 
@@ -228,24 +233,35 @@ export function toWebUrl(filepath) {
  * used to match the newly detected face.
  */
 async function _loadAllEmbeddings() {
+  // IMPORTANT: only load embeddings that are assigned to a known person.
+  // Unidentified faces (person_id IS NULL) must NOT be included — they would
+  // match at high cosine similarity and return person_id=null, which is useless
+  // and falsely prevents the face from appearing as unidentified in the UI.
   const rows = await query(`
     SELECT fe.id, fe.person_id, p.name, fe.embedding_vector,
            COALESCE(f.image_id, -1) AS image_id,
            COALESCE(i.filename, '') AS filename
     FROM face_embeddings fe
-    LEFT JOIN faces f  ON f.id  = fe.face_id
-    LEFT JOIN images i ON i.id  = f.image_id
-    LEFT JOIN people p ON p.id  = fe.person_id
+    INNER JOIN people p ON p.id = fe.person_id
+    LEFT JOIN faces f   ON f.id = fe.face_id
+    LEFT JOIN images i  ON i.id = f.image_id
     WHERE fe.embedding_vector IS NOT NULL
+      AND fe.person_id IS NOT NULL
+      AND (p.name IS NOT NULL AND p.name != '' AND p.name != 'Unknown')
   `);
-  return rows.map(r => ({
+  const result = rows.map(r => ({
     face_id: r.id,
     person_id: r.person_id,
-    person_name: r.name || 'Unknown',
+    person_name: r.name,
     image_id: r.image_id,
     filename: r.filename,
     vec: _csvToFloat32(r.embedding_vector),
   }));
+  // Group by person for diagnostic logging
+  const byPerson = {};
+  for (const e of result) byPerson[e.person_name] = (byPerson[e.person_name] || 0) + 1;
+  console.log(`[LocalAdapter] _loadAllEmbeddings: ${result.length} known-person embeddings`, byPerson);
+  return result;
 }
 
 function _csvToFloat32(str) {
@@ -837,6 +853,8 @@ export const localAdapter = {
       const { loadSyncSettings } = await import('./SyncManager.js');
       const syncCfg = loadSyncSettings();
       const thumb_size = syncCfg.thumbSize || 200;
+      console.log(`[LocalAdapter] reDetectFaces thumb_size=${thumb_size} (from syncSettings.thumbSize=${syncCfg.thumbSize ?? 'not set, using default 200'})`);
+      console.log(`[LocalAdapter] reDetectFaces full syncSettings:`, JSON.stringify(syncCfg));
       
       const det_retries = settings.face_recognition?.insightface?.det_retries ?? 1;
       let det_thresh = params.det_thresh || settings.face_recognition.insightface.detection_threshold;
@@ -1118,18 +1136,23 @@ export const localAdapter = {
       
       const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;
       
+      const faceIdx = faceCount;
+      console.log(`[LocalAdapter]   Face[${faceIdx}] faceId=${faceId} bbox=[${x1.toFixed(3)},${y1.toFixed(3)},${x2.toFixed(3)},${y2.toFixed(3)}] conf=${(face.detection_confidence ?? face.score ?? 0).toFixed(3)} hasThumbnail=${!!(face.face_crop_b64)} embDim=${face.embedding?.length ?? 0}`);
+
       if (faceId && face.embedding) {
         const f32 = face.embedding instanceof Float32Array
           ? face.embedding
           : new Float32Array(face.embedding);
-        
+
         // Match against known people using Voy (WASM HNSW)
         const match = await _voyBestMatch(f32, 0.4);
         if (match) {
-          console.log(`[LocalAdapter]     Face matched: ${match.name} (id=${match.person_id})`);
+          console.log(`[LocalAdapter]   Face[${faceIdx}] → MATCHED: "${match.name}" (person_id=${match.person_id})`);
           people.push(match.name);
+        } else {
+          console.log(`[LocalAdapter]   Face[${faceIdx}] → no match (will be stored as unidentified)`);
         }
-        
+
         // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
         const embStr = Array.from(f32).join(',');
         await run(
@@ -1143,6 +1166,8 @@ export const localAdapter = {
                     [match.person_id]);
         }
         faceCount++;
+      } else {
+        console.log(`[LocalAdapter]   Face[${faceIdx}] skipped — faceId=${faceId} embLen=${face.embedding?.length ?? 0}`);
       }
     }
 
