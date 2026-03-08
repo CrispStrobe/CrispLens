@@ -194,11 +194,50 @@ function registerIpc() {
 
   ipcMain.handle('relaunch-app',  () => { app.relaunch(); app.quit(); });
 
+  /** Return info about the database that is ACTUALLY open right now. */
+  ipcMain.handle('get-active-db', () => {
+    const activePath = process.env.DB_PATH || resolveDbPath();
+    let size = 0, writable = false;
+    try {
+      const stat = fs.statSync(activePath);
+      size = stat.size;
+      fs.accessSync(activePath, fs.constants.W_OK);
+      writable = true;
+    } catch { /* file may not exist yet (new install) */ }
+    const defaultPath = path.join(app.getPath('userData'), 'face_recognition.db');
+    return { activePath, size, writable, defaultPath, isDefault: activePath === defaultPath };
+  });
+
   ipcMain.handle('switch-db', (_e, dbPath) => {
     const s = readSettings();
     writeSettings({ ...s, dbPath, remoteUrl: '' });  // clear remote when switching to local DB
     app.relaunch();
     app.quit();
+  });
+
+  /** Clear custom dbPath so next launch resolves the default location. */
+  ipcMain.handle('reset-db-to-default', () => {
+    const s = readSettings();
+    const { dbPath: _removed, ...rest } = s;
+    writeSettings({ ...rest, remoteUrl: '' });
+    app.relaunch();
+    app.quit();
+  });
+
+  /** Create a new empty DB file at chosen path (renderer picks via save dialog). */
+  ipcMain.handle('create-new-db', async (_e, dbPath) => {
+    if (!dbPath) return { ok: false, error: 'No path provided' };
+    try {
+      // Create an empty file if it doesn't exist
+      if (!fs.existsSync(dbPath)) fs.writeFileSync(dbPath, '');
+      const s = readSettings();
+      writeSettings({ ...s, dbPath, remoteUrl: '' });
+      app.relaunch();
+      app.quit();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   });
 
   // Set or clear the remote VPS URL and relaunch.
@@ -224,6 +263,11 @@ function registerIpc() {
       ...opts,
     });
     return canceled ? [] : filePaths;
+  });
+
+  ipcMain.handle('save-file-dialog', async (_e, opts = {}) => {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, opts);
+    return canceled ? null : filePath;
   });
 
   ipcMain.handle('read-local-file', async (_e, filePath) => {

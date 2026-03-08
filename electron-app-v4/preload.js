@@ -11,18 +11,24 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── App info ────────────────────────────────────────────────────────────────
-  getPort:     () => ipcRenderer.invoke('get-port'),
-  getSettings: () => ipcRenderer.invoke('get-settings'),
+  getPort:      () => ipcRenderer.invoke('get-port'),
+  getSettings:  () => ipcRenderer.invoke('get-settings'),
   saveSettings: (data) => ipcRenderer.invoke('save-settings', data),
+
+  // ── Database ─────────────────────────────────────────────────────────────────
+  getActiveDb:       ()       => ipcRenderer.invoke('get-active-db'),
+  switchDb:          (dbPath) => ipcRenderer.invoke('switch-db', dbPath),
+  resetDbToDefault:  ()       => ipcRenderer.invoke('reset-db-to-default'),
+  createNewDb:       (dbPath) => ipcRenderer.invoke('create-new-db', dbPath),
 
   // ── App lifecycle ────────────────────────────────────────────────────────────
   relaunchApp:   () => ipcRenderer.invoke('relaunch-app'),
-  switchDb:      (dbPath) => ipcRenderer.invoke('switch-db', dbPath),
-  setRemoteUrl:  (url)    => ipcRenderer.invoke('set-remote-url', url),
+  setRemoteUrl:  (url) => ipcRenderer.invoke('set-remote-url', url),
 
   // ── Native dialogs ───────────────────────────────────────────────────────────
   openFileDialog:   (opts) => ipcRenderer.invoke('open-file-dialog', opts),
   openFolderDialog: (opts) => ipcRenderer.invoke('open-folder-dialog', opts),
+  saveFileDialog:   (opts) => ipcRenderer.invoke('save-file-dialog', opts),
 
   // ── Local file I/O ───────────────────────────────────────────────────────────
   readLocalFile: (filePath) => ipcRenderer.invoke('read-local-file', filePath),

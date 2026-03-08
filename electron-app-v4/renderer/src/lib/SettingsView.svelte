@@ -543,9 +543,10 @@
   let downloadingModel    = '';              // name of model currently downloading
   let downloadMsg         = {};             // { modelName: lastMsg }
 
-  // ── Hybrid DB state ───────────────────────────────────────────────────────
-  let currentDbPath = '';       // shown read-only; from settings.server.dbPath
-  let newDbPath     = '';       // editable; submitted via switchDb IPC
+  // ── Database state (Electron only) ───────────────────────────────────────
+  let activeDbInfo  = null;     // { activePath, size, writable, defaultPath, isDefault }
+  let currentDbPath = '';       // display value (= activeDbInfo.activePath once loaded)
+  let newDbPath     = '';       // editable target for "open existing"
   let switchingDb   = false;
   let switchDbMsg   = '';
 
@@ -572,30 +573,24 @@
 
   onMount(async () => {
     isElectron = typeof window.electronAPI !== 'undefined';
-    try {
-      const s = await window.electronAPI?.getSettings();
-      if (s) {
-        const client = s.client || {};
-        const server = s.server || {};
-        // New nested format
-        connectionMode      = client.connectTo      || 'local';
-        remoteUrl           = client.remoteUrl      || '';
-        localPort           = server.port           || 7865;
-        processingModeLocal = client.processingMode || 'upload_full';
-        localModelLocal     = client.localModel     || 'buffalo_l';
-        pythonPath          = client.pythonPath     || server.pythonPath || '';
-        currentDbPath       = server.dbPath         || '';
-        newDbPath           = currentDbPath;
-        // Legacy flat format fallback
-        if (!client.connectTo) {
-          connectionMode    = s.mode          || 'local';
-          remoteUrl         = s.remoteUrl     || '';
-          processingModeLocal = s.processingMode || 'upload_full';
-          localModelLocal   = s.localModel    || 'buffalo_l';
-          pythonPath        = s.pythonPath    || '';
+    if (isElectron) {
+      try {
+        const s = await window.electronAPI.getSettings();
+        if (s) {
+          connectionMode = s.remoteUrl ? 'remote' : 'local';
+          remoteUrl      = s.remoteUrl || '';
+          localPort      = s.port || 7861;
         }
-      }
-    } catch (e) { console.error('Settings error:', e); }
+      } catch (e) { console.error('[SettingsView] getSettings error:', e); }
+
+      // Load the ACTUAL active database info from main process
+      try {
+        activeDbInfo  = await window.electronAPI.getActiveDb();
+        currentDbPath = activeDbInfo.activePath || '';
+        newDbPath     = currentDbPath;
+        console.log('[SettingsView] Active DB:', activeDbInfo);
+      } catch (e) { console.error('[SettingsView] getActiveDb error:', e); }
+    }
 
     if (isElectron) {
       try { localModelStatus = await window.electronAPI.checkLocalModels(); } catch { /* ignore */ }
@@ -951,30 +946,49 @@
     keyStatus = {};
   }
 
-  // ── Hybrid DB switching ───────────────────────────────────────────────────
+  // ── Database operations (Electron only) ──────────────────────────────────
+
   async function browseDb() {
-    if (!window.electronAPI) return;
     const paths = await window.electronAPI.openFileDialog({
-      title: 'Select SQLite database',
-      filters: [{ name: 'SQLite', extensions: ['db', 'sqlite', 'sqlite3'] }],
+      title: 'Open existing SQLite database',
+      filters: [{ name: 'SQLite database', extensions: ['db', 'sqlite', 'sqlite3'] }],
       properties: ['openFile'],
     });
     if (paths?.length) newDbPath = paths[0];
   }
 
   async function doSwitchDb() {
-    if (!newDbPath?.trim() || newDbPath.trim() === currentDbPath) return;
-    switchingDb = true;
-    switchDbMsg = '';
+    const p = newDbPath?.trim();
+    if (!p || p === currentDbPath) return;
+    switchingDb = true; switchDbMsg = '';
     try {
-      // switchDb saves new dbPath to settings.server and relaunches
-      await window.electronAPI?.switchDb(newDbPath.trim());
-      // If we get here, relaunch didn't fire (shouldn't happen)
-      switchDbMsg = 'Relaunch triggered…';
-    } catch (e) {
-      switchDbMsg = '✗ ' + e.message;
-      switchingDb = false;
-    }
+      await window.electronAPI.switchDb(p);
+      switchDbMsg = 'Restarting…';
+    } catch (e) { switchDbMsg = '✗ ' + e.message; switchingDb = false; }
+  }
+
+  async function doCreateNewDb() {
+    const p = await window.electronAPI.saveFileDialog({
+      title: 'Create new CrispLens database',
+      defaultPath: 'face_recognition.db',
+      filters: [{ name: 'SQLite database', extensions: ['db'] }],
+    });
+    if (!p) return;
+    switchingDb = true; switchDbMsg = '';
+    try {
+      const r = await window.electronAPI.createNewDb(p);
+      if (r.ok) { switchDbMsg = 'Restarting with new database…'; }
+      else { switchDbMsg = '✗ ' + r.error; switchingDb = false; }
+    } catch (e) { switchDbMsg = '✗ ' + e.message; switchingDb = false; }
+  }
+
+  async function doResetDbToDefault() {
+    if (!confirm('Reset to default database location? The app will restart.')) return;
+    switchingDb = true; switchDbMsg = '';
+    try {
+      await window.electronAPI.resetDbToDefault();
+      switchDbMsg = 'Restarting with default database…';
+    } catch (e) { switchDbMsg = '✗ ' + e.message; switchingDb = false; }
   }
 
   // ── User management ───────────────────────────────────────────────────────
@@ -1412,29 +1426,60 @@
   <section class="card">
     <h3>{$t('settings_db_section')}</h3>
     {#if connectionMode === 'local'}
-      <p class="hint">{$t('settings_db_switch_hint')}</p>
-      <div class="form-grid" style="margin-top: 8px;">
-        <label>{$t('settings_db_current')}</label>
-        <span class="db-path-display">{currentDbPath || '(default in app data)'}</span>
+      <!-- Active DB status -->
+      {#if activeDbInfo}
+        <div class="form-grid" style="margin-bottom:12px;">
+          <label>Active database</label>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <code class="db-path-display" style="word-break:break-all;">{activeDbInfo.activePath}</code>
+            <span class="hint" style="margin:0;">
+              {(activeDbInfo.size / 1024 / 1024).toFixed(1)} MB
+              · {activeDbInfo.writable ? '✓ writable' : '⚠ read-only'}
+              {#if activeDbInfo.isDefault}<span style="color:#50a878;"> · default location</span>{/if}
+            </span>
+          </div>
+        </div>
+      {/if}
 
-        <label>{$t('settings_db_switch_to')}</label>
+      <p class="hint" style="margin-bottom:10px;">
+        CrispLens uses a standard SQLite <code>.db</code> file on your disk.
+        You can switch to any existing database or create a new empty one — the app will restart.
+      </p>
+
+      <!-- Open existing DB -->
+      <div style="margin-bottom:8px;">
+        <div style="font-weight:500;margin-bottom:6px;">Open existing database</div>
         <div class="field-row">
           <input type="text" bind:value={newDbPath} placeholder="/path/to/face_recognition.db" style="flex:1;" />
           <button on:click={browseDb} style="flex-shrink:0;">Browse…</button>
         </div>
+        <button
+          class="primary"
+          style="margin-top:8px;align-self:flex-start;"
+          on:click={doSwitchDb}
+          disabled={switchingDb || !newDbPath?.trim() || newDbPath.trim() === currentDbPath}
+        >
+          {switchingDb ? '…' : '🔄 Switch & Restart'}
+        </button>
       </div>
-      {#if switchDbMsg}<div class="save-msg" style="margin-top:6px;">{switchDbMsg}</div>{/if}
-      <button
-        class="primary"
-        style="margin-top: 10px; align-self: flex-start;"
-        on:click={doSwitchDb}
-        disabled={switchingDb || !newDbPath?.trim() || newDbPath.trim() === currentDbPath}
-      >
-        {switchingDb ? '…' : '🔄 ' + $t('settings_db_switch_btn')}
-      </button>
+
+      <div class="field-row" style="gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <!-- Create new empty DB -->
+        <button on:click={doCreateNewDb} disabled={switchingDb}>
+          ✨ Create new empty database…
+        </button>
+        <!-- Reset to default -->
+        {#if activeDbInfo && !activeDbInfo.isDefault}
+          <button on:click={doResetDbToDefault} disabled={switchingDb} style="color:#e08050;">
+            ↩ Reset to default location
+          </button>
+        {/if}
+      </div>
+
+      {#if switchDbMsg}<div class="save-msg" style="margin-top:8px;">{switchDbMsg}</div>{/if}
     {:else}
       <p class="hint">{$t('settings_db_remote_info')} <code>{remoteUrl || '(server URL not set)'}</code>.</p>
-      <p class="hint" style="margin-top:4px;">Configure the database path on the server (via server's <code>config.yaml</code> or <code>FACE_REC_DB_PATH</code> env var).</p>
+      <p class="hint" style="margin-top:4px;">The database is managed on the remote server — set <code>DB_PATH</code> env var there.</p>
     {/if}
   </section>
   {:else}
