@@ -4,7 +4,7 @@ const express = require('express');
 const path    = require('path');
 const fs      = require('fs');
 const { requireAuth } = require('../auth');
-const { processImageIntoDb, collectImages } = require('../processor');
+const { processImageIntoDb, collectImages, reloadStore } = require('../processor');
 
 const router = express.Router();
 
@@ -153,6 +153,9 @@ router.post('/train', requireAuth, async (req, res) => {
 
   const cnt = db.prepare('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?').get(person.id).n;
   db.prepare('UPDATE people SET total_appearances=? WHERE id=?').run(cnt, person.id);
+
+  // Reload recognition store so subsequent processing sees the new embeddings immediately.
+  reloadStore();
 
   res.json({ ok: true, person_id: person.id, enrolled });
 });

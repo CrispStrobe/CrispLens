@@ -47,6 +47,8 @@ function similarityTransform(src, dst) {
 }
 
 function decodeSCRFD(outputs, outputNames, invScale, detThresh) {
+  // bbox/kps raw values are in STRIDE UNITS — must multiply by stride before converting to pixels.
+  // Matches InsightFace Python: bbox_preds = net_outs[idx+fmc] * stride
   const strides = [8, 16, 32]; const faces = [];
   for (let si=0; si<strides.length; si++) {
     const stride=strides[si], feat=SCRFD_SIZE/stride, spatial=feat*feat;
@@ -55,9 +57,14 @@ function decodeSCRFD(outputs, outputNames, invScale, detThresh) {
       const row=Math.floor(idx/feat), col=idx%feat, cx=col*stride, cy=row*stride;
       for (let a=0; a<NUM_ANCHORS; a++) {
         const ai=idx*NUM_ANCHORS+a; if (scores[ai]<detThresh) continue;
-        const bi=ai*4, x1=(cx-bboxes[bi])*invScale, y1=(cy-bboxes[bi+1])*invScale, x2=(cx+bboxes[bi+2])*invScale, y2=(cy+bboxes[bi+3])*invScale;
+        const bi=ai*4,
+              x1=(cx-bboxes[bi  ]*stride)*invScale, y1=(cy-bboxes[bi+1]*stride)*invScale,
+              x2=(cx+bboxes[bi+2]*stride)*invScale, y2=(cy+bboxes[bi+3]*stride)*invScale;
         const ki=ai*10, landmarks=[];
-        for (let kp=0; kp<5; kp++) landmarks.push([(cx+kps[ki+kp*2])*invScale, (cy+kps[ki+kp*2+1])*invScale]);
+        for (let kp=0; kp<5; kp++) landmarks.push([
+          (cx+kps[ki+kp*2  ]*stride)*invScale,
+          (cy+kps[ki+kp*2+1]*stride)*invScale,
+        ]);
         faces.push({ bbox:[x1,y1,x2,y2], score:scores[ai], landmarks });
       }
     }
@@ -171,7 +178,13 @@ export class FaceEngineWeb {
     if(this._detSession) return;
     this._progress('Loading SCRFD detector…');
     const buf=await this._fetchModelCached('det_10g.onnx');
-    const providers=forceProvider ? [forceProvider] : ['wasm']; 
+    // For GPU EPs, always include 'wasm' as fallback so unsupported ops can run on CPU.
+    let providers;
+    if (forceProvider) {
+      providers = forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
+    } else {
+      providers = ['wasm'];
+    }
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
     this._detSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
     this._progress('Detector ready');
@@ -181,7 +194,13 @@ export class FaceEngineWeb {
     if(this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     const buf=await this._fetchModelCached('w600k_r50.onnx');
-    const providers=forceProvider ? [forceProvider] : _getOrtProviders(); 
+    // For GPU EPs, always include 'wasm' as fallback so unsupported ops can run on CPU.
+    let providers;
+    if (forceProvider) {
+      providers = forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
+    } else {
+      providers = _getOrtProviders();
+    }
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
     this._recSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
     this._progress('Recognizer ready');

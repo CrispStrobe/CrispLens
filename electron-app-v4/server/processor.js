@@ -17,6 +17,7 @@ const { getDb }                    = require('./db');
 const { getRemoteClient }          = require('../core/remote-v2-client');
 
 let _engine = null;
+let _store  = null;  // module-level singleton — loaded once, kept alive
 
 async function getEngine() {
   if (_engine && _engine.initialized) return _engine;
@@ -25,6 +26,29 @@ async function getEngine() {
   _engine = new FaceEngine(modelDir);
   await _engine.init();
   return _engine;
+}
+
+/** Return (or lazily create) the VectorStore singleton.
+ *  Call reloadStore() after training so new embeddings are picked up. */
+function getStore() {
+  if (_store) return _store;
+  try {
+    const dbPath = process.env.DB_PATH ||
+      path.join(__dirname, '..', '..', 'face_recognition.db');
+    _store = new VectorStore(dbPath);
+    _store.load();
+  } catch (e) {
+    console.warn('[processor] VectorStore not available:', e.message);
+    _store = null;
+  }
+  return _store;
+}
+
+/** Force-reload the VectorStore (call after training new embeddings). */
+function reloadStore() {
+  if (_store) { try { _store.close(); } catch {} }
+  _store = null;
+  return getStore();
 }
 
 // ── File hash ─────────────────────────────────────────────────────────────────
@@ -144,16 +168,8 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
 
   const recThresh = parseFloat(opts.rec_thresh) || 0.40;
 
-  // Load recognition store for person matching
-  let store = null;
-  if (!opts.skip_recognition) {
-    try {
-      const dbPath = process.env.DB_PATH ||
-        path.join(__dirname, '..', '..', 'face_recognition.db');
-      store = new VectorStore(dbPath);
-      store.load();
-    } catch {}
-  }
+  // Load recognition store for person matching (singleton — loaded once, shared across batch)
+  const store = (!opts.skip_recognition) ? getStore() : null;
 
   let facesStored = 0;
 
@@ -248,7 +264,7 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
     UPDATE images SET face_count=?, processed=1, processed_at=CURRENT_TIMESTAMP WHERE id=?
   `).run(facesStored, imageId);
 
-  if (store) { try { store.close(); } catch {} }
+  // Do NOT close store here — it's the module-level singleton, kept alive for the next request.
 
   return { imageId, facesFound: facesStored, meta };
 }
@@ -291,4 +307,4 @@ async function warmEngine() {
   }
 }
 
-module.exports = { processImageIntoDb, upsertImage, readImageMeta, collectImages, warmEngine };
+module.exports = { processImageIntoDb, upsertImage, readImageMeta, collectImages, warmEngine, reloadStore };
