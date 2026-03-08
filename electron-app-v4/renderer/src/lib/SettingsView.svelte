@@ -1822,7 +1822,8 @@
                 <td style="padding:4px;">{r.backend}</td>
                 <td style="padding:4px;">{r.success ? r.warmup_ms + 'ms' : '-'}</td><td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
                 <td style="padding:4px;">{r.success ? r.faces : '-'}</td>
-                <td style="padding:4px;">{r.success ? '✓' : '✗ ' + r.error}</td>
+                <td style="padding:4px;">{r.memory_mb && r.memory_mb !== 'N/A' ? r.memory_mb + ' MB' : 'N/A'}</td>
+                <td style="padding:4px;">{r.status || (r.success ? '✓' : '✗')}</td>
               </tr>
             {/each}
           </tbody>

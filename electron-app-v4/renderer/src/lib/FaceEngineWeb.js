@@ -136,12 +136,18 @@ export class FaceEngineWeb {
     return resp.arrayBuffer();
   }
 
-  async downloadModels(onProgress) {
+    async downloadModels(onProgress) {
+    const results = {};
     for (const f of ['det_10g.onnx', 'w600k_r50.onnx']) {
-      onProgress?.(`Downloading ${f}…`);
-      await this._fetchModelCached(f);
+      onProgress?.(`Downloading …`);
+      try {
+        await this._fetchModelCached(f);
+        results[f] = 'ok';
+      } catch (e) {
+        results[f] = e.message;
+      }
     }
-    return { ok: true };
+    return results;
   }
 
   async releaseModels() {
