@@ -1,12 +1,22 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1630 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1730 */
 import * as ort from 'onnxruntime-web';
 
-// Configure onnxruntime-web paths
+// Configure onnxruntime-web WASM paths
 const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/ort-wasm/';
 console.log(`[FaceEngineWeb] Setting wasmPaths to: ${wasmBase}`);
 ort.env.wasm.wasmPaths = wasmBase;
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
+
+// WebGPU: prefer NHWC memory layout.
+// ResNet/VGG models have many Transpose ops when forced to NCHW on WebGPU, and ORT 1.21
+// triggers a "Transpose called recursively" runtime error. With NHWC preference, ORT
+// inserts a single input transpose and runs all conv ops natively in GPU-friendly order,
+// eliminating the recursive transpose problem. (NCHW is still passed in from JS — ORT
+// handles the layout conversion internally.)
+if (typeof ort.env.webgpu !== 'undefined') {
+  ort.env.webgpu.preferredLayout = 'NHWC';
+}
 
 const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
 const _ortPrefs = {
@@ -16,8 +26,20 @@ const _ortPrefs = {
 };
 ort.env.wasm.simd = _ortPrefs.simd;
 
-function _getOrtProviders() {
+// det_10g.onnx (SCRFD-10GF) uses AveragePool with ceil_mode=1 in its context attention
+// module. ORT WebGPU does not implement ceil-mode shape computation, so the detector
+// always runs on WASM regardless of the requested EP. Recognition (w600k_r50.onnx) is a
+// standard ResNet50 and works on WebGPU with NHWC layout.
+const DET_WEBGPU_INCOMPATIBLE = true;
+
+function _getOrtProviders(forDet = false) {
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  // Detector is WebGPU-incompatible: always use wasm for it.
+  if (forDet) {
+    if (_ortPrefs.webgl && !isAndroid) return ['webgl', 'wasm'];
+    return ['wasm'];
+  }
+  // Recognizer: full GPU preference allowed.
   const providers = [];
   if (_ortPrefs.webgpu && !isAndroid) providers.push('webgpu');
   if (_ortPrefs.webgl  && !isAndroid) providers.push('webgl');
@@ -26,12 +48,15 @@ function _getOrtProviders() {
 }
 
 /** Build provider list for session creation.
- *  GPU EPs always get 'wasm' appended as fallback for ops not supported on GPU. */
-function _buildProviders(forceProvider, usePrefs) {
+ *  GPU EPs always include 'wasm' as fallback for unsupported ops.
+ *  `forDet=true` forces WASM-only for the detector (WebGPU-incompatible model). */
+function _buildProviders(forceProvider, forDet) {
   if (forceProvider) {
+    // In benchmark: if forcing webgpu on the detector, we still must exclude it.
+    if (forceProvider === 'webgpu' && forDet) return ['wasm'];
     return forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
   }
-  return usePrefs ? _getOrtProviders() : ['wasm'];
+  return _getOrtProviders(forDet);
 }
 
 const SCRFD_SIZE   = 640;
@@ -186,8 +211,8 @@ export class FaceEngineWeb {
     if(this._detSession) return;
     this._progress('Loading SCRFD detector…');
     const buf=await this._fetchModelCached('det_10g.onnx');
-    // GPU EPs: always append 'wasm' as fallback for unsupported ops.
-    const providers = _buildProviders(forceProvider, false);
+    // det_10g.onnx is WebGPU-incompatible (AveragePool ceil_mode=1). Always uses WASM/WebGL.
+    const providers = _buildProviders(forceProvider, true);
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
     this._detSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
     this._detEp = providers[0];
@@ -198,8 +223,8 @@ export class FaceEngineWeb {
     if(this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     const buf=await this._fetchModelCached('w600k_r50.onnx');
-    // GPU EPs: always append 'wasm' as fallback for unsupported ops.
-    const providers = _buildProviders(forceProvider, true);
+    // w600k_r50.onnx (ResNet50 ArcFace) works on WebGPU with NHWC layout (set globally above).
+    const providers = _buildProviders(forceProvider, false);
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
     this._recSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
     this._recEp = providers[0];
@@ -274,16 +299,25 @@ export class FaceEngineWeb {
   }
 
   async runInferenceBenchmark(file, progressCallback) {
-    // Note: ort.env.wasm.simd is locked in at module-load time (determines which WASM binary
-    // gets fetched). It cannot be toggled between runs. The two WASM rows measure cold-load
-    // vs warm-cache timing on the same binary — useful for understanding cache impact.
+    // det_10g.onnx (SCRFD) is WebGPU-incompatible (AveragePool ceil_mode=1).
+    // It always runs on WASM regardless of the EP setting.
+    // w600k_r50.onnx (ArcFace ResNet50) runs on WebGPU with NHWC layout (ort.env.webgpu.preferredLayout='NHWC').
+    //
+    // Benchmark structure:
+    //   WASM (cold)   – both models freshly loaded from cache buffer
+    //   WASM (cached) – same binary, warm model cache (measures inference-only speed)
+    //   WebGL         – WebGL for both (falls back to WASM if WebGL unavailable)
+    //   WebGPU        – det on WASM (forced), rec on WebGPU+WASM (GPU-accelerated recognition)
+    //
+    // ort.env.wasm.simd is locked at module-load time; toggling between runs has no effect.
     logMemory('Benchmark START');
     const results = [];
     const backends = [
-      { name: 'WASM (cold)',   ep: 'wasm'   },
-      { name: 'WASM (cached)', ep: 'wasm'   },
-      { name: 'WebGL',         ep: 'webgl'  },
-      { name: 'WebGPU',        ep: 'webgpu' },
+      { name: 'WASM (cold)',   detEp: 'wasm',   recEp: 'wasm'   },
+      { name: 'WASM (cached)', detEp: 'wasm',   recEp: 'wasm'   },
+      { name: 'WebGL',         detEp: 'webgl',  recEp: 'webgl'  },
+      // WebGPU: detector forced to WASM (model incompatibility), recognizer on WebGPU.
+      { name: 'WebGPU',        detEp: 'wasm',   recEp: 'webgpu' },
     ];
     for (const b of backends) {
       try {
@@ -292,8 +326,9 @@ export class FaceEngineWeb {
         await this.releaseModels();
         const loadStart = performance.now();
         let dL=false, rL=false, dR=false, rR=false, dE='', rE='', dM=0, rM=0;
-        try { await this._initDetector(b.ep); dL=true; } catch(e){ dE=e.message?.slice(0,120)||String(e); }
-        try { await this._initRecognizer(b.ep); rL=true; } catch(e){ rE=e.message?.slice(0,120)||String(e); }
+        // Detector: pass forceProvider directly; _buildProviders will apply WebGPU exclusion if needed.
+        try { await this._initDetector(b.detEp); dL=true; } catch(e){ dE=e.message?.slice(0,120)||String(e); }
+        try { await this._initRecognizer(b.recEp); rL=true; } catch(e){ rE=e.message?.slice(0,120)||String(e); }
         const warmMs = Math.round(performance.now()-loadStart);
         if(dL){
           try {
@@ -314,8 +349,10 @@ export class FaceEngineWeb {
           } catch(e){ rE=e.message?.slice(0,120)||String(e); }
         }
         let status;
-        if(dR && rR) status = `✓ D:${dM}ms R:${rM}ms`;
-        else {
+        if(dR && rR) {
+          const recNote = b.recEp === 'webgpu' ? ` (det=WASM, rec=WebGPU)` : '';
+          status = `✓ D:${dM}ms R:${rM}ms${recNote}`;
+        } else {
           const dPart = dL ? (dR ? `D:${dM}ms` : `D:R-FAIL(${dE})`) : `D:L-FAIL(${dE})`;
           const rPart = rL ? (rR ? `R:${rM}ms` : `R:R-FAIL(${rE})`) : `R:L-FAIL(${rE})`;
           status = `${dPart} ${rPart}`;
