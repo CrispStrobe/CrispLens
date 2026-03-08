@@ -1,6 +1,7 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.0930 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.0945 */
 import * as ort from 'onnxruntime-web';
 
+// Configure onnxruntime-web paths
 const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/ort-wasm/';
 console.log(`[FaceEngineWeb] Setting wasmPaths to: ${wasmBase}`);
 ort.env.wasm.wasmPaths = wasmBase;
@@ -10,7 +11,7 @@ ort.env.wasm.proxy = false;
 const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
 const _ortPrefs = {
   simd:   _ls?.getItem('pref_ort_use_simd')   === 'true',
-  webgl:  _ls?.getItem('pref_ort_use_webgl')  !== 'false',
+  webgl:  _ls?.getItem('pref_ort_use_webgl')  !== 'false', // default true
   webgpu: _ls?.getItem('pref_ort_use_webgpu') === 'true',
 };
 ort.env.wasm.simd = _ortPrefs.simd;
@@ -131,7 +132,16 @@ export class FaceEngineWeb {
       }
       return resp.arrayBuffer();
     }
-    return (await fetch(fetchUrl)).arrayBuffer();
+    const resp = await fetch(fetchUrl);
+    return resp.arrayBuffer();
+  }
+
+  async downloadModels(onProgress) {
+    for (const f of ['det_10g.onnx', 'w600k_r50.onnx']) {
+      onProgress?.(`Downloading ${f}…`);
+      await this._fetchModelCached(f);
+    }
+    return { ok: true };
   }
 
   async releaseModels() {
