@@ -1,4 +1,4 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.0945 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1630 */
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web paths
@@ -16,14 +16,22 @@ const _ortPrefs = {
 };
 ort.env.wasm.simd = _ortPrefs.simd;
 
-function _getOrtProviders(forceProvider = null) {
-  if (forceProvider) return [forceProvider];
+function _getOrtProviders() {
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
   const providers = [];
   if (_ortPrefs.webgpu && !isAndroid) providers.push('webgpu');
-  if (_ortPrefs.webgl && !isAndroid) providers.push('webgl');
+  if (_ortPrefs.webgl  && !isAndroid) providers.push('webgl');
   providers.push('wasm');
   return providers;
+}
+
+/** Build provider list for session creation.
+ *  GPU EPs always get 'wasm' appended as fallback for ops not supported on GPU. */
+function _buildProviders(forceProvider, usePrefs) {
+  if (forceProvider) {
+    return forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
+  }
+  return usePrefs ? _getOrtProviders() : ['wasm'];
 }
 
 const SCRFD_SIZE   = 640;
@@ -160,8 +168,8 @@ export class FaceEngineWeb {
   async releaseModels() {
     console.log('[FaceEngineWeb] Releasing all models from memory...');
     try {
-      if(this._detSession){ await this._detSession.release(); this._detSession=null; }
-      if(this._recSession){ await this._recSession.release(); this._recSession=null; }
+      if(this._detSession){ await this._detSession.release(); this._detSession=null; this._detEp=null; }
+      if(this._recSession){ await this._recSession.release(); this._recSession=null; this._recEp=null; }
       console.log('[FaceEngineWeb] Release complete.');
     } catch(e){}
   }
@@ -178,15 +186,11 @@ export class FaceEngineWeb {
     if(this._detSession) return;
     this._progress('Loading SCRFD detector…');
     const buf=await this._fetchModelCached('det_10g.onnx');
-    // For GPU EPs, always include 'wasm' as fallback so unsupported ops can run on CPU.
-    let providers;
-    if (forceProvider) {
-      providers = forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
-    } else {
-      providers = ['wasm'];
-    }
+    // GPU EPs: always append 'wasm' as fallback for unsupported ops.
+    const providers = _buildProviders(forceProvider, false);
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
     this._detSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
+    this._detEp = providers[0];
     this._progress('Detector ready');
   }
 
@@ -194,16 +198,20 @@ export class FaceEngineWeb {
     if(this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
     const buf=await this._fetchModelCached('w600k_r50.onnx');
-    // For GPU EPs, always include 'wasm' as fallback so unsupported ops can run on CPU.
-    let providers;
-    if (forceProvider) {
-      providers = forceProvider === 'wasm' ? ['wasm'] : [forceProvider, 'wasm'];
-    } else {
-      providers = _getOrtProviders();
-    }
+    // GPU EPs: always append 'wasm' as fallback for unsupported ops.
+    const providers = _buildProviders(forceProvider, true);
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
     this._recSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
+    this._recEp = providers[0];
     this._progress('Recognizer ready');
+  }
+
+  /** Run a session, adding preferredOutputLocation:'cpu' for WebGPU sessions.
+   *  WebGPU keeps output tensors on the GPU buffer by default; JS cannot read
+   *  tensor.data without explicitly requesting CPU output location. */
+  async _run(session, ep, inputs) {
+    const opts = ep === 'webgpu' ? { preferredOutputLocation: 'cpu' } : {};
+    return session.run(inputs, opts);
   }
 
   async _loadImage(src) {
@@ -240,11 +248,11 @@ export class FaceEngineWeb {
     const ctx=canvas.getContext('2d'), px=SCRFD_SIZE*SCRFD_SIZE, rgba=ctx.getImageData(0,0,SCRFD_SIZE,SCRFD_SIZE).data;
     for(let i=0;i<px;i++){ it.data[i]=(rgba[i*4]-127.5)/128; it.data[i+px]=(rgba[i*4+1]-127.5)/128; it.data[i+px*2]=(rgba[i*4+2]-127.5)/128; }
     
-    const detRes=await this._detSession.run({ [this._detSession.inputNames[0]]: it });
+    const detRes=await this._run(this._detSession, this._detEp, { [this._detSession.inputNames[0]]: it });
     let faces=decodeSCRFD(detRes, this._detSession.outputNames, invScale, opts.det_thresh||0.5);
     for(const t of Object.values(detRes)) t.dispose?.();
     it.dispose(); faces=applyNMS(faces);
-    
+
     await this._initRecognizer();
     const facePayloads=[];
     for(const f of faces){
@@ -254,7 +262,7 @@ export class FaceEngineWeb {
       const fit=new ort.Tensor('float32', new Float32Array(3*ARCFACE_SIZE*ARCFACE_SIZE), [1,3,ARCFACE_SIZE,ARCFACE_SIZE]);
       const frgba=fctx.getImageData(0,0,ARCFACE_SIZE,ARCFACE_SIZE).data, sp=ARCFACE_SIZE*ARCFACE_SIZE;
       for(let i=0;i<sp;i++){ fit.data[i]=(frgba[i*4+2]-127.5)/128; fit.data[i+sp]=(frgba[i*4+1]-127.5)/128; fit.data[i+sp*2]=(frgba[i*4]-127.5)/128; }
-      const recRes=await this._recSession.run({ [this._recSession.inputNames[0]]: fit });
+      const recRes=await this._run(this._recSession, this._recEp, { [this._recSession.inputNames[0]]: fit });
       const emb=l2normalize(Array.from(recRes[this._recSession.outputNames[0]].data));
       for(const t of Object.values(recRes)) t.dispose?.(); fit.dispose();
       facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length });
@@ -266,52 +274,61 @@ export class FaceEngineWeb {
   }
 
   async runInferenceBenchmark(file, progressCallback) {
+    // Note: ort.env.wasm.simd is locked in at module-load time (determines which WASM binary
+    // gets fetched). It cannot be toggled between runs. The two WASM rows measure cold-load
+    // vs warm-cache timing on the same binary — useful for understanding cache impact.
     logMemory('Benchmark START');
     const results = [];
     const backends = [
-      { name: 'WASM', ep: 'wasm', simd: false },
-      { name: 'WASM + SIMD', ep: 'wasm', simd: true },
-      { name: 'WebGL', ep: 'webgl', simd: true },
-      { name: 'WebGPU', ep: 'webgpu', simd: true }
+      { name: 'WASM (cold)',   ep: 'wasm'   },
+      { name: 'WASM (cached)', ep: 'wasm'   },
+      { name: 'WebGL',         ep: 'webgl'  },
+      { name: 'WebGPU',        ep: 'webgpu' },
     ];
-    const originalPrefs = { ..._ortPrefs };
     for (const b of backends) {
       try {
         if (progressCallback) progressCallback(`Testing ${b.name}...`);
         logMemory(`Before ${b.name}`);
         await this.releaseModels();
-        _ortPrefs.simd = b.simd; ort.env.wasm.simd = b.simd;
         const loadStart = performance.now();
         let dL=false, rL=false, dR=false, rR=false, dE='', rE='', dM=0, rM=0;
-        try { await this._initDetector(b.ep); dL=true; } catch(e){ dE=e.message; }
-        try { await this._initRecognizer(b.ep); rL=true; } catch(e){ rE=e.message; }
+        try { await this._initDetector(b.ep); dL=true; } catch(e){ dE=e.message?.slice(0,120)||String(e); }
+        try { await this._initRecognizer(b.ep); rL=true; } catch(e){ rE=e.message?.slice(0,120)||String(e); }
         const warmMs = Math.round(performance.now()-loadStart);
         if(dL){
           try {
-            const s=performance.now(); const di=new ort.Tensor('float32', new Float32Array(3*640*640),[1,3,640,640]);
-            await this._detSession.run({[this._detSession.inputNames[0]]:di});
+            const s=performance.now();
+            const di=new ort.Tensor('float32', new Float32Array(3*640*640),[1,3,640,640]);
+            const res=await this._run(this._detSession, this._detEp, {[this._detSession.inputNames[0]]:di});
+            for(const t of Object.values(res)) t.dispose?.();
             dM=Math.round(performance.now()-s); dR=true; di.dispose();
-          } catch(e){ dE=e.message; }
+          } catch(e){ dE=e.message?.slice(0,120)||String(e); }
         }
         if(rL){
           try {
-            const s=performance.now(); const ri=new ort.Tensor('float32', new Float32Array(3*112*112),[1,3,112,112]);
-            await this._recSession.run({[this._recSession.inputNames[0]]:ri});
+            const s=performance.now();
+            const ri=new ort.Tensor('float32', new Float32Array(3*112*112),[1,3,112,112]);
+            const res=await this._run(this._recSession, this._recEp, {[this._recSession.inputNames[0]]:ri});
+            for(const t of Object.values(res)) t.dispose?.();
             rM=Math.round(performance.now()-s); rR=true; ri.dispose();
-          } catch(e){ rE=e.message; }
+          } catch(e){ rE=e.message?.slice(0,120)||String(e); }
         }
-        let status = '✓';
+        let status;
         if(dR && rR) status = `✓ D:${dM}ms R:${rM}ms`;
-        else status = (dL?(dR?`D:${dM}ms `:`D:R-FAIL `):`D:L-FAIL `) + (rL?(rR?`R:${rM}ms`:`R:R-FAIL`):`R:L-FAIL`);
-        
+        else {
+          const dPart = dL ? (dR ? `D:${dM}ms` : `D:R-FAIL(${dE})`) : `D:L-FAIL(${dE})`;
+          const rPart = rL ? (rR ? `R:${rM}ms` : `R:R-FAIL(${rE})`) : `R:L-FAIL(${rE})`;
+          status = `${dPart} ${rPart}`;
+        }
         results.push({
           backend: b.name, warmup_ms: warmMs, duration_ms: dM+rM,
-          faces: dR ? 'OK' : '0', status: status, success: dR||rR, memory_mb: getMemoryUsage()
+          faces: dR ? 'OK' : '-', status, success: dR||rR, memory_mb: getMemoryUsage()
         });
         logMemory(`After ${b.name}`);
-      } catch (err) { results.push({ backend: b.name, status: '✗ Fatal', error: err.message, success: false, memory_mb: getMemoryUsage() }); }
+      } catch (err) {
+        results.push({ backend: b.name, status: `✗ ${err.message?.slice(0,120)||err}`, success: false, memory_mb: getMemoryUsage() });
+      }
     }
-    Object.assign(_ortPrefs, originalPrefs); ort.env.wasm.simd = _ortPrefs.simd;
     await this.releaseModels();
     logMemory('Benchmark END');
     return results;
