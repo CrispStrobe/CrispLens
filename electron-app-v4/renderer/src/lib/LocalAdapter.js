@@ -1,5 +1,4 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260307.1200 */
-/* LOCAL_ADAPTER_VERSION: v4.0.260307.1200 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260308.2100 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -15,94 +14,108 @@ import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
 
-let _voyIndex = null;
+let _voyIndex       = null;   // built Voy index (null = not yet built or invalidated)
+let _voyFailed      = false;  // true after a permanent init failure — skip WASM, use brute-force
+let _voyInitPromise = null;   // in-flight init (prevents concurrent duplicate inits)
 
-async function _getVoyIndex(forceRebuild = false) {
-  if (_voyIndex && !forceRebuild) return _voyIndex;
+// Embedding cache: refreshed whenever the Voy index is (re)built.
+// Shared by both Voy and brute-force so the DB is only queried once per batch.
+let _embCache      = null;    // Array<EmbeddingRow> | null
 
-  const mod = await import('voy-search');
-  console.log('[LocalAdapter] Voy module loaded:', Object.keys(mod));
-
-  // voy-search v0.6.3 is a wasm-bindgen "bundler" target package:
-  //   voy_search.js does `import * as wasm from "./voy_search_bg.wasm"; __wbg_set_wasm(wasm);`
-  // With Vite's `assetsInclude: ['**/*.wasm']`, that import is rewritten to return a URL
-  // namespace object `{ default: "/assets/voy_search_bg.wasm" }` rather than the real WASM
-  // module exports. __wbg_set_wasm gets called with the URL object, so `wasm.voy_new` is
-  // always undefined.
+async function _ensureVoyWasm(mod) {
+  // voy-search v0.6.3 is a wasm-bindgen "bundler" target.
+  // Vite's `assetsInclude: ['**/*.wasm']` rewrites its static WASM import to a URL
+  // namespace `{ default: "…wasm" }`, so __wbg_set_wasm() receives a URL object
+  // and wasm.voy_new is undefined.
   //
-  // Fix: probe whether the WASM is actually initialised by trying a test construction.
-  // If it fails with voy_new, manually fetch the binary, compile it, and inject the
-  // real exports via __wbg_set_wasm before proceeding.
+  // Fix: probe, then manually fetch+instantiate the binary.
+  //
+  // CRITICAL: WebAssembly.instantiate(compiledModule, imports) returns a
+  // WebAssembly.Instance *directly* (not {instance, module}).
+  // WebAssembly.instantiate(buffer, imports) returns {instance, module}.
+  // Always pass the raw buffer to get the destructurable form.
+
   const Voy = mod.Voy;
   if (typeof Voy !== 'function') throw new Error('Voy class not found in module');
 
   let wasmOk = false;
   try {
-    const _ = new Voy({ embeddings: [] }); // probe — calls wasm.voy_new internally
+    new Voy({ embeddings: [] }); // probe — calls wasm.voy_new internally
     wasmOk = true;
   } catch (e) {
-    if (!String(e).includes('voy_new')) throw e; // unexpected error
+    if (!String(e).includes('voy_new') && !String(e).includes('exports')) throw e;
   }
+  if (wasmOk) return Voy;
 
-  if (!wasmOk && typeof mod.__wbg_set_wasm === 'function') {
-    // WASM not initialized. Manually fetch+instantiate from the known asset path.
-    // Since vite.config.js uses `assetFileNames: "[name].[ext]"` (no hash),
-    // the WASM lands at a predictable URL.
-    const wasmCandidates = [
-      new URL('/assets/voy_search_bg.wasm', window.location.origin).href,
-      new URL('voy-search/voy_search_bg.wasm', import.meta.url).href,
-    ];
-    let initialized = false;
-    for (const url of wasmCandidates) {
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) continue;
-        const buf  = await resp.arrayBuffer();
-        // Discover which module name the WASM imports (typically "./voy_search_bg.js")
-        const compiledModule = await WebAssembly.compile(buf);
-        const importModules  = [...new Set(WebAssembly.Module.imports(compiledModule).map(i => i.module))];
-        // Build imports: all __wbg_* / __wbindgen_* are exported by mod (voy_search_bg.js)
-        const wasmImports = {};
-        for (const m of importModules) wasmImports[m] = mod;
-        const { instance } = await WebAssembly.instantiate(compiledModule, wasmImports);
-        mod.__wbg_set_wasm(instance.exports);
-        console.log('[LocalAdapter] Voy WASM manually instantiated from', url);
-        initialized = true;
-        break;
-      } catch (e) {
-        console.warn('[LocalAdapter] Voy WASM init attempt failed for', url, ':', e.message);
-      }
+  if (typeof mod.__wbg_set_wasm !== 'function')
+    throw new Error('Voy __wbg_set_wasm not found — incompatible package version');
+
+  const wasmCandidates = [
+    new URL('/assets/voy_search_bg.wasm', window.location.origin).href,
+    new URL('voy-search/voy_search_bg.wasm', import.meta.url).href,
+  ];
+  for (const url of wasmCandidates) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const buf = await resp.arrayBuffer();
+
+      // Discover import module names (e.g. "./voy_search_bg.js")
+      const compiled     = await WebAssembly.compile(buf);
+      const importMods   = [...new Set(WebAssembly.Module.imports(compiled).map(i => i.module))];
+      const wasmImports  = {};
+      for (const m of importMods) wasmImports[m] = mod;
+
+      // Pass raw buffer — gives {instance, module}; passing a compiled Module gives instance directly
+      const { instance } = await WebAssembly.instantiate(buf, wasmImports);
+      mod.__wbg_set_wasm(instance.exports);
+      console.log('[LocalAdapter] Voy WASM instantiated from', url);
+      return Voy;
+    } catch (e) {
+      console.warn('[LocalAdapter] Voy WASM init attempt failed for', url, ':', e.message);
     }
-    if (!initialized) throw new Error('Voy WASM could not be initialized from any candidate URL');
   }
+  throw new Error('Voy WASM could not be initialized from any candidate URL');
+}
+
+async function _initVoyOnce() {
+  const mod = await import('voy-search');
+  const Voy = await _ensureVoyWasm(mod);
 
   const items = await _loadAllEmbeddings();
+  _embCache = items; // warm the embedding cache for brute-force too
+
   const embeddings = items.map(p => ({
     id:         String(p.face_id),
     title:      p.person_name,
     url:        JSON.stringify({ image_id: p.image_id, filename: p.filename }),
     embeddings: Array.from(p.vec),
   }));
-
   _voyIndex = new Voy({ embeddings });
   console.log(`[LocalAdapter] Voy index built with ${embeddings.length} embeddings`);
   return _voyIndex;
 }
 
-/** Brute-force cosine fallback — works in all browsers, no WASM required. */
-async function _bruteForceMatch(embedding, threshold = 0.4) {
-  const items = await _loadAllEmbeddings();
-  console.log(`[LocalAdapter] bruteForce: ${items.length} embeddings to compare`);
-  if (items.length === 0) return null;
-  let best = null, bestSim = -1;
-  for (const item of items) {
-    const sim = _cosine(embedding, item.vec);
-    if (sim > bestSim) { bestSim = sim; best = item; }
+/**
+ * Return the live Voy index, initializing once if necessary.
+ * Concurrent callers share the same in-flight promise.
+ * If WASM fails permanently, returns null (caller falls back to brute-force).
+ */
+async function _getVoyIndex(forceRebuild = false) {
+  if (_voyFailed && !forceRebuild) return null;
+  if (_voyIndex  && !forceRebuild) return _voyIndex;
+
+  if (!_voyInitPromise) {
+    _voyInitPromise = _initVoyOnce()
+      .catch(err => {
+        console.warn('[LocalAdapter] Voy WASM init failed, brute-force only:', err.message);
+        _voyFailed = true;
+        _voyIndex  = null;
+        return null;
+      })
+      .finally(() => { _voyInitPromise = null; });
   }
-  console.log(`[LocalAdapter] bruteForce: best=${best?.person_name} sim=${bestSim.toFixed(4)} threshold=${threshold}`);
-  return (best && bestSim >= threshold)
-    ? { person_id: best.person_id, name: best.person_name }
-    : null;
+  return _voyInitPromise;
 }
 
 function _cosine(a, b) {
@@ -112,23 +125,40 @@ function _cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-8);
 }
 
-/** Return the best-matching person above threshold using Voy (HNSW), with brute-force fallback. */
-async function _voyBestMatch(embedding, threshold = 0.4) {
-  try {
-    const index = await _getVoyIndex();
-    const results = index.search(Array.from(embedding), 1);
-    if (results.length > 0) {
-      const best = results[0];
-      // Voy score is similarity (higher is better for IP index)
-      if (best.score >= threshold) {
-        return { person_id: parseInt(best.id), name: best.title };
-      }
-    }
-    return null;
-  } catch (err) {
-    console.warn('[LocalAdapter] Voy search unavailable, using brute-force:', err.message);
-    return _bruteForceMatch(embedding, threshold);
+/**
+ * Brute-force cosine fallback — works in all browsers.
+ * Uses the in-memory _embCache (loaded by _getVoyIndex) when available
+ * to avoid a redundant DB query per face during batch processing.
+ */
+async function _bruteForceMatch(embedding, threshold = 0.4) {
+  const items = _embCache ?? await _loadAllEmbeddings();
+  if (items.length === 0) return null;
+  let best = null, bestSim = -1;
+  for (const item of items) {
+    const sim = _cosine(embedding, item.vec);
+    if (sim > bestSim) { bestSim = sim; best = item; }
   }
+  console.log(`[LocalAdapter] bruteForce: ${items.length} vecs, best=${best?.person_name} sim=${bestSim.toFixed(4)} thresh=${threshold}`);
+  return (best && bestSim >= threshold)
+    ? { person_id: best.person_id, name: best.person_name }
+    : null;
+}
+
+/** Best-matching person using Voy HNSW, falling back to brute-force cosine. */
+async function _voyBestMatch(embedding, threshold = 0.4) {
+  const index = await _getVoyIndex();
+  if (index) {
+    try {
+      const results = index.search(Array.from(embedding), 1);
+      if (results.length > 0 && results[0].score >= threshold) {
+        return { person_id: parseInt(results[0].id), name: results[0].title };
+      }
+      return null;
+    } catch (err) {
+      console.warn('[LocalAdapter] Voy search error, falling back:', err.message);
+    }
+  }
+  return _bruteForceMatch(embedding, threshold);
 }
 
 // ── Filepath cache — lets thumbnailUrl() stay synchronous ─────────────────────
@@ -208,7 +238,7 @@ function _csvToFloat32(str) {
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
 
-console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260307.1200", "color: #e07030; font-weight: bold");
+console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260308.2100", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
   health() {
@@ -1082,7 +1112,12 @@ export const localAdapter = {
       }
     }
 
-    _voyIndex = null; // Invalidate index after adding new embeddings
+    // Invalidate Voy index + embedding cache so next match sees the new data.
+    // We reset _voyFailed too so the next batch can try WASM again after a
+    // soft failure (e.g. first call before WASM was ready).
+    _voyIndex  = null;
+    _embCache  = null;
+    _voyFailed = false;
     console.log(`[LocalAdapter] importProcessed DONE for image ${imageId}`);
     return { 
       ok: true, 
