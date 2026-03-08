@@ -515,15 +515,31 @@ export async function importDatabase(jsonContent) {
   }
 }
 
+/** Nuclear fallback: delete jeepSqliteStore IndexedDB directly (Safari-safe). */
+async function _deleteIdbDirect() {
+  return new Promise((resolve) => {
+    const names = ['jeepSqliteStore', 'jeep-sqlite-store', DB_NAME];
+    let pending = names.length;
+    for (const name of names) {
+      try {
+        const req = indexedDB.deleteDatabase(name);
+        req.onsuccess = () => { if (--pending === 0) resolve(); };
+        req.onerror   = () => { if (--pending === 0) resolve(); };
+        req.onblocked = () => { if (--pending === 0) resolve(); };
+      } catch (e) { if (--pending === 0) resolve(); }
+    }
+  });
+}
+
 /**
  * Completely reset the database (drop and re-create all tables).
  */
 export async function clearDatabase() {
   try {
     console.warn('[LocalDB] Resetting database...');
-    
+
     if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
-    
+
     // 1. Close connections
     if (_db) {
       try {
@@ -539,18 +555,32 @@ export async function clearDatabase() {
     _db = null;
     resetInit();
 
-    // 2. Delete using the plugin directly (more robust than connection method)
+    // 2. Delete via plugin (preferred) with IndexedDB fallback for Safari
     console.log(`[LocalDB] Deleting database file: ${DB_NAME}`);
-    await CapacitorSQLite.deleteDatabase({ database: DB_NAME });
-    
+    try {
+      await CapacitorSQLite.deleteDatabase({ database: DB_NAME });
+    } catch (pluginErr) {
+      console.warn('[LocalDB] Plugin deleteDatabase failed, falling back to IDB direct:', pluginErr.message);
+      await _deleteIdbDirect();
+    }
+
     // 3. Re-initialize with the schema
     console.log('[LocalDB] Re-initializing fresh database...');
     await getDB();
-    
+
     return { ok: true };
   } catch (err) {
-    console.error('[LocalDB] Reset failed:', err);
-    throw err;
+    console.error('[LocalDB] Reset failed — attempting nuclear IDB delete:', err.message);
+    try {
+      await _deleteIdbDirect();
+      _db = null;
+      resetInit();
+      await getDB();
+      return { ok: true };
+    } catch (e2) {
+      console.error('[LocalDB] Nuclear reset also failed:', e2);
+      throw err;
+    }
   }
 }
 

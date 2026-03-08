@@ -1,4 +1,4 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260308.2300 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260308.2350 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -146,9 +146,10 @@ async function _bruteForceMatch(embedding, threshold = 0.4) {
 
 /** Best-matching person using Voy HNSW, falling back to brute-force cosine.
  *
- * voy-search v0.6.3 returns `{ neighbors: Neighbor[] }` NOT a plain array.
- * `Neighbor` = { id: string, title: string, url: string, score: number }
- * The score is cosine similarity in [0,1] (same range as our threshold).
+ * voy-search v0.6.3 returns `{ neighbors: Neighbor[] }`.
+ * IMPORTANT: `Neighbor` = { id: string, title: string, url: string }
+ * There is NO `score` field — confirmed via runtime test.
+ * We use Voy for ranking (fast HNSW) and verify threshold via _cosine() on _embCache.
  */
 async function _voyBestMatch(embedding, threshold = 0.4) {
   const index = await _getVoyIndex();
@@ -156,14 +157,24 @@ async function _voyBestMatch(embedding, threshold = 0.4) {
     try {
       const result    = index.search(Array.from(embedding), 1);
       const neighbors = result?.neighbors ?? [];
-      console.log(`[LocalAdapter] Voy search: ${neighbors.length} neighbor(s)`,
-        neighbors[0] ? `best=${neighbors[0].title} score=${neighbors[0].score?.toFixed(4)}` : 'none');
-      if (neighbors.length > 0 && neighbors[0].score >= threshold) {
-        const n = neighbors[0];
-        return { person_id: parseInt(n.id), name: n.title };
+      if (neighbors.length > 0) {
+        const best = neighbors[0];
+        // Voy gives ranking but no score — look up embedding from cache and compute cosine
+        const items = _embCache ?? await _loadAllEmbeddings();
+        const cached = items.find(e => String(e.face_id) === String(best.id));
+        if (cached) {
+          const sim = _cosine(embedding, cached.vec);
+          console.log(`[LocalAdapter] Voy top-1: face_id=${best.id} name=${best.title} cosine=${sim.toFixed(4)} threshold=${threshold}`);
+          if (sim >= threshold) return { person_id: cached.person_id, name: best.title };
+          console.log(`[LocalAdapter] Voy match below threshold — no match`);
+          return null;
+        }
+        // face_id not in cache (shouldn't happen) — fall through to brute-force
+        console.warn(`[LocalAdapter] Voy returned face_id=${best.id} but not found in _embCache, falling back`);
+      } else {
+        console.log('[LocalAdapter] Voy: no neighbors returned');
+        return null;
       }
-      // Below threshold or empty — no match (don't fall back; both methods use the same data)
-      return null;
     } catch (err) {
       console.warn('[LocalAdapter] Voy search error, falling back to brute-force:', err.message);
     }
