@@ -366,13 +366,13 @@ export class FaceEngineWeb {
     return { det_10g: hasDet, w600k_r50: hasRec };
   }
 
-  async _initDetector(forceProvider = null) {
+      async _initDetector(forceProvider = null) {
     if (this._detSession) return;
     this._progress('Loading SCRFD detector…');
-    // Prefer quantized INT8 model (~4 MB) over full float32 (~16 MB) if available
     const buf = await this._fetchModelCached('det_10g.onnx');
     
-    const providers = _getOrtProviders(forceProvider);
+    // For Detector: Prefer WASM/SIMD over WebGPU/WebGL due to ceil AveragePool bug in browsers
+    let providers = forceProvider ? [forceProvider] : ['wasm'];
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
 
     this._detSession = await ort.InferenceSession.create(buf, {
@@ -384,13 +384,13 @@ export class FaceEngineWeb {
     this._progress('Detector ready');
   }
 
-  async _initRecognizer(forceProvider = null) {
+      async _initRecognizer(forceProvider = null) {
     if (this._recSession) return;
     this._progress('Loading ArcFace recognizer…');
-    // Prefer quantized INT8 model (~42 MB) over full float32 (~166 MB) if available
     const buf = await this._fetchModelCached('w600k_r50.onnx');
     
-    const providers = _getOrtProviders(forceProvider);
+    // For Recognizer: Full WebGPU/WebGL support encouraged (ResNet50 is the bottleneck)
+    let providers = forceProvider ? [forceProvider] : _getOrtProviders();
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
 
     this._recSession = await ort.InferenceSession.create(buf, {
@@ -1104,6 +1104,7 @@ export class FaceEngineWeb {
   
   
   
+  
   async runInferenceBenchmark(file, progressCallback) {
     const results = [];
     const backends = [
@@ -1121,42 +1122,48 @@ export class FaceEngineWeb {
         _ortPrefs.simd = b.simd;
         ort.env.wasm.simd = b.simd;
         const loadStart = performance.now();
-        let detOk = false; let recOk = false;
-        let detError = ''; let recError = '';
-        try { 
-          await this._initDetector(b.ep); 
-          detOk = true; 
-        } catch(e) { 
-          detError = e.message; 
+        let detLoadOk = false; let recLoadOk = false;
+        let detRunOk = false; let recRunOk = false;
+        let detErr = ''; let recErr = '';
+        try { await this._initDetector(b.ep); detLoadOk = true; } catch(e) { detErr = e.message; }
+        try { await this._initRecognizer(b.ep); recLoadOk = true; } catch(e) { recErr = e.message; }
+        const warmupMs = Math.round(performance.now() - loadStart);
+        let detMs = 0; let recMs = 0;
+        if (detLoadOk) {
+          try {
+            const start = performance.now();
+            const dummyInput = new ort.Tensor('float32', new Float32Array(3 * 640 * 640), [1, 3, 640, 640]);
+            await this._detSession.run({ [this._detSession.inputNames[0]]: dummyInput });
+            detMs = Math.round(performance.now() - start);
+            detRunOk = true;
+            dummyInput.dispose();
+          } catch(e) { detErr = e.message; }
         }
-        try { 
-          await this._initRecognizer(b.ep); 
-          recOk = true; 
-        } catch(e) { 
-          recError = e.message;
+        if (recLoadOk) {
+          try {
+            const start = performance.now();
+            const dummyInput = new ort.Tensor('float32', new Float32Array(3 * 112 * 112), [1, 3, 112, 112]);
+            await this._recSession.run({ [this._recSession.inputNames[0]]: dummyInput });
+            recMs = Math.round(performance.now() - start);
+            recRunOk = true;
+            dummyInput.dispose();
+          } catch(e) { recErr = e.message; }
         }
-        const warmupDuration = performance.now() - loadStart;
-        let inferenceDuration = 0; let faceCount = 0;
-        let finalStatus = '✓';
-        if (detOk && recOk) {
-          const startInference = performance.now();
-          const res = await this.processFile(file, { det_thresh: 0.5, skip_vlm: true, vlm_enabled: false });
-          inferenceDuration = performance.now() - startInference;
-          faceCount = res.faces?.length || 0;
-        } else {
-          finalStatus = 'Partial: ';
-          if (!detOk) finalStatus += 'Det FAIL ';
-          if (!recOk) finalStatus += 'Rec FAIL';
-          if (!detOk && !recOk) finalStatus = '✗ Failed';
+        let status = '✓';
+        if (detRunOk && recRunOk) { status = `✓ D:${detMs}ms R:${recMs}ms`; }
+        else {
+          status = '';
+          if (!detLoadOk) status += 'Det:L-FAIL '; else if (!detRunOk) status += 'Det:R-FAIL '; else status += `D:${detMs}ms `;
+          if (!recLoadOk) status += 'Rec:L-FAIL'; else if (!recRunOk) status += 'Rec:R-FAIL'; else status += `R:${recMs}ms`;
         }
         results.push({
           backend: b.name,
-          warmup_ms: Math.round(warmupDuration),
-          duration_ms: Math.round(inferenceDuration),
-          faces: faceCount,
-          status: finalStatus,
-          error: detError || recError,
-          success: detOk && recOk
+          warmup_ms: warmupMs,
+          duration_ms: detMs + recMs,
+          faces: detRunOk ? 'OK' : '0',
+          status: status,
+          error: detErr || recErr,
+          success: detRunOk || recRunOk
         });
       } catch (err) {
         results.push({ backend: b.name, error: err.message, success: false, status: '✗ Fatal' });
