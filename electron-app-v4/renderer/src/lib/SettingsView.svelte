@@ -1812,6 +1812,7 @@
               <th style="padding:4px;">Backend</th>
               <th style="padding:4px;">Warmup</th><th style="padding:4px;">Inference</th>
               <th style="padding:4px;">Faces</th>
+              <th style="padding:4px;">Memory</th>
               <th style="padding:4px;">Status</th>
             </tr>
           </thead>
@@ -1838,6 +1839,7 @@
               <th style="padding:4px;">Provider</th>
               <th style="padding:4px;">Warmup</th><th style="padding:4px;">Inference</th>
               <th style="padding:4px;">Faces</th>
+              <th style="padding:4px;">Memory</th>
               <th style="padding:4px;">Status</th>
             </tr>
           </thead>
