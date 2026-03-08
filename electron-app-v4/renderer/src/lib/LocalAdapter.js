@@ -262,42 +262,51 @@ export const localAdapter = {
   async getFaceCrop(imageId, faceId, size = 128) {
     console.log(`[LocalAdapter] getFaceCrop imageId=${imageId} faceId=${faceId} size=${size}`);
     try {
-      // 1. Get face coordinates
-      const rows = await query('SELECT bbox_x1, bbox_y1, bbox_x2, bbox_y2 FROM faces WHERE id = ?', [faceId]);
+      // 1. Get face coordinates + stored thumbnail
+      const rows = await query('SELECT bbox_x1, bbox_y1, bbox_x2, bbox_y2, face_thumbnail FROM faces WHERE id = ?', [faceId]);
       if (rows.length === 0) throw new Error('Face not found');
-      const { bbox_x1, bbox_y1, bbox_x2, bbox_y2 } = rows[0];
+      const { bbox_x1, bbox_y1, bbox_x2, bbox_y2, face_thumbnail } = rows[0];
 
-      // 2. Get image source
+      // 2. Use stored face thumbnail if available (high-res crop from original image)
+      if (face_thumbnail) {
+        const b64str = face_thumbnail instanceof Uint8Array ? uint8ToBase64(face_thumbnail) : face_thumbnail;
+        const dataUri = b64str.startsWith('data:') ? b64str : `data:image/jpeg;base64,${b64str}`;
+        // Re-encode at requested size if needed
+        const img = await new Promise((resolve, reject) => {
+          const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = dataUri;
+        });
+        const canvas = new OffscreenCanvas(size, size);
+        canvas.getContext('2d').drawImage(img, 0, 0, size, size);
+        const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
+        return URL.createObjectURL(blob);
+      }
+
+      // 3. Fallback: extract from gallery thumbnail (lower quality)
       const imgRows = await query('SELECT filepath, thumbnail_blob FROM images WHERE id = ?', [imageId]);
       if (imgRows.length === 0) throw new Error('Image not found');
       const { filepath, thumbnail_blob } = imgRows[0];
 
-      // 3. Load image into memory
       let imgSource = '';
       if (thumbnail_blob) {
         imgSource = thumbnail_blob.startsWith('data:') ? thumbnail_blob : `data:image/jpeg;base64,${thumbnail_blob}`;
+      } else if (!Capacitor.isNativePlatform()) {
+        throw new Error('No thumbnail stored and file not accessible in browser mode');
       } else {
         imgSource = toWebUrl(filepath);
       }
 
       const img = await new Promise((resolve, reject) => {
-        const i = new Image();
-        i.onload = () => resolve(i);
-        i.onerror = reject;
-        i.src = imgSource;
+        const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = imgSource;
       });
 
-      // 4. Crop using Canvas
-      const canvas = new OffscreenCanvas(size, size);
-      const ctx = canvas.getContext('2d');
-      
-      const x = bbox_x1 * img.width;
-      const y = bbox_y1 * img.height;
-      const w = (bbox_x2 - bbox_x1) * img.width;
-      const h = (bbox_y2 - bbox_y1) * img.height;
+      // Crop using normalized bbox coordinates
+      const x = bbox_x1 * img.width,  y = bbox_y1 * img.height;
+      const w = (bbox_x2 - bbox_x1) * img.width, h = (bbox_y2 - bbox_y1) * img.height;
+      console.warn(`[LocalAdapter] getFaceCrop: no face_thumbnail stored, falling back to ${Math.round(img.width)}×${Math.round(img.height)} gallery thumbnail (degraded quality)`);
 
-      ctx.drawImage(img, x, y, w, h, 0, 0, size, size);
-      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+      const canvas = new OffscreenCanvas(size, size);
+      canvas.getContext('2d').drawImage(img, x, y, w, h, 0, 0, size, size);
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
       return URL.createObjectURL(blob);
     } catch (err) {
       console.error('[LocalAdapter] getFaceCrop failed:', err);
@@ -1038,15 +1047,19 @@ export const localAdapter = {
                           faces = [], description, scene_type, tags = [],
                           thumbnail_b64, embedding_dim = 512 }) {
     const fname = filename || filepath.split('/').pop();
+    // Sanitize filepath: never store blob: URLs (Capacitor Camera webPath — revoked on reload).
+    // FaceEngineWeb already returns a hash-based 'browser:...' path; other callers may pass
+    // bare filenames or native paths which are fine.
+    const safeFilepath = (filepath && !filepath.startsWith('blob:')) ? filepath : (filename || fname);
 
-    console.log(`[LocalAdapter] importProcessed: saving image ${fname} | filepath=${filepath} | dims=${width}x${height} | vlm_max_size=${arguments[0].vlm_max_size || '0'}`);
+    console.log(`[LocalAdapter] importProcessed: saving image ${fname} | filepath=${safeFilepath} | dims=${width}x${height} | vlm_max_size=${arguments[0].vlm_max_size || '0'}`);
     console.log(`[LocalAdapter] VLM results:`, { description: (description || '').slice(0, 50) + '...', scene_type, tagsCount: tags?.length });
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
                (filename, filepath, width, height, date_taken, description, scene_type, thumbnail_blob)
                VALUES(?,?,?,?,?,?,?,?)`,
-              [fname, filepath, width ?? null, height ?? null,
+              [fname, safeFilepath, width ?? null, height ?? null,
                date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
     
     // Favor new VLM results if provided (only update if truthy)
@@ -1058,15 +1071,15 @@ export const localAdapter = {
       if (thumbnail_b64) { updates.push('thumbnail_blob = ?'); params.push(thumbnail_b64); }
       
       if (updates.length > 0) {
-        params.push(filepath);
+        params.push(safeFilepath);
         await run(`UPDATE images SET ${updates.join(', ')} WHERE filepath = ?`, params);
       }
     }
 
-    const imgRows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
+    const imgRows = await query('SELECT id FROM images WHERE filepath=?', [safeFilepath]);
     const imageId = imgRows[0]?.id;
-    if (!imageId) throw new Error(`Failed to insert image record for ${filepath}`);
-    fileCache.set(imageId, filepath);
+    if (!imageId) throw new Error(`Failed to insert image record for ${safeFilepath}`);
+    fileCache.set(imageId, safeFilepath);
     if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
 
     // Tags
@@ -1087,9 +1100,9 @@ export const localAdapter = {
       const y2 = face.bbox_bottom ?? 1;
 
       const faceRes = await run(
-        `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence)
-         VALUES(?,?,?,?,?,?)`,
-        [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null],
+        `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence, face_thumbnail)
+         VALUES(?,?,?,?,?,?,?)`,
+        [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null, face.face_crop_b64 || null],
       );
       
       const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;

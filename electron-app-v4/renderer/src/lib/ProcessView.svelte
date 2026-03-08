@@ -508,12 +508,13 @@
                 console.error('[ProcessView] CRITICAL: VLM was enabled but NO DESCRIPTION was returned!');
               }
               
-              // In local mode, use the native filepath so the DB stores a permanent path.
-        // Never store blob: URLs — they're revoked on page reload (Capacitor Camera webPath).
-        // Fall back to the plain filename; LocalAdapter deduplicates by file_hash.
+              // In local mode, prefer the native filesystem path when available.
+        // FaceEngineWeb already provides a stable hash-based filepath for browser mode;
+        // only override it with item.path if it's a real path (not a blob: URL).
         if (localMode) {
           const p = item.path;
-          faceData.filepath = (p && !p.startsWith('blob:')) ? p : item.name;
+          if (p && !p.startsWith('blob:') && p !== item.name) faceData.filepath = p;
+          // Otherwise keep faceData.filepath from FaceEngineWeb (hash-based for web mode)
         }
         
         const resp = await importProcessed(faceData);

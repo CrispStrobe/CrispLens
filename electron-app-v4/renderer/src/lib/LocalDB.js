@@ -44,6 +44,7 @@ const SCHEMA = `
     bbox_y2              REAL,
     detection_confidence REAL,
     face_quality         REAL DEFAULT 1.0,
+    face_thumbnail       BLOB,
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
   );
   CREATE TABLE IF NOT EXISTS face_embeddings (
@@ -334,6 +335,7 @@ export async function getDB() {
         if (await safeAddColumn('face_embeddings', 'verified', 'INTEGER DEFAULT 0')) changed = true;
         if (await safeAddColumn('face_embeddings', 'embedding_model', 'TEXT')) changed = true;
         if (await safeAddColumn('face_embeddings', 'recognition_confidence', 'REAL')) changed = true;
+        if (await safeAddColumn('faces', 'face_thumbnail', 'BLOB')) changed = true;
 
         if (changed && isWeb && sqlite) {
           console.log('[LocalDB] Persisting migrations to WebStore...');

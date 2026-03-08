@@ -1,4 +1,4 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.2200 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.2300 */
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web WASM paths
@@ -294,7 +294,7 @@ export class FaceEngineWeb {
       const facePayloads=[];
       for(const f of faces){
         const {a,b,tx,ty}=similarityTransform(f.landmarks, ARC_DST);
-        let emb;
+        let emb, face_crop_b64 = null;
         {
           // Scoped block so the face crop canvas is GC-eligible after each face.
           const fc=new OffscreenCanvas(ARCFACE_SIZE, ARCFACE_SIZE);
@@ -303,12 +303,40 @@ export class FaceEngineWeb {
           const frgba=fctx.getImageData(0,0,ARCFACE_SIZE,ARCFACE_SIZE).data;
           const fit=new ort.Tensor('float32', new Float32Array(3*sp), [1,3,ARCFACE_SIZE,ARCFACE_SIZE]);
           for(let i=0;i<sp;i++){ fit.data[i]=(frgba[i*4+2]-127.5)/128; fit.data[i+sp]=(frgba[i*4+1]-127.5)/128; fit.data[i+sp*2]=(frgba[i*4]-127.5)/128; }
+          // Debug: log ArcFace input tensor stats
+          {
+            const d=fit.data, n=d.length;
+            let mn=Infinity, mx=-Infinity, sm=0;
+            for(let i=0;i<n;i++){sm+=d[i]; if(d[i]<mn)mn=d[i]; if(d[i]>mx)mx=d[i];}
+            console.log(`[FaceEngineWeb] ArcFace input: ${ARCFACE_SIZE}×${ARCFACE_SIZE} BGR f32 NCHW [1,3,${ARCFACE_SIZE},${ARCFACE_SIZE}] | mean=${(sm/n).toFixed(4)} min=${mn.toFixed(4)} max=${mx.toFixed(4)} | first8=[${Array.from(d.slice(0,8)).map(v=>v.toFixed(3))}]`);
+          }
           const recRes=await this._run(this._recSession, this._recEp, { [this._recSession.inputNames[0]]: fit });
-          emb=l2normalize(Array.from(recRes[this._recSession.outputNames[0]].data));
+          const rawEmb=Array.from(recRes[this._recSession.outputNames[0]].data);
+          const rawNorm=Math.sqrt(rawEmb.reduce((s,v)=>s+v*v,0));
+          emb=l2normalize(rawEmb);
+          const embNorm=Math.sqrt(emb.reduce((s,v)=>s+v*v,0));
+          console.log(`[FaceEngineWeb] ArcFace output: dim=${rawEmb.length} raw_L2=${rawNorm.toFixed(4)} → L2-norm'd=${embNorm.toFixed(4)} | first8=[${emb.slice(0,8).map(v=>v.toFixed(4))}]`);
           for(const t of Object.values(recRes)) t.dispose?.(); fit.dispose();
           // fc, fctx, frgba go out of scope here
         }
-        facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length });
+
+        // Per-face thumbnail from original high-res image (not ArcFace 112px crop).
+        // Includes 20% padding around the bbox for a natural portrait crop.
+        try {
+          const [fx1,fy1,fx2,fy2]=f.bbox;
+          const fw=fx2-fx1, fh=fy2-fy1;
+          const pad=Math.max(fw,fh)*0.2;
+          const cx=Math.max(0,Math.round(fx1-pad)), cy=Math.max(0,Math.round(fy1-pad));
+          const cw=Math.min(W-cx,Math.round(fw+pad*2)), ch=Math.min(H-cy,Math.round(fh+pad*2));
+          const FACE_THUMB=160;
+          const ftc=new OffscreenCanvas(FACE_THUMB,FACE_THUMB);
+          ftc.getContext('2d').drawImage(img, cx, cy, cw, ch, 0, 0, FACE_THUMB, FACE_THUMB);
+          const ftb=await ftc.convertToBlob({type:'image/jpeg',quality:0.9});
+          face_crop_b64=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.readAsDataURL(ftb);});
+          console.log(`[FaceEngineWeb] Face ${facePayloads.length} thumbnail: ${FACE_THUMB}×${FACE_THUMB} from bbox=[${[Math.round(fx1),Math.round(fy1),Math.round(fx2),Math.round(fy2)]}] src_crop=${cw}×${ch}px`);
+        } catch(e) { console.warn('[FaceEngineWeb] face thumbnail failed:', e.message); }
+
+        facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length, face_crop_b64 });
       }
 
       // ── Thumbnail (generate before SHA-256 to avoid holding two large buffers) ──
@@ -351,7 +379,10 @@ export class FaceEngineWeb {
         }
       }
 
-      return { local_path:file.name, filename:file.name, width:W, height:H, file_size:file.size,
+      const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '.jpg';
+      return { local_path:file.name, filename:file.name,
+               filepath:`browser:${hash}${ext}`,
+               width:W, height:H, file_size:file.size,
                file_hash:hash, thumbnail_b64, faces:facePayloads,
                description, scene_type, tags };
     } finally {
