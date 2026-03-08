@@ -580,6 +580,7 @@
           connectionMode = s.remoteUrl ? 'remote' : 'local';
           remoteUrl      = s.remoteUrl || '';
           localPort      = s.port || 7861;
+          console.log('[SettingsView] Electron settings.json loaded:', { connectionMode, remoteUrl, localPort });
         }
       } catch (e) { console.error('[SettingsView] getSettings error:', e); }
 
@@ -791,22 +792,19 @@
       if (isElectron) {
         console.log('[SettingsView] Saving Electron settings via IPC...');
         const existing = await window.electronAPI?.getSettings() || {};
-        await window.electronAPI?.saveSettings({
+        // Use flat format matching resolveDbPath() + switch-db IPC expectations.
+        // Only write remoteUrl when explicitly switching to remote mode.
+        const newSettings = {
           ...existing,
-          server: {
-            ...(existing.server || {}),
-            port:   localPort || 7865,
-            dbPath: currentDbPath || undefined,
-          },
-          client: {
-            ...(existing.client || {}),
-            connectTo:      connectionMode,
-            remoteUrl:      connectionMode === 'remote' ? remoteUrl : (existing.client?.remoteUrl || ''),
-            processingMode: processingModeLocal,
-            localModel:     localModelLocal,
-            pythonPath:     pythonPath || undefined,
-          },
-        });
+          port:      localPort || 7861,
+          remoteUrl: connectionMode === 'remote' ? remoteUrl : '',
+          // dbPath is managed exclusively by switchDb/resetDbToDefault IPC — don't overwrite here
+        };
+        // Remove stale nested keys from old format to avoid confusion
+        delete newSettings.server;
+        delete newSettings.client;
+        await window.electronAPI?.saveSettings(newSettings);
+        console.log('[SettingsView] Saved Electron settings:', newSettings);
         // Sync stores so ProcessView picks up changes immediately
         processingMode.set(processingModeLocal);
         localModel.set(localModelLocal);
