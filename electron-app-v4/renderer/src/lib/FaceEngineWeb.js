@@ -1,4 +1,4 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1730 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1800 */
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web WASM paths
@@ -294,8 +294,46 @@ export class FaceEngineWeb {
     }
     
     const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))).map(b=>b.toString(16).padStart(2,'0')).join('');
+
+    // Thumbnail — generate a resized JPEG and return as raw base64 (no data: prefix).
+    const thumbSize = opts.thumb_size || 200;
+    let thumbnail_b64 = '';
+    try {
+      const scale = Math.min(thumbSize / W, thumbSize / H, 1);
+      const tw = Math.round(W * scale), th = Math.round(H * scale);
+      const tc = new OffscreenCanvas(tw, th);
+      tc.getContext('2d').drawImage(img, 0, 0, tw, th);
+      const tb = await tc.convertToBlob({ type: 'image/jpeg', quality: 0.75 });
+      thumbnail_b64 = await new Promise(res => {
+        const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(tb);
+      });
+    } catch(e) { console.warn('[FaceEngineWeb] thumbnail generation failed:', e.message); }
+
+    // VLM enrichment — call cloud provider if enabled and keys are present.
+    let description = null, scene_type = null, tags = [];
+    if (opts.vlm_enabled && opts.vlm_provider && opts.vlm_keys?.[opts.vlm_provider]) {
+      try {
+        const vlmMod = await import('./VlmWeb.js');
+        const vlmClient = vlmMod.vlmClientWeb ?? vlmMod.default;
+        vlmClient.setKeys(opts.vlm_keys);
+        const result = await vlmClient.enrichImage(
+          file, opts.vlm_provider, opts.vlm_model || '',
+          opts.vlm_prompt || 'Describe this image concisely. Include: main subjects, setting, mood, notable details.',
+          opts.vlm_max_size || 1024,
+        );
+        description = result.description || null;
+        scene_type  = result.scene_type  || null;
+        tags        = result.tags        || [];
+        console.log(`[FaceEngineWeb] VLM enrichment OK | provider=${opts.vlm_provider} | chars=${description?.length||0}`);
+      } catch(e) {
+        console.warn(`[FaceEngineWeb] VLM enrichment failed (${opts.vlm_provider}):`, e.message);
+      }
+    }
+
     if(img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-    return { local_path:file.name, filename:file.name, width:W, height:H, file_size:file.size, file_hash:hash, thumbnail_b64:'', faces:facePayloads };
+    return { local_path:file.name, filename:file.name, width:W, height:H, file_size:file.size,
+             file_hash:hash, thumbnail_b64, faces:facePayloads,
+             description, scene_type, tags };
   }
 
   async runInferenceBenchmark(file, progressCallback) {
@@ -340,6 +378,15 @@ export class FaceEngineWeb {
           } catch(e){ dE=e.message?.slice(0,120)||String(e); }
         }
         if(rL){
+          // WebGPU: first run compiles WGSL shaders (can take 1-3s). Run once untracked
+          // to warm the shader cache, then measure steady-state inference speed.
+          if(b.recEp === 'webgpu'){
+            try {
+              const wi=new ort.Tensor('float32', new Float32Array(3*112*112),[1,3,112,112]);
+              const wr=await this._run(this._recSession, this._recEp, {[this._recSession.inputNames[0]]:wi});
+              for(const t of Object.values(wr)) t.dispose?.(); wi.dispose();
+            } catch {}
+          }
           try {
             const s=performance.now();
             const ri=new ort.Tensor('float32', new Float32Array(3*112*112),[1,3,112,112]);

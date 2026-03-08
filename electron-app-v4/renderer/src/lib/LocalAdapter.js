@@ -23,43 +23,69 @@ async function _getVoyIndex(forceRebuild = false) {
   const mod = await import('voy-search');
   console.log('[LocalAdapter] Voy module loaded:', Object.keys(mod));
 
-  // wasm-pack packages require explicit WASM initialization before any class can be used.
-  // The default export is the async init() function; it must be awaited before new Voy().
-  // Always attempt WASM init — safe to call multiple times (idempotent after first call).
-  // Do NOT guard with `initFn !== mod.Voy`: in some bundler configs the guard fires
-  // incorrectly and skips init, leaving voy_new undefined → "t.voy_new is not a function".
-  const initFn = mod.default;
-  if (typeof initFn === 'function') {
-    try {
-      await initFn();
-      console.log('[LocalAdapter] Voy WASM initialized');
-    } catch (e) {
-      // Ignore "already initialized" errors on subsequent calls
-      if (!String(e).includes('already')) console.warn('[LocalAdapter] Voy WASM init warning:', e);
-    }
+  // voy-search v0.6.3 is a wasm-bindgen "bundler" target package:
+  //   voy_search.js does `import * as wasm from "./voy_search_bg.wasm"; __wbg_set_wasm(wasm);`
+  // With Vite's `assetsInclude: ['**/*.wasm']`, that import is rewritten to return a URL
+  // namespace object `{ default: "/assets/voy_search_bg.wasm" }` rather than the real WASM
+  // module exports. __wbg_set_wasm gets called with the URL object, so `wasm.voy_new` is
+  // always undefined.
+  //
+  // Fix: probe whether the WASM is actually initialised by trying a test construction.
+  // If it fails with voy_new, manually fetch the binary, compile it, and inject the
+  // real exports via __wbg_set_wasm before proceeding.
+  const Voy = mod.Voy;
+  if (typeof Voy !== 'function') throw new Error('Voy class not found in module');
+
+  let wasmOk = false;
+  try {
+    const _ = new Voy({ embeddings: [] }); // probe — calls wasm.voy_new internally
+    wasmOk = true;
+  } catch (e) {
+    if (!String(e).includes('voy_new')) throw e; // unexpected error
   }
 
-  // In minified/Vercel build, the export might be directly on the module or under 'default'
-  let Voy = mod.Voy || mod.default?.Voy || mod.default;
-
-  // Some versions/bundlers wrap it another level
-  if (typeof Voy !== 'function' && Voy?.Voy) Voy = Voy.Voy;
-
-  if (typeof Voy !== 'function') {
-    console.error('[LocalAdapter] Voy is not a constructor:', Voy);
-    throw new Error('Voy search engine failed to load (module resolution error)');
+  if (!wasmOk && typeof mod.__wbg_set_wasm === 'function') {
+    // WASM not initialized. Manually fetch+instantiate from the known asset path.
+    // Since vite.config.js uses `assetFileNames: "[name].[ext]"` (no hash),
+    // the WASM lands at a predictable URL.
+    const wasmCandidates = [
+      new URL('/assets/voy_search_bg.wasm', window.location.origin).href,
+      new URL('voy-search/voy_search_bg.wasm', import.meta.url).href,
+    ];
+    let initialized = false;
+    for (const url of wasmCandidates) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) continue;
+        const buf  = await resp.arrayBuffer();
+        // Discover which module name the WASM imports (typically "./voy_search_bg.js")
+        const compiledModule = await WebAssembly.compile(buf);
+        const importModules  = [...new Set(WebAssembly.Module.imports(compiledModule).map(i => i.module))];
+        // Build imports: all __wbg_* / __wbindgen_* are exported by mod (voy_search_bg.js)
+        const wasmImports = {};
+        for (const m of importModules) wasmImports[m] = mod;
+        const { instance } = await WebAssembly.instantiate(compiledModule, wasmImports);
+        mod.__wbg_set_wasm(instance.exports);
+        console.log('[LocalAdapter] Voy WASM manually instantiated from', url);
+        initialized = true;
+        break;
+      } catch (e) {
+        console.warn('[LocalAdapter] Voy WASM init attempt failed for', url, ':', e.message);
+      }
+    }
+    if (!initialized) throw new Error('Voy WASM could not be initialized from any candidate URL');
   }
 
   const items = await _loadAllEmbeddings();
-  
   const embeddings = items.map(p => ({
     id:         String(p.face_id),
     title:      p.person_name,
     url:        JSON.stringify({ image_id: p.image_id, filename: p.filename }),
     embeddings: Array.from(p.vec),
   }));
-  
+
   _voyIndex = new Voy({ embeddings });
+  console.log(`[LocalAdapter] Voy index built with ${embeddings.length} embeddings`);
   return _voyIndex;
 }
 

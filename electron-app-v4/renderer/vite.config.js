@@ -34,6 +34,16 @@ export default defineConfig({
           dest: 'ort-wasm',
         },
         {
+          // voy-search WASM binary (wasm-bindgen bundler target).
+          // Vite's assetsInclude:['**/*.wasm'] rewrites the static import in voy_search.js
+          // to a URL namespace; __wbg_set_wasm then receives a URL string instead of the
+          // module exports, leaving wasm.voy_new undefined. LocalAdapter._getVoyIndex()
+          // works around this by manually fetching the binary from this known path and
+          // calling WebAssembly.instantiate() to inject the real exports.
+          src: 'node_modules/voy-search/voy_search_bg.wasm',
+          dest: 'assets',
+        },
+        {
           // MediaPipe tasks-vision WASM runtime — served from /mediapipe/ so
           // FaceEngineWeb.js can use FilesetResolver.forVisionTasks('/mediapipe/')
           // without hitting an external CDN (works offline / on LAN).
