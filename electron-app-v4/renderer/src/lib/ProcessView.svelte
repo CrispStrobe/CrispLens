@@ -508,9 +508,13 @@
                 console.error('[ProcessView] CRITICAL: VLM was enabled but NO DESCRIPTION was returned!');
               }
               
-              // In local mode, use the native filepath (item.path) so the DB stores the
-        // permanent on-device path; the webPath is ephemeral (changes between sessions).
-        if (localMode && item.path) faceData.filepath = item.path;
+              // In local mode, use the native filepath so the DB stores a permanent path.
+        // Never store blob: URLs — they're revoked on page reload (Capacitor Camera webPath).
+        // Fall back to the plain filename; LocalAdapter deduplicates by file_hash.
+        if (localMode) {
+          const p = item.path;
+          faceData.filepath = (p && !p.startsWith('blob:')) ? p : item.name;
+        }
         
         const resp = await importProcessed(faceData);
         console.log(`[ProcessView] Import OK for ${item.name}, imageId: ${resp.image_id}`);

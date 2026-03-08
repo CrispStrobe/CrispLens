@@ -1,4 +1,4 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260308.2100 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260308.2300 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -144,18 +144,28 @@ async function _bruteForceMatch(embedding, threshold = 0.4) {
     : null;
 }
 
-/** Best-matching person using Voy HNSW, falling back to brute-force cosine. */
+/** Best-matching person using Voy HNSW, falling back to brute-force cosine.
+ *
+ * voy-search v0.6.3 returns `{ neighbors: Neighbor[] }` NOT a plain array.
+ * `Neighbor` = { id: string, title: string, url: string, score: number }
+ * The score is cosine similarity in [0,1] (same range as our threshold).
+ */
 async function _voyBestMatch(embedding, threshold = 0.4) {
   const index = await _getVoyIndex();
   if (index) {
     try {
-      const results = index.search(Array.from(embedding), 1);
-      if (results.length > 0 && results[0].score >= threshold) {
-        return { person_id: parseInt(results[0].id), name: results[0].title };
+      const result    = index.search(Array.from(embedding), 1);
+      const neighbors = result?.neighbors ?? [];
+      console.log(`[LocalAdapter] Voy search: ${neighbors.length} neighbor(s)`,
+        neighbors[0] ? `best=${neighbors[0].title} score=${neighbors[0].score?.toFixed(4)}` : 'none');
+      if (neighbors.length > 0 && neighbors[0].score >= threshold) {
+        const n = neighbors[0];
+        return { person_id: parseInt(n.id), name: n.title };
       }
+      // Below threshold or empty — no match (don't fall back; both methods use the same data)
       return null;
     } catch (err) {
-      console.warn('[LocalAdapter] Voy search error, falling back:', err.message);
+      console.warn('[LocalAdapter] Voy search error, falling back to brute-force:', err.message);
     }
   }
   return _bruteForceMatch(embedding, threshold);
@@ -238,7 +248,7 @@ function _csvToFloat32(str) {
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
 
-console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260308.2100", "color: #e07030; font-weight: bold");
+console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260308.2300", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
   health() {
