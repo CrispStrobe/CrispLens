@@ -1365,7 +1365,7 @@
 <div class="settings-view">
   <h2>⚙ {$t('settings_title')}</h2>
 
-  <!-- FastAPI Server -->
+  <!-- Node.js Server (Electron only) -->
   {#if isElectron}
   <section class="card">
     <h3>{$t('settings_server_section')}</h3>
@@ -1390,7 +1390,7 @@
         <label>{$t('settings_local_port')}</label>
         <div class="field-row">
           <input type="number" bind:value={localPort} min="1024" max="65535" style="width:90px;" />
-          <span class="hint" style="margin:0;">default 7865 — app finds next free port if taken</span>
+          <span class="hint" style="margin:0;">default 7861 — app finds next free port if taken</span>
         </div>
       {:else}
         <label>{$t('settings_server_url')}</label>

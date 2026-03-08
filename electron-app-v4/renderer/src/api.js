@@ -174,13 +174,28 @@ export async function fetchImageAsUrl(url) {
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
+const _inElectron = typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined';
+const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?? (globalThis.Capacitor)) !== 'undefined'
+  && (globalThis.Capacitor?.isNativePlatform?.() ?? false);
+
 let _localMode = localStorage.getItem('db_mode') === 'local';
-// Default to local mode for zero-server deployments (Vercel/PWA)
-if (localStorage.getItem('db_mode') === null) {
+
+if (_inElectron) {
+  // Electron ALWAYS has a local Node.js/Express server — never use standalone SQLite mode.
+  // Force server mode regardless of whatever localStorage says.
+  if (_localMode) {
+    console.log('[api] Electron detected: overriding db_mode from "local" → "server" (Electron always has a server)');
+  }
+  _localMode = false;
+  localStorage.setItem('db_mode', 'server');
+} else if (localStorage.getItem('db_mode') === null) {
+  // First run in browser/PWA without a server — default to standalone SQLite mode.
   _localMode = true;
   localStorage.setItem('db_mode', 'local');
+  console.log('[api] No db_mode set and no Electron detected — defaulting to standalone local mode');
 }
-console.log(`[api] Initializing. localMode=${_localMode} (db_mode=${localStorage.getItem('db_mode')})`);
+
+console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} (db_mode=${localStorage.getItem('db_mode')})`);
 
 /** Switch to local SQLite mode (standalone Capacitor — no server needed). */
 export function setLocalMode(enabled) {
