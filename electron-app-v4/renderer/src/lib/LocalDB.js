@@ -106,6 +106,20 @@ const SCHEMA = `
 let _initPromise = null;
 let _initFailed = false;
 
+// Force a final IndexedDB flush when the user hides the tab or closes the window.
+// jeep-sqlite auto-save handles most cases, but this catches the "fast close" scenario.
+if (typeof document !== 'undefined') {
+  const _flushOnHide = () => {
+    if (sqlite && _db) {
+      sqlite.saveToStore(DB_NAME).catch(() => {});
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') _flushOnHide();
+  });
+  window.addEventListener('pagehide', _flushOnHide);
+}
+
 /** Force-reset the initialization state to allow a retry. */
 export function resetInit() {
   console.log('[LocalDB] Resetting init state...');
@@ -283,13 +297,17 @@ export async function getDB() {
         console.log('[LocalDB] Database opened');
       }
 
-      // ── Migration: ensure columns exist ────────────────────────────────
-      // We run this BEFORE Step 8/9 to ensure any queries triggered by the Svelte 
-      // lifecycle (like getImageFaces) don't hit missing columns.
+      console.log('[LocalDB] Step 8: Executing schema...');
+      await _db.execute(SCHEMA);
+
+      // ── Migration: ensure columns added after initial schema ───────────
+      // Runs AFTER Step 8 so tables always exist before ALTER TABLE is attempted.
+      // On a fresh DB the SCHEMA already creates all columns; these ALTERs are
+      // only needed for existing databases created before the columns were added.
       try {
-        console.log('[LocalDB] Starting migrations check (FORCED)...');
+        console.log('[LocalDB] Starting migrations check...');
         const isWeb = window.location.protocol !== 'capacitor:';
-        
+
         async function columnExists(table, col) {
           const res = await _db.query(`PRAGMA table_info(${table});`);
           const cols = (res.values || []).map(c => c.name.toLowerCase());
@@ -326,9 +344,6 @@ export async function getDB() {
         console.error('[LocalDB] Migration process failed:', migErr);
       }
 
-      console.log('[LocalDB] Step 8: Executing schema...');
-      await _db.execute(SCHEMA);
-
       console.log('[LocalDB] Step 9: Database is ready for queries');
       _initPromise = null; 
       return _db;
@@ -357,19 +372,18 @@ export async function query(sql, params = []) {
 }
 
 export async function run(sql, params = []) {
-  console.log(`[LocalDB] Run: ${sql.slice(0, 50)}...`, params);
   try {
     const db = await getDB();
     const result = await db.run(sql, params);
-    
-    // On Web, we MUST save to store to persist in IndexedDB
+    // auto-save="true" on the jeep-sqlite element handles IndexedDB persistence
+    // automatically; this explicit call is a belt-and-suspenders flush for web.
+    // We intentionally do NOT throw on saveToStore failure — the in-memory write
+    // succeeded and auto-save will persist it; failing here would abort callers.
     const isWeb = window.location.protocol !== 'capacitor:';
     if (isWeb && sqlite) {
-      console.log(`[LocalDB] PERSISTING to WebStore (IndexedDB)...`);
-      await sqlite.saveToStore(DB_NAME);
-      console.log(`[LocalDB] Persist COMPLETE.`);
+      sqlite.saveToStore(DB_NAME).catch(e =>
+        console.warn('[LocalDB] saveToStore non-fatal error:', e));
     }
-    
     return result;
   } catch (err) {
     console.error(`[LocalDB] Run failed: ${sql}`, err);
@@ -378,18 +392,14 @@ export async function run(sql, params = []) {
 }
 
 export async function execute(sql) {
-  console.log(`[LocalDB] Execute script...`);
   try {
     const db = await getDB();
     const result = await db.execute(sql);
-    
     const isWeb = window.location.protocol !== 'capacitor:';
     if (isWeb && sqlite) {
-      console.log(`[LocalDB] PERSISTING to WebStore (IndexedDB) after execute...`);
-      await sqlite.saveToStore(DB_NAME);
-      console.log(`[LocalDB] Persist COMPLETE.`);
+      sqlite.saveToStore(DB_NAME).catch(e =>
+        console.warn('[LocalDB] saveToStore non-fatal error (execute):', e));
     }
-    
     return result;
   } catch (err) {
     console.error(`[LocalDB] Execute failed`, err);
