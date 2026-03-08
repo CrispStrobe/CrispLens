@@ -202,6 +202,23 @@
       allAlbums.set(sAlbums);
       if (sSettings) {
         processingBackend.set(sSettings?.processing?.backend ?? 'local');
+        // Log full settings at startup so we can verify what was loaded
+        console.log('[App] Settings loaded at startup:');
+        console.log('  processing.backend:', sSettings?.processing?.backend);
+        console.log('  vlm.enabled:', sSettings?.vlm?.enabled, '| provider:', sSettings?.vlm?.provider, '| model:', sSettings?.vlm?.model);
+        const fi = sSettings?.face_recognition?.insightface;
+        console.log('  det_model:', fi?.det_model, '| det_thresh:', fi?.detection_threshold, '| rec_thresh:', fi?.recognition_threshold);
+        const sy = sSettings?.sync;
+        if (sy) {
+          console.log('  sync.thumb_size:', sy.thumb_size, '| max_items:', sy.max_items, '| max_size_mb:', sy.max_size_mb);
+          // Mirror to localStorage so SyncManager reads the authoritative value
+          try {
+            const ls = JSON.parse(localStorage.getItem('crisplens_sync_settings') || '{}');
+            const merged = { ...ls, thumbSize: sy.thumb_size, maxItems: sy.max_items, maxSizeMb: sy.max_size_mb };
+            localStorage.setItem('crisplens_sync_settings', JSON.stringify(merged));
+            console.log('[App] Sync settings mirrored to localStorage:', merged);
+          } catch(e) { console.warn('[App] Could not mirror sync settings to localStorage:', e.message); }
+        }
       }
       dbg('Initial data load complete.');
     } catch (e) {

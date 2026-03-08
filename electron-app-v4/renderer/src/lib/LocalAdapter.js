@@ -1,4 +1,4 @@
-/* LOCAL_ADAPTER_VERSION: v4.0.260308.2400 */
+/* LOCAL_ADAPTER_VERSION: v4.0.260308.2450 */
 /**
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
@@ -367,37 +367,52 @@ export const localAdapter = {
   },
 
   async settings() {
-    console.log('[LocalAdapter] settings() triggered — loading preferences from SQLite...');
+    console.log('[LocalAdapter] settings() — loading ALL preferences from SQLite...');
     try {
       const rows = await query('SELECT key, value FROM settings WHERE key LIKE "pref_%"');
-      console.log(`[LocalAdapter] Found ${rows.length} preference rows in SQLite:`, rows.map(r => r.key));
-      
       const prefs = {};
-      for (const row of rows) {
-        prefs[row.key.replace('pref_', '')] = row.value;
-      }
-      
+      for (const row of rows) prefs[row.key.replace('pref_', '')] = row.value;
+
+      // Sync prefs: primary source is SQLite; fallback to localStorage for legacy
+      const lsSync  = (() => { try { return JSON.parse(localStorage.getItem('crisplens_sync_settings') || '{}'); } catch { return {}; } })();
+      const thumbSz  = parseInt(prefs.thumb_size   ?? lsSync.thumbSize   ?? '600');
+      const maxItems = parseInt(prefs.max_items    ?? lsSync.maxItems    ?? '500');
+      const maxSizeMb= parseInt(prefs.max_size_mb  ?? lsSync.maxSizeMb  ?? '500');
+
       const result = {
-        ui: { 
-          language: prefs.language || localStorage.getItem('pwa_language') || 'en' 
+        ui: {
+          language: prefs.language || localStorage.getItem('pwa_language') || 'en',
         },
-        face_recognition: { 
-          insightface: { 
-            det_model: prefs.det_model || 'auto',
-            recognition_threshold: parseFloat(prefs.rec_threshold || '0.4'),
-            detection_threshold: parseFloat(prefs.det_threshold || '0.5'),
-            det_retries: parseInt(prefs.det_retries || '1'),
-            det_size: parseInt(prefs.det_size || '640')
-          } 
+        face_recognition: {
+          insightface: {
+            det_model:               prefs.det_model || 'auto',
+            recognition_threshold:   parseFloat(prefs.rec_threshold || '0.4'),
+            detection_threshold:     parseFloat(prefs.det_threshold || '0.5'),
+            det_retries:             parseInt(prefs.det_retries || '1'),
+            det_size:                parseInt(prefs.det_size || '640'),
+          },
         },
         processing: { backend: 'local' },
-        vlm: { 
-          enabled: prefs.vlm_enabled === 'true' || prefs.vlm_enabled === true,
-          provider: prefs.vlm_provider || 'anthropic',
-          model: prefs.vlm_model || ''
+        vlm: {
+          enabled:  prefs.vlm_enabled === 'true' || prefs.vlm_enabled === true,
+          provider: prefs.vlm_provider || 'openrouter',
+          model:    prefs.vlm_model || '',
+        },
+        sync: {
+          thumb_size:   thumbSz,
+          max_items:    maxItems,
+          max_size_mb:  maxSizeMb,
         },
       };
-      console.log('[LocalAdapter] settings() success — Returning object:', JSON.stringify(result));
+
+      console.log('[LocalAdapter] settings() loaded from SQLite:');
+      console.log('  language:', result.ui.language);
+      console.log('  det_model:', result.face_recognition.insightface.det_model,
+                  '| det_thresh:', result.face_recognition.insightface.detection_threshold,
+                  '| rec_thresh:', result.face_recognition.insightface.recognition_threshold);
+      console.log('  vlm enabled:', result.vlm.enabled, '| provider:', result.vlm.provider, '| model:', result.vlm.model);
+      console.log('  sync thumb_size:', result.sync.thumb_size, '| max_items:', result.sync.max_items, '| max_size_mb:', result.sync.max_size_mb);
+      console.log('  raw SQLite rows:', rows.length, '→', rows.map(r => `${r.key}=${r.value}`).join(', '));
       return result;
     } catch (err) {
       console.error('[LocalAdapter] settings() FAILED:', err);
@@ -406,26 +421,31 @@ export const localAdapter = {
   },
 
   async saveSettings(body) {
-    console.log('[LocalAdapter] saveSettings() start — Body:', JSON.stringify(body));
+    console.log('[LocalAdapter] saveSettings() — persisting to SQLite:', JSON.stringify(body));
     const mapping = {
-      'language': body.language,
-      'det_model': body.det_model,
-      'rec_threshold': body.rec_threshold,
-      'det_threshold': body.det_threshold,
-      'det_size': body.det_size,
-      'vlm_enabled': body.vlm_enabled !== undefined ? (body.vlm_enabled ? 'true' : 'false') : undefined,
+      'language':     body.language,
+      'det_model':    body.det_model,
+      'rec_threshold':body.rec_threshold !== undefined ? String(body.rec_threshold) : undefined,
+      'det_threshold':body.det_threshold !== undefined ? String(body.det_threshold) : undefined,
+      'det_size':     body.det_size      !== undefined ? String(body.det_size)      : undefined,
+      'det_retries':  body.det_retries   !== undefined ? String(body.det_retries)   : undefined,
+      'vlm_enabled':  body.vlm_enabled   !== undefined ? (body.vlm_enabled ? 'true' : 'false') : undefined,
       'vlm_provider': body.vlm_provider,
-      'vlm_model': body.vlm_model
+      'vlm_model':    body.vlm_model,
+      // Sync/offline preferences
+      'thumb_size':   body.thumb_size    !== undefined ? String(body.thumb_size)    : undefined,
+      'max_items':    body.max_items     !== undefined ? String(body.max_items)     : undefined,
+      'max_size_mb':  body.max_size_mb   !== undefined ? String(body.max_size_mb)   : undefined,
     };
-    
-    console.log('[LocalAdapter] Mapped preferences for SQLite:', mapping);
+
+    const written = [];
     for (const [key, value] of Object.entries(mapping)) {
       if (value !== undefined) {
-        console.log(`[LocalAdapter] Writing setting: pref_${key} = ${value}`);
-        await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`pref_${key}`, String(value)]);
+        await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`pref_${key}`, value]);
+        written.push(`pref_${key}=${value}`);
       }
     }
-    console.log('[LocalAdapter] saveSettings() successfully finished');
+    console.log('[LocalAdapter] saveSettings() wrote', written.length, 'keys:', written.join(', '));
     return { ok: true };
   },
 

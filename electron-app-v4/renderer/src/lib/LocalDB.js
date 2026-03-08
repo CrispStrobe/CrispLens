@@ -79,14 +79,18 @@ const SCHEMA = `
     value TEXT
   );
   -- Default settings for standalone mode
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_enabled', 'false');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_provider', 'openrouter');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_model', 'qwen/qwen3-vl-8b-thinking');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_model', 'auto');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_threshold', '0.5');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_rec_threshold', '0.4');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_retries', '1');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_language', 'en');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_enabled',    'false');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_provider',   'openrouter');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_vlm_model',      'qwen/qwen3-vl-8b-thinking');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_model',      'auto');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_threshold',  '0.5');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_rec_threshold',  '0.4');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_det_retries',    '1');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_language',       'en');
+  -- Offline/sync preferences (also kept here so they survive hard reset)
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_thumb_size',     '600');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_max_items',      '500');
+  INSERT OR IGNORE INTO settings (key, value) VALUES ('pref_max_size_mb',    '500');
 
   CREATE TABLE IF NOT EXISTS users (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +341,23 @@ export async function getDB() {
         if (await safeAddColumn('face_embeddings', 'recognition_confidence', 'REAL')) changed = true;
         if (await safeAddColumn('faces', 'face_thumbnail', 'BLOB')) changed = true;
 
+        // Ensure new default settings rows exist in existing DBs
+        // (INSERT OR IGNORE is in schema but only runs for fresh DBs)
+        const newSettingDefaults = [
+          ['pref_thumb_size',  '600'],
+          ['pref_max_items',   '500'],
+          ['pref_max_size_mb', '500'],
+          ['pref_det_retries', '1'],
+        ];
+        for (const [k, v] of newSettingDefaults) {
+          const existing = await _db.query('SELECT value FROM settings WHERE key=?', [k]);
+          if (!existing?.values?.length) {
+            await _db.run('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', [k, v]);
+            console.log(`[LocalDB] Migrated: inserted default setting ${k}=${v}`);
+            changed = true;
+          }
+        }
+
         if (changed && isWeb && sqlite) {
           console.log('[LocalDB] Persisting migrations to WebStore...');
           await sqlite.saveToStore(DB_NAME);
@@ -532,72 +553,92 @@ async function _deleteIdbDirect() {
 }
 
 /**
- * Completely reset the database (drop and re-create all tables).
+ * Clear all IMAGE/FACE data but preserve app configuration (settings, users, albums).
+ * This is the standard "purge all" that should NOT wipe user preferences.
  */
 export async function clearDatabase() {
+  console.warn('[LocalDB] clearDatabase: deleting image/face data only (settings preserved)...');
   try {
-    console.warn('[LocalDB] Resetting database...');
-
-    if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
-
-    // 1. Close connections
-    if (_db) {
-      try {
-        const isOpen = (await _db.isDBOpen()).result;
-        if (isOpen) await _db.close();
-      } catch (e) { console.warn('[LocalDB] Error closing DB:', e); }
-    }
-    
-    try {
-      await sqlite.closeConnection(DB_NAME, false);
-    } catch (e) { /* ignore */ }
-    
-    _db = null;
-    resetInit();
-
-    // 2. Delete via plugin (preferred) with IndexedDB fallback for Safari
-    console.log(`[LocalDB] Deleting database file: ${DB_NAME}`);
-    try {
-      await CapacitorSQLite.deleteDatabase({ database: DB_NAME });
-    } catch (pluginErr) {
-      console.warn('[LocalDB] Plugin deleteDatabase failed, falling back to IDB direct:', pluginErr.message);
-      await _deleteIdbDirect();
-    }
-
-    // 3. Re-initialize with the schema
-    console.log('[LocalDB] Re-initializing fresh database...');
-    await getDB();
-
+    const db = await getDB();
+    // Delete data tables in dependency order; leave settings/users/albums intact
+    await db.execute(`
+      DELETE FROM face_embeddings;
+      DELETE FROM faces;
+      DELETE FROM image_tags;
+      DELETE FROM image_albums;
+      DELETE FROM images;
+      DELETE FROM people;
+    `);
+    await saveToStore().catch(() => {});
+    console.log('[LocalDB] clearDatabase done — settings table untouched.');
     return { ok: true };
   } catch (err) {
-    console.error('[LocalDB] Reset failed — attempting nuclear IDB delete:', err.message);
-    try {
-      await _deleteIdbDirect();
-      _db = null;
-      resetInit();
-      await getDB();
-      return { ok: true };
-    } catch (e2) {
-      console.error('[LocalDB] Nuclear reset also failed:', e2);
-      throw err;
-    }
+    console.error('[LocalDB] clearDatabase failed:', err.message);
+    throw err;
   }
 }
 
 /**
- * Destructive: Clears EVERYTHING. 
- * LocalStorage, IndexedDB (SQLite), and Service Worker caches.
+ * Nuclear option: delete the whole SQLite database file and recreate from schema.
+ * Loses ALL data including settings. Use only as last resort.
+ */
+export async function nuclearResetDatabase() {
+  console.warn('[LocalDB] NUCLEAR RESET: destroying entire SQLite DB file...');
+  if (!sqlite) sqlite = new SQLiteConnection(CapacitorSQLite);
+  if (_db) {
+    try { const open = (await _db.isDBOpen()).result; if (open) await _db.close(); } catch(e){}
+  }
+  try { await sqlite.closeConnection(DB_NAME, false); } catch(e){}
+  _db = null;
+  resetInit();
+  try {
+    await CapacitorSQLite.deleteDatabase({ database: DB_NAME });
+  } catch (pluginErr) {
+    console.warn('[LocalDB] Plugin deleteDatabase failed, using IDB direct:', pluginErr.message);
+    await _deleteIdbDirect();
+  }
+  await getDB();
+  console.log('[LocalDB] Nuclear reset done.');
+  return { ok: true };
+}
+
+/** localStorage keys that are app config (survive hard reset) vs transient data. */
+const _CONFIG_KEYS = [
+  'crisplens_sync_settings',   // thumb_size, maxItems, maxSizeMb
+  'db_mode',
+  'remote_url',
+  'crisp_server_presets',
+  'crisplens_locale',
+];
+
+/**
+ * Destructive: Clears all image/face data, SW caches, and transient localStorage.
+ * Preserves app configuration: settings table, and config localStorage keys.
  */
 export async function hardResetApp() {
-  console.warn('[LocalDB] HARD RESET requested. Purging all local data.');
-  
-  // 1. Clear database
+  console.warn('[LocalDB] HARD RESET requested. Purging image/face data and caches.');
+
+  // 1. Save config keys from localStorage before clearing
+  const savedConfig = {};
+  for (const key of _CONFIG_KEYS) {
+    const v = localStorage.getItem(key);
+    if (v !== null) savedConfig[key] = v;
+  }
+  console.log('[LocalDB] Preserving localStorage keys:', Object.keys(savedConfig));
+
+  // 2. Clear image/face data (settings table preserved inside clearDatabase)
   try {
     await clearDatabase();
   } catch (e) { console.error('[LocalDB] Could not clear SQLite during reset:', e); }
 
-  // 2. Clear LocalStorage
+  // 3. Clear LocalStorage (removes auth tokens, cache entries, etc.)
   localStorage.clear();
+
+  // 4. Restore preserved config keys
+  for (const [key, val] of Object.entries(savedConfig)) {
+    localStorage.setItem(key, val);
+  }
+  console.log('[LocalDB] Restored config keys to localStorage after clear.');
   
   // 3. Clear Caches
   if ('caches' in window) {

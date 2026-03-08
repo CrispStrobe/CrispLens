@@ -335,7 +335,27 @@
         isStandaloneBroken = true;
         standaloneError = e.message;
       }
+
+      // Load sync/offline settings from SQLite (authoritative in local mode)
+      try {
+        const s = await fetchSettings();
+        if (s?.sync) {
+          console.log('[SettingsView] Loaded sync settings from SQLite:', s.sync);
+          syncThumbSize  = s.sync.thumb_size  ?? syncThumbSize;
+          syncMaxItems   = s.sync.max_items   ?? syncMaxItems;
+          syncMaxSizeMb  = s.sync.max_size_mb ?? syncMaxSizeMb;
+          // Mirror to localStorage so SyncManager and reDetectFaces can read without async
+          saveSyncSettings({ thumbSize: syncThumbSize, maxItems: syncMaxItems, maxSizeMb: syncMaxSizeMb });
+          console.log(`[SettingsView] Sync settings applied: thumb_size=${syncThumbSize} max_items=${syncMaxItems} max_size_mb=${syncMaxSizeMb}`);
+        } else {
+          console.warn('[SettingsView] fetchSettings() returned no sync section — using localStorage values');
+        }
+      } catch (e) {
+        console.warn('[SettingsView] Could not load sync settings from SQLite:', e.message);
+      }
     }
+    // Allow reactive auto-save now that initial values are set
+    _syncSettingsReady = true;
   });
 
   // ── ONNX model download (for standalone/local mode) ─────────────────────
@@ -423,10 +443,13 @@
   }
 
   // ── Offline cache / sync ──────────────────────────────────────────────────
+  // Initial values from localStorage (fast, sync) — will be overwritten from
+  // SQLite on mount when in local mode (the authoritative store).
   const _syncCfg        = typeof window !== 'undefined' ? loadSyncSettings() : {};
   let syncMaxItems      = _syncCfg.maxItems  ?? 500;
   let syncMaxSizeMb     = _syncCfg.maxSizeMb ?? 500;
-  let syncThumbSize     = _syncCfg.thumbSize ?? 200;
+  let syncThumbSize     = _syncCfg.thumbSize ?? 600;  // default 600 matches SQLite default
+  let _syncSettingsReady = false;  // true after mount-time SQLite load
   let pendingPushCount  = 0;
   let pushing           = false;
   let pushMsg           = '';
@@ -435,9 +458,18 @@
   let syncMsg           = '';
   let syncStats         = null;
 
-  // Auto-save sync settings when sliders change
-  $: if (typeof window !== 'undefined') {
-    saveSyncSettings({ maxItems: syncMaxItems, maxSizeMb: syncMaxSizeMb, thumbSize: syncThumbSize });
+  // Auto-save sync settings when sliders change — but only after initial load
+  // to avoid overwriting SQLite values with stale localStorage defaults.
+  $: if (typeof window !== 'undefined' && _syncSettingsReady) {
+    const cfg = { maxItems: syncMaxItems, maxSizeMb: syncMaxSizeMb, thumbSize: syncThumbSize };
+    console.log('[SettingsView] sync settings changed — saving to localStorage + SQLite (local mode):', cfg);
+    saveSyncSettings(cfg);
+    if (dbMode === 'local') {
+      // Also persist to SQLite so values survive hard reset
+      saveSettings({ thumb_size: syncThumbSize, max_items: syncMaxItems, max_size_mb: syncMaxSizeMb })
+        .then(() => console.log('[SettingsView] sync settings saved to SQLite ✓'))
+        .catch(e => console.warn('[SettingsView] SQLite save for sync settings failed:', e.message));
+    }
   }
 
   async function loadSyncStats() {
