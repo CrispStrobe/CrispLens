@@ -551,22 +551,16 @@
     running = false; finished = true;
     console.log('[ProcessView] startWebLocalInfer() finished');
     
-    // Release models after a short delay if no more items are added
-    // This is CRITICAL for Android to avoid being killed by the OS for high RAM usage.
-    setTimeout(async () => {
-      if (!running && finished) {
-        try {
-          const e = await _getWebEngine();
-          if (e && typeof e.releaseModels === 'function') {
-            await e.releaseModels();
-          } else {
-            console.warn('[ProcessView] Could not release models: engine instance or method missing', e);
-          }
-        } catch (err) {
-          console.error('[ProcessView] Error during idle model release:', err);
-        }
-      }
-    }, 5000);
+    // Release ONNX models immediately after batch — they hold ~200 MB of WASM heap.
+    // Keeping them alive for even a few seconds after the batch risks an OOM kill
+    // on mobile and browser tabs. Re-loading on the next batch takes ~2-3 s and is
+    // preferable to crashing.
+    try {
+      const e = await _getWebEngine();
+      if (e && typeof e.releaseModels === 'function') await e.releaseModels();
+    } catch (err) {
+      console.warn('[ProcessView] Error releasing models after batch:', err);
+    }
 
     refreshGlobalData();
   }

@@ -302,37 +302,28 @@ const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];
 function _snapSize(size) {
   return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
 }
+// In standalone browser mode, images can only be displayed from their stored
+// thumbnail_blob (base64 JPEG in SQLite). File paths are not browser-accessible
+// so toWebUrl() cannot work — returning '' lets the UI show a placeholder.
+// On native Capacitor (iOS/Android), toWebUrl() converts to a file:// URL that
+// WKWebView/WebView can load.
+function _localImgUrl(id) {
+  const b64 = thumbCache.get(String(id));
+  if (b64) return b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
+  if (Capacitor.isNativePlatform()) return toWebUrl(fileCache.get(String(id)) || '');
+  return ''; // browser-only standalone: no accessible file path
+}
+
 export function thumbnailUrl(id, size = 200) {
-  if (_localMode) {
-    const b64 = thumbCache.get(String(id));
-    if (b64) {
-      if (b64.startsWith('data:')) return b64;
-      return `data:image/jpeg;base64,${b64}`;
-    }
-    return toWebUrl(fileCache.get(String(id)) || '');
-  }
+  if (_localMode) return _localImgUrl(id);
   return `${BASE}/images/${id}/thumbnail?size=${_snapSize(size)}`;
 }
 export function previewUrl(id) {
-  if (_localMode) {
-    const b64 = thumbCache.get(String(id));
-    if (b64) {
-      if (b64.startsWith('data:')) return b64;
-      return `data:image/jpeg;base64,${b64}`;
-    }
-    return toWebUrl(fileCache.get(String(id)) || '');
-  }
+  if (_localMode) return _localImgUrl(id);
   return `${BASE}/images/${id}/preview`;
 }
 export function fullUrl(id) {
-  if (_localMode) {
-    const b64 = thumbCache.get(String(id));
-    if (b64) {
-      if (b64.startsWith('data:')) return b64;
-      return `data:image/jpeg;base64,${b64}`;
-    }
-    return toWebUrl(fileCache.get(String(id)) || '');
-  }
+  if (_localMode) return _localImgUrl(id);
   return `${BASE}/images/${id}/full`;
 }
 export function downloadUrl(id) { return `${BASE}/images/${id}/download`; }

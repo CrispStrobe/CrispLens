@@ -285,6 +285,7 @@
                   loading="lazy"
                   width={$thumbSize}
                   height={$thumbSize}
+                  on:error={e => { e.target.style.visibility='hidden'; }}
                 />
                 {#if img.face_count > 0}
                   <span class="face-badge">{img.face_count}</span>

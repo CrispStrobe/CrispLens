@@ -1,4 +1,4 @@
-/* FACE_ENGINE_WEB_VERSION: v4.0.260308.1800 */
+/* FACE_ENGINE_WEB_VERSION: v4.0.260308.2200 */
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web WASM paths
@@ -266,74 +266,98 @@ export class FaceEngineWeb {
       file=new File([u], 'image.jpg', {type:m});
     }
     const img=await this._loadImage(file);
-    const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
-    await this._initDetector();
-    const { canvas, invScale }=this._letterbox(img);
-    const it=new ort.Tensor('float32', new Float32Array(3*SCRFD_SIZE*SCRFD_SIZE), [1,3,SCRFD_SIZE,SCRFD_SIZE]);
-    const ctx=canvas.getContext('2d'), px=SCRFD_SIZE*SCRFD_SIZE, rgba=ctx.getImageData(0,0,SCRFD_SIZE,SCRFD_SIZE).data;
-    for(let i=0;i<px;i++){ it.data[i]=(rgba[i*4]-127.5)/128; it.data[i+px]=(rgba[i*4+1]-127.5)/128; it.data[i+px*2]=(rgba[i*4+2]-127.5)/128; }
-    
-    const detRes=await this._run(this._detSession, this._detEp, { [this._detSession.inputNames[0]]: it });
-    let faces=decodeSCRFD(detRes, this._detSession.outputNames, invScale, opts.det_thresh||0.5);
-    for(const t of Object.values(detRes)) t.dispose?.();
-    it.dispose(); faces=applyNMS(faces);
-
-    await this._initRecognizer();
-    const facePayloads=[];
-    for(const f of faces){
-      const {a,b,tx,ty}=similarityTransform(f.landmarks, ARC_DST);
-      const fc=new OffscreenCanvas(ARCFACE_SIZE, ARCFACE_SIZE);
-      const fctx=fc.getContext('2d'); fctx.setTransform(a,b,-b,a,tx,ty); fctx.drawImage(img,0,0);
-      const fit=new ort.Tensor('float32', new Float32Array(3*ARCFACE_SIZE*ARCFACE_SIZE), [1,3,ARCFACE_SIZE,ARCFACE_SIZE]);
-      const frgba=fctx.getImageData(0,0,ARCFACE_SIZE,ARCFACE_SIZE).data, sp=ARCFACE_SIZE*ARCFACE_SIZE;
-      for(let i=0;i<sp;i++){ fit.data[i]=(frgba[i*4+2]-127.5)/128; fit.data[i+sp]=(frgba[i*4+1]-127.5)/128; fit.data[i+sp*2]=(frgba[i*4]-127.5)/128; }
-      const recRes=await this._run(this._recSession, this._recEp, { [this._recSession.inputNames[0]]: fit });
-      const emb=l2normalize(Array.from(recRes[this._recSession.outputNames[0]].data));
-      for(const t of Object.values(recRes)) t.dispose?.(); fit.dispose();
-      facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length });
-    }
-    
-    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))).map(b=>b.toString(16).padStart(2,'0')).join('');
-
-    // Thumbnail — generate a resized JPEG and return as raw base64 (no data: prefix).
-    const thumbSize = opts.thumb_size || 200;
-    let thumbnail_b64 = '';
+    // Always revoke the blob URL when done, even on error.
+    const imgBlobUrl = img.src.startsWith('blob:') ? img.src : null;
     try {
-      const scale = Math.min(thumbSize / W, thumbSize / H, 1);
-      const tw = Math.round(W * scale), th = Math.round(H * scale);
-      const tc = new OffscreenCanvas(tw, th);
-      tc.getContext('2d').drawImage(img, 0, 0, tw, th);
-      const tb = await tc.convertToBlob({ type: 'image/jpeg', quality: 0.75 });
-      thumbnail_b64 = await new Promise(res => {
-        const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(tb);
-      });
-    } catch(e) { console.warn('[FaceEngineWeb] thumbnail generation failed:', e.message); }
+      const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
 
-    // VLM enrichment — call cloud provider if enabled and keys are present.
-    let description = null, scene_type = null, tags = [];
-    if (opts.vlm_enabled && opts.vlm_provider && opts.vlm_keys?.[opts.vlm_provider]) {
-      try {
-        const vlmMod = await import('./VlmWeb.js');
-        const vlmClient = vlmMod.vlmClientWeb ?? vlmMod.default;
-        vlmClient.setKeys(opts.vlm_keys);
-        const result = await vlmClient.enrichImage(
-          file, opts.vlm_provider, opts.vlm_model || '',
-          opts.vlm_prompt || 'Describe this image concisely. Include: main subjects, setting, mood, notable details.',
-          opts.vlm_max_size || 1024,
-        );
-        description = result.description || null;
-        scene_type  = result.scene_type  || null;
-        tags        = result.tags        || [];
-        console.log(`[FaceEngineWeb] VLM enrichment OK | provider=${opts.vlm_provider} | chars=${description?.length||0}`);
-      } catch(e) {
-        console.warn(`[FaceEngineWeb] VLM enrichment failed (${opts.vlm_provider}):`, e.message);
+      // ── Detection ─────────────────────────────────────────────────────────
+      await this._initDetector();
+      let faces;
+      {
+        // Scoped block so canvas + pixel data are eligible for GC before recognition.
+        const { canvas, invScale }=this._letterbox(img);
+        const ctx=canvas.getContext('2d'), px=SCRFD_SIZE*SCRFD_SIZE;
+        const rgba=ctx.getImageData(0,0,SCRFD_SIZE,SCRFD_SIZE).data;
+        const it=new ort.Tensor('float32', new Float32Array(3*px), [1,3,SCRFD_SIZE,SCRFD_SIZE]);
+        for(let i=0;i<px;i++){ it.data[i]=(rgba[i*4]-127.5)/128; it.data[i+px]=(rgba[i*4+1]-127.5)/128; it.data[i+px*2]=(rgba[i*4+2]-127.5)/128; }
+        const detRes=await this._run(this._detSession, this._detEp, { [this._detSession.inputNames[0]]: it });
+        faces=decodeSCRFD(detRes, this._detSession.outputNames, invScale, opts.det_thresh||0.5);
+        for(const t of Object.values(detRes)) t.dispose?.();
+        it.dispose();
+        // canvas, ctx, rgba go out of scope here → GC-eligible
       }
-    }
+      faces=applyNMS(faces);
 
-    if(img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-    return { local_path:file.name, filename:file.name, width:W, height:H, file_size:file.size,
-             file_hash:hash, thumbnail_b64, faces:facePayloads,
-             description, scene_type, tags };
+      // ── Recognition ───────────────────────────────────────────────────────
+      await this._initRecognizer();
+      const facePayloads=[];
+      for(const f of faces){
+        const {a,b,tx,ty}=similarityTransform(f.landmarks, ARC_DST);
+        let emb;
+        {
+          // Scoped block so the face crop canvas is GC-eligible after each face.
+          const fc=new OffscreenCanvas(ARCFACE_SIZE, ARCFACE_SIZE);
+          const fctx=fc.getContext('2d'); fctx.setTransform(a,b,-b,a,tx,ty); fctx.drawImage(img,0,0);
+          const sp=ARCFACE_SIZE*ARCFACE_SIZE;
+          const frgba=fctx.getImageData(0,0,ARCFACE_SIZE,ARCFACE_SIZE).data;
+          const fit=new ort.Tensor('float32', new Float32Array(3*sp), [1,3,ARCFACE_SIZE,ARCFACE_SIZE]);
+          for(let i=0;i<sp;i++){ fit.data[i]=(frgba[i*4+2]-127.5)/128; fit.data[i+sp]=(frgba[i*4+1]-127.5)/128; fit.data[i+sp*2]=(frgba[i*4]-127.5)/128; }
+          const recRes=await this._run(this._recSession, this._recEp, { [this._recSession.inputNames[0]]: fit });
+          emb=l2normalize(Array.from(recRes[this._recSession.outputNames[0]].data));
+          for(const t of Object.values(recRes)) t.dispose?.(); fit.dispose();
+          // fc, fctx, frgba go out of scope here
+        }
+        facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length });
+      }
+
+      // ── Thumbnail (generate before SHA-256 to avoid holding two large buffers) ──
+      const thumbSize = opts.thumb_size || 200;
+      let thumbnail_b64 = '';
+      try {
+        const scale = Math.min(thumbSize / W, thumbSize / H, 1);
+        const tw = Math.round(W * scale), th = Math.round(H * scale);
+        const tc = new OffscreenCanvas(tw, th);
+        tc.getContext('2d').drawImage(img, 0, 0, tw, th);
+        const tb = await tc.convertToBlob({ type: 'image/jpeg', quality: 0.75 });
+        thumbnail_b64 = await new Promise(res => {
+          const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(tb);
+        });
+        // tc, tb go out of scope
+      } catch(e) { console.warn('[FaceEngineWeb] thumbnail generation failed:', e.message); }
+
+      // ── SHA-256 hash (read file once; done after all large in-memory work) ──
+      const hash=Array.from(new Uint8Array(
+        await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+      )).map(b=>b.toString(16).padStart(2,'0')).join('');
+
+      // ── VLM enrichment ────────────────────────────────────────────────────
+      let description = null, scene_type = null, tags = [];
+      if (opts.vlm_enabled && opts.vlm_provider && opts.vlm_keys?.[opts.vlm_provider]) {
+        try {
+          const vlmMod = await import('./VlmWeb.js');
+          const vlmClient = vlmMod.vlmClientWeb ?? vlmMod.default;
+          vlmClient.setKeys(opts.vlm_keys);
+          const result = await vlmClient.enrichImage(
+            file, opts.vlm_provider, opts.vlm_model || '',
+            opts.vlm_prompt || 'Describe this image concisely. Include: main subjects, setting, mood, notable details.',
+            opts.vlm_max_size || 1024,
+          );
+          description = result.description || null;
+          scene_type  = result.scene_type  || null;
+          tags        = result.tags        || [];
+        } catch(e) {
+          console.warn(`[FaceEngineWeb] VLM enrichment failed (${opts.vlm_provider}):`, e.message);
+        }
+      }
+
+      return { local_path:file.name, filename:file.name, width:W, height:H, file_size:file.size,
+               file_hash:hash, thumbnail_b64, faces:facePayloads,
+               description, scene_type, tags };
+    } finally {
+      // Always revoke the blob URL so the browser can free the decoded image memory.
+      if (imgBlobUrl) URL.revokeObjectURL(imgBlobUrl);
+    }
   }
 
   async runInferenceBenchmark(file, progressCallback) {
