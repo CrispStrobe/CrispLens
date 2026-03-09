@@ -213,6 +213,16 @@
 
   $: imageUrl = previewUrl(imageId);
 
+  // Sequential number for each unidentified face (no person_name assigned)
+  $: unidentifiedIdx = (() => {
+    const map = {};
+    let n = 0;
+    for (const f of faces) {
+      if (!f.person_name) map[f.face_id] = ++n;
+    }
+    return map;
+  })();
+
   async function loadFaces() {
     loading = true;
     try {
@@ -660,6 +670,8 @@
                 </div>
                 {#if face.person_name && !names[face.face_id]}
                   <div class="current-person" style="color:{color}">{face.person_name}</div>
+                {:else if !face.person_name && !names[face.face_id]}
+                  <div class="current-person unidentified">? {$t('unidentified')} ({unidentifiedIdx[face.face_id]})</div>
                 {/if}
                 <div class="input-row">
                   <input
@@ -957,6 +969,7 @@
   .remove-face-btn { background: transparent; color: #505070; border: none; font-size: 10px; cursor: pointer; padding: 0 4px; }
   .remove-face-btn:hover { color: #ff6060; }
   .current-person { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  .current-person.unidentified { color: #806040; font-weight: 400; font-style: italic; }
   .input-row { display: flex; gap: 5px; margin-bottom: 4px; }
   .name-input {
     flex: 1;

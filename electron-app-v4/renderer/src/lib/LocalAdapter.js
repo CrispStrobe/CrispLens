@@ -274,6 +274,20 @@ function _csvToFloat32(str) {
 
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
+/**
+ * If a description was accidentally stored as a raw JSON string (VLM parse fallback bug),
+ * extract just the .description text from it.
+ */
+function _unwrapDescription(val) {
+  if (!val || typeof val !== 'string') return val;
+  const t = val.trim();
+  if (!t.startsWith('{')) return val;
+  try {
+    const obj = JSON.parse(t);
+    if (typeof obj.description === 'string') return obj.description;
+  } catch { /* not JSON — return as-is */ }
+  return val;
+}
 
 /** Insert faces + tags + embeddings for an already-existing image row. Returns importProcessed result shape. */
 async function _insertFacesForImage(imageId, faces, tags, description, scene_type, thumbnail_b64) {
@@ -781,7 +795,7 @@ export const localAdapter = {
       // Map to UI-compatible objects
       const images = rows.map(r => ({
         ...r,
-        ai_description:  r.description,
+        ai_description:  _unwrapDescription(r.description),
         ai_scene_type:   r.scene_type,
         ai_tags_list:    r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
         origin_path:     r.local_path || r.filepath,
@@ -826,7 +840,7 @@ export const localAdapter = {
       `, [id]);
       const img = {
         ...r,
-        ai_description:  r.description,
+        ai_description:  _unwrapDescription(r.description),
         ai_scene_type:   r.scene_type,
         ai_tags_list:    r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
         origin_path:     r.local_path || r.filepath,
@@ -1187,6 +1201,8 @@ export const localAdapter = {
     // FaceEngineWeb already returns a hash-based 'browser:...' path; other callers may pass
     // bare filenames or native paths which are fine.
     const safeFilepath = (filepath && !filepath.startsWith('blob:')) ? filepath : (filename || fname);
+    // Unwrap description if it was accidentally stored as a raw JSON string (VLM parse fallback)
+    description = _unwrapDescription(description);
 
     console.log(`[LocalAdapter] importProcessed: ${fname} | filepath=${safeFilepath} | local_path=${local_path || '—'} | hash=${file_hash ? file_hash.slice(0,12)+'…' : '—'} | dims=${width}x${height} | dup_mode=${duplicate_mode}`);
     console.log(`[LocalAdapter] VLM results:`, { description: (description || '').slice(0, 50) + '...', scene_type, tagsCount: tags?.length });

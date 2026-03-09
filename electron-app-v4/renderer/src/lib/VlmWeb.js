@@ -445,15 +445,29 @@ export class VlmClientWeb {
             tags:        Array.isArray(parsed.tags) ? parsed.tags : []
           };
         } catch (inner) {
-          console.warn('[VlmWeb] inner JSON.parse failed:', inner.message);
+          console.warn('[VlmWeb] inner JSON.parse failed:', inner.message, '— trying regex extraction');
+          // Regex fallback: extract individual fields even from malformed JSON
+          const descMatch = clean.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          if (descMatch) {
+            const sceneMatch = clean.match(/"scene_type"\s*:\s*"([^"]+)"/);
+            const tagsMatch  = clean.match(/"tags"\s*:\s*\[([^\]]*)\]/);
+            const tags = tagsMatch
+              ? (tagsMatch[1].match(/"([^"]+)"/g) ?? []).map(s => s.replace(/"/g, ''))
+              : [];
+            return {
+              description: descMatch[1].replace(/\\"/g, '"').replace(/\\n/g, ' '),
+              scene_type:  sceneMatch?.[1] || 'unknown',
+              tags,
+            };
+          }
         }
       }
-      
-      // Fallback: return raw text as description if it doesn't look like JSON or parse failed
-      return { 
-        description: textStr.slice(0, 1000), 
-        scene_type: 'unknown', 
-        tags: [] 
+
+      // Last-resort fallback: return raw text as description
+      return {
+        description: textStr.slice(0, 1000),
+        scene_type: 'unknown',
+        tags: []
       };
     } catch (e) {
       console.warn('[VlmWeb] _parseJson critical failure:', e.message);
