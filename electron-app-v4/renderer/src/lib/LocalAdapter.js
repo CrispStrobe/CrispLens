@@ -965,15 +965,21 @@ export const localAdapter = {
         console.error('[LocalAdapter] CRITICAL: VLM was enabled but NO DESCRIPTION was returned in faceData!');
       }
 
-      // 5. Update the database
-      // First clear old detections if requested (standard server behavior)
-      await this.clearDetections(imageId);
-
-      // Re-import (this will update description/scene_type and add new faces)
+      // 5. Update the database — use overwrite mode so importProcessed
+      // properly cascade-deletes old face_embeddings+faces then re-inserts.
+      // Preserve original image dimensions and file_hash from the DB row
+      // (faceData was computed from the thumbnail which has different dims/hash).
       const result = await this.importProcessed({
         ...faceData,
-        filepath: imgRow.filepath, // use existing filepath to match record
-        filename: imgRow.filename
+        filepath:        imgRow.filepath,
+        filename:        imgRow.filename,
+        width:           imgRow.width  || faceData.width,
+        height:          imgRow.height || faceData.height,
+        file_hash:       imgRow.file_hash ?? faceData.file_hash,
+        // Preserve existing VLM data if this re-run didn't produce new data
+        description:     faceData.description ?? imgRow.description ?? null,
+        scene_type:      faceData.scene_type  ?? imgRow.scene_type  ?? null,
+        duplicate_mode:  'overwrite',
       });
 
       console.log(`[LocalAdapter] reDetectFaces COMPLETE for imageId=${imageId}`);
