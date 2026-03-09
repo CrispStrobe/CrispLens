@@ -220,11 +220,12 @@ export class VlmClientWeb {
    */
   async enrichImage(image, provider, model, prompt, maxDimension = 0) {
     console.error(`[VlmWeb] enrichImage START | provider=${provider} | model=${model || 'default'}`);
-    const key = this.keys[provider];
+    const key = (this.keys[provider] || '').trim();
     if (!key) {
       console.error(`[VlmWeb] Missing API key for provider: ${provider}. Available keys for: ${Object.keys(this.keys).join(', ')}`);
       throw new Error(`API key for ${provider} not found. Please add it in Settings.`);
     }
+    console.log(`[VlmWeb] key length=${key.length} prefix=${key.substring(0, 4)}***`);
 
     let base64;
     
@@ -291,11 +292,12 @@ export class VlmClientWeb {
   }
 
   async _callAnthropic(key, model, base64, prompt) {
-    console.log(`[VlmWeb] Calling Anthropic API | model=${model} | prompt="${prompt.slice(0, 30)}..."`);
+    const trimmedKey = key.trim();
+    console.log(`[VlmWeb] Calling Anthropic API | model=${model} | keyLen=${trimmedKey.length}`);
     const res = await crossFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': key,
+        'x-api-key': trimmedKey,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
         'dangerously-allow-browser': 'true'
@@ -328,8 +330,10 @@ export class VlmClientWeb {
 
   async _callOpenAICompatible(provider, key, model, base64, prompt) {
     const baseUrl = OPENAI_COMPATIBLE[provider];
-    console.error(`[VlmWeb] Calling OpenAI-compatible API | provider=${provider} | baseUrl=${baseUrl} | model=${model}`);
-    
+    const trimmedKey = key.trim();
+    console.error(`[VlmWeb] Calling OpenAI-compatible API | provider=${provider} | baseUrl=${baseUrl} | model=${model} | keyLen=${trimmedKey.length}`);
+    if (!trimmedKey) throw new Error(`API key for ${provider} is empty`);
+
     const body = {
       model,
       messages: [{
@@ -345,12 +349,19 @@ export class VlmClientWeb {
       body.response_format = { type: "json_object" };
     }
 
+    const headers = {
+      'Authorization': `Bearer ${trimmedKey}`,
+      'Content-Type': 'application/json',
+    };
+    // OpenRouter recommends these headers for browser clients
+    if (provider === 'openrouter') {
+      headers['HTTP-Referer'] = (typeof window !== 'undefined' && window.location?.origin) || 'https://crisplens.app';
+      headers['X-Title'] = 'CrispLens';
+    }
+
     const res = await crossFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(body)
     });
     
@@ -377,8 +388,9 @@ export class VlmClientWeb {
   }
 
   async _callGemini(key, model, base64, prompt) {
-    console.log(`[VlmWeb] Calling Gemini API | model=${model}`);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    const trimmedKey = key.trim();
+    console.log(`[VlmWeb] Calling Gemini API | model=${model} | keyLen=${trimmedKey.length}`);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${trimmedKey}`;
     const res = await crossFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

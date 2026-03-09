@@ -547,7 +547,9 @@ export const localAdapter = {
   },
 
   async saveApiKey(provider, value) {
-    await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`vlm_key_${provider}`, value]);
+    const trimmed = (value || '').trim();
+    if (!trimmed) throw new Error(`Key for ${provider} is empty`);
+    await run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [`vlm_key_${provider}`, trimmed]);
     return { ok: true };
   },
 
