@@ -212,6 +212,14 @@ const EN = {
   ort_use_cuda_hint:          'Requires CUDA toolkit + onnxruntime-node GPU build.',
   ort_use_directml:           'DirectML (Windows GPU)',
   ort_use_directml_hint:      'Hardware acceleration on Windows for AMD/NVIDIA/Intel GPUs.',
+  ort_recommended:            'Recommended for this platform',
+  ort_no_accel_available:     'No platform-specific acceleration available (WASM CPU only).',
+  // Detector status messages (engine status panel)
+  settings_detectors:         'Detectors',
+  det_model_not_downloaded:   'model not yet downloaded',
+  det_lib_missing:            'library missing',
+  det_not_loaded:             'not loaded',
+  det_model_corrupt:          'model corrupt',
   // Generate / BFL
   gen_seed_random: 'random',
   // Misc
@@ -517,6 +525,11 @@ const EN = {
   pv_vlm_tags_received:      'VLM tags received',
   pv_faces_identified:       'Faces identified',
   pv_matched_in_index:       'Matched in index',
+  pv_dup_mode_label:         'Duplicates',
+  pv_dup_mode_skip:          'Skip (don\'t re-process)',
+  pv_dup_mode_overwrite:     'Overwrite (re-process, keep same row)',
+  pv_dup_mode_add:           'Always add (ignore duplicates)',
+  pv_dup_skipped:            'skipped (duplicate)',
 
   // Standalone / Storage mode
   settings_storage_mode:     'Storage Mode',
@@ -774,6 +787,13 @@ export const TRANSLATIONS = {
     ort_use_cuda_hint:          'Erfordert CUDA Toolkit + GPU-Build von onnxruntime-node.',
     ort_use_directml:           'DirectML (Windows GPU)',
     ort_use_directml_hint:      'Hardware-Beschleunigung unter Windows für AMD/NVIDIA/Intel.',
+    ort_recommended:            'Empfohlen für diese Plattform',
+    ort_no_accel_available:     'Keine plattformspezifische Beschleunigung verfügbar (WASM-CPU).',
+    settings_detectors:         'Detektoren',
+    det_model_not_downloaded:   'Modell noch nicht heruntergeladen',
+    det_lib_missing:            'Bibliothek fehlt',
+    det_not_loaded:             'nicht geladen',
+    det_model_corrupt:          'Modell beschädigt',
     // Generate / BFL
     gen_seed_random: 'zufällig',
     // Misc
@@ -1079,6 +1099,11 @@ export const TRANSLATIONS = {
     pv_vlm_tags_received:      'VLM-Tags empfangen',
     pv_faces_identified:       'Gesichter identifiziert',
     pv_matched_in_index:       'Im Index gefunden',
+    pv_dup_mode_label:         'Duplikate',
+    pv_dup_mode_skip:          'Überspringen (nicht neu verarbeiten)',
+    pv_dup_mode_overwrite:     'Überschreiben (neu verarbeiten, gleiche Zeile)',
+    pv_dup_mode_add:           'Immer hinzufügen (Duplikate ignorieren)',
+    pv_dup_skipped:            'übersprungen (Duplikat)',
 
     // Standalone / Storage mode
     settings_storage_mode:     'Speichermodus',

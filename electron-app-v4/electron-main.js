@@ -22,6 +22,7 @@ const path = require('path');
 const fs   = require('fs');
 const os   = require('os');
 const http = require('http');
+const net  = require('net');
 
 // ── localfile:// protocol — serve arbitrary local paths with auth ─────────────
 protocol.registerSchemesAsPrivileged([
@@ -33,7 +34,22 @@ protocol.registerSchemesAsPrivileged([
 const IS_DEV  = process.env.ELECTRON_DEV === '1' || process.env.NODE_ENV === 'development';
 const IS_MAC  = process.platform === 'darwin';
 const IS_WIN  = process.platform === 'win32';
-const PORT    = parseInt(process.env.PORT || '7861', 10);
+const PORT_PREF = parseInt(process.env.PORT || '7861', 10);  // preferred port; may be bumped
+let   PORT    = PORT_PREF;  // actual port used — resolved by findFreePort() before server start
+
+/** Find the first free TCP port starting at `start`. Tries up to 20 candidates. */
+function findFreePort(start) {
+  return new Promise((resolve, reject) => {
+    const try_ = (p) => {
+      if (p > start + 20) return reject(new Error(`No free port found in range ${start}–${start + 20}`));
+      const s = net.createServer();
+      s.once('error', () => try_(p + 1));
+      s.once('listening', () => s.close(() => resolve(p)));
+      s.listen(p, '127.0.0.1');
+    };
+    try_(start);
+  });
+}
 const VITE_URL = `http://localhost:5173`;
 
 // Always enable debug logs in main/server for better visibility
@@ -316,8 +332,19 @@ app.whenReady().then(async () => {
   } else {
     // ── Local mode: start Express in-process ─────────────────────────────────
     createTray();
+
+    // Resolve a free port before starting (avoids silent failure when 7861 is taken)
+    try {
+      PORT = await findFreePort(PORT_PREF);
+      if (PORT !== PORT_PREF) console.log(`[main] Port ${PORT_PREF} in use, using ${PORT} instead`);
+    } catch (err) {
+      dialog.showErrorBox('CrispLens', `Could not find a free port:\n${err.message}`);
+      app.quit();
+      return;
+    }
+
     const dbPath = resolveDbPath();
-    console.log(`[main] Starting Express server, DB: ${dbPath}`);
+    console.log(`[main] Starting Express server on port ${PORT}, DB: ${dbPath}`);
 
     try {
       await startServer(dbPath);

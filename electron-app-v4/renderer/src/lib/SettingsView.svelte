@@ -1832,21 +1832,34 @@
       <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:4px;">{$t('ort_server_section')}</div>
       <p class="hint" style="margin-bottom:10px;">{$t('ort_server_hint')}</p>
       <div class="form-grid">
+        {#if isAppleSiliconClient}
+        <!-- CoreML: macOS only -->
         <label title={$t('ort_use_coreml_hint')}>{$t('ort_use_coreml')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseCoreML} />
-          <span class="hint">{$t('ort_use_coreml_hint')}</span>{#if isAppleSiliconClient}<span class="recommendation" style="color:#50c878; font-size:10px; margin-left:8px;">★ Recommended for this platform</span>{/if}
+          <span class="hint">{$t('ort_use_coreml_hint')}</span>
+          <span style="color:#50c878; font-size:10px; margin-left:8px;">★ {$t('ort_recommended')}</span>
         </div>
+        {/if}
+        {#if isWindowsClient || isLinuxClient}
+        <!-- CUDA: Windows / Linux only -->
         <label title={$t('ort_use_cuda_hint')}>{$t('ort_use_cuda')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseCUDA} />
-          <span class="hint">{$t('ort_use_cuda_hint')}</span>{#if isLinuxClient || isWindowsClient}<span class="recommendation" style="color:#8090b0; font-size:10px; margin-left:8px;">★ Recommended if NVIDIA GPU present</span>{/if}
+          <span class="hint">{$t('ort_use_cuda_hint')}</span>
         </div>
+        {/if}
+        {#if isWindowsClient}
+        <!-- DirectML: Windows only -->
         <label title={$t('ort_use_directml_hint')}>{$t('ort_use_directml')}</label>
         <div class="field-row">
           <input type="checkbox" bind:checked={ortUseDirectML} />
-          <span class="hint">{$t('ort_use_directml_hint')}</span>{#if isWindowsClient}<span class="recommendation" style="color:#8090b0; font-size:10px; margin-left:8px;">★ Recommended for AMD/Intel GPUs</span>{/if}
+          <span class="hint">{$t('ort_use_directml_hint')}</span>
         </div>
+        {/if}
+        {#if !isAppleSiliconClient && !isWindowsClient && !isLinuxClient}
+        <span class="hint" style="grid-column:1/-1;">{$t('ort_no_accel_available')}</span>
+        {/if}
       </div>
     </div>
   </section>
@@ -2168,7 +2181,7 @@
 
     {#if engineStatus.detectors}
     <div style="margin-top:10px;">
-      <div class="hint" style="margin-bottom:4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Detectors</div>
+      <div class="hint" style="margin-bottom:4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;">{$t('settings_detectors') || 'Detectors'}</div>
       <div class="detector-grid">
         {#each Object.entries(engineStatus.detectors) as [name, d]}
           {@const ok = d.available && (d.ready ?? (d.model_ok ?? d.model_exists ?? true))}
@@ -2176,13 +2189,13 @@
             <span class="det-name">{name}</span>
             <span class:ok={ok} class:error-badge={!ok}>
               {#if !d.available}
-                ✗ lib missing
+                ✗ {$t('det_lib_missing')}
               {:else if d.ready !== undefined && !d.ready}
-                ✗ not loaded
+                ✗ {$t('det_not_loaded')}
               {:else if d.model_ok === false}
-                ✗ model corrupt
+                ✗ {$t('det_model_corrupt')}
               {:else if d.model_exists === false}
-                ⚠ model not yet downloaded
+                ⚠ {$t('det_model_not_downloaded')}
               {:else}
                 ✓
               {/if}

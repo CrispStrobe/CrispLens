@@ -15,6 +15,17 @@
   // Capacitor/mobile: window.Capacitor is injected by the Capacitor runtime
   const isMobile = typeof window !== 'undefined' && !!window.Capacitor;
 
+  // Pre-import Camera plugin eagerly to avoid the 2-click bug on iOS.
+  // On first click Capacitor needs the plugin already loaded; dynamic import on click
+  // causes the first tap to just resolve the import without opening the picker.
+  let _CameraPlugin = null;
+  if (isMobile) {
+    import('@capacitor/camera').then(m => {
+      _CameraPlugin = m.Camera;
+      console.log('[ProcessView] @capacitor/camera pre-loaded');
+    }).catch(() => {});
+  }
+
   // ── Web / mobile local inference ───────────────────────────────────────────
   // When enabled, files are processed locally (onnxruntime-web + Canvas) and
   // only 512D vectors + thumbnail are posted to the server (import-processed).
@@ -33,6 +44,15 @@
 
   const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm']);
   function isImage(name) { return IMAGE_EXTS.has(name.slice(name.lastIndexOf('.')).toLowerCase()); }
+
+  /** Compute SHA-256 hash of a File object. Returns hex string or null on failure. */
+  async function _computeFileHash(file) {
+    try {
+      const buf = await file.arrayBuffer();
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch { return null; }
+  }
 
   // ── Queue ──────────────────────────────────────────────────────────────────
   // Each item: { id, path, name, file, status: 'pending'|'processing'|'done'|'error'|'queued',
@@ -141,12 +161,15 @@
 
   /** Pick photos from the iOS/Android photo library via @capacitor/camera. */
   async function pickPhotosFromLibrary() {
-    let Camera;
-    try {
-      ({ Camera } = await import('@capacitor/camera'));
-    } catch {
-      // Fallback if Camera plugin not available
-      document.getElementById('pv-file-input')?.click();
+    // Use pre-imported plugin (avoids 2-click bug on iOS where first tap just
+    // loads the dynamic import without actually opening the photo picker).
+    const Camera = _CameraPlugin ?? (await import('@capacitor/camera').then(m => {
+      _CameraPlugin = m.Camera;
+      return m.Camera;
+    }).catch(() => null));
+
+    if (!Camera) {
+      fileInput?.click();
       return;
     }
     try {
@@ -154,19 +177,25 @@
       if (!result.photos?.length) return;
       const newItems = result.photos
         .filter(p => {
-          // Avoid duplicates — match on native path or webPath
           const key = p.path || p.webPath;
           return !queue.find(q => q.path === key || q.webPath === p.webPath);
         })
-        .map(p => ({
-          id: nextId++,
-          path: p.path || p.webPath,   // native path preferred (permanent)
-          webPath: p.webPath,           // Capacitor web URL for loading/inference
-          name: (p.path || p.webPath || 'photo').split('/').pop(),
-          file: null,                   // resolved at inference time via fetch(webPath)
-          status: 'pending',
-          imageId: null, faces: 0, people: [], sceneType: '', description: '', error: '',
-        }));
+        .map(p => {
+          // Extract original filename from native path (permanent) or webPath
+          const originPath = p.path || '';  // e.g. /var/mobile/Media/DCIM/100APPLE/IMG_0042.HEIC
+          const originName = originPath
+            ? originPath.split('/').pop()
+            : (p.webPath || 'photo').split('/').pop();
+          return {
+            id: nextId++,
+            path: originPath || p.webPath,  // native path preferred — used as local_path
+            webPath: p.webPath,              // Capacitor URL — used only for loading/inference
+            name: originName,
+            file: null,
+            status: 'pending',
+            imageId: null, faces: 0, people: [], sceneType: '', description: '', error: '',
+          };
+        });
       queue = [...queue, ...newItems];
     } catch (e) {
       if (e.message !== 'User cancelled photos app') console.error('Camera picker error:', e);
@@ -379,6 +408,9 @@
   let queuedCount = 0;       // queued offline; will push on reconnect
   let skippedCount = 0;      // same-user duplicate (already uploaded by this user)
   let sharedDupCount = 0;    // cross-user shared duplicate (another user uploaded the same content)
+  let dupSkippedCount = 0;   // skipped due to duplicate_mode=skip
+  // duplicate_mode: 'skip' | 'overwrite' | 'always_add'
+  let duplicateMode = 'skip';
   let finished = false;
   let cancelled = false;
   let visibility = 'shared'; // 'shared' | 'private'
@@ -409,7 +441,7 @@
     }
     
     running = true; finished = false; cancelled = false;
-    errorCount = 0; queuedCount = 0; doneCount = 0; totalCount = pending.length;
+    errorCount = 0; queuedCount = 0; doneCount = 0; dupSkippedCount = 0; totalCount = pending.length;
 
     let engine;
     let vlmCfg = {};
@@ -482,12 +514,32 @@
       }
             queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
             try {
-              console.error(`[ProcessView] Running engine.processFile for ${item.name}...`);
-              
+              // ── Duplicate pre-check for 'skip' mode ────────────────────────
+              // Compute file hash cheaply before running expensive ONNX inference.
+              if (duplicateMode === 'skip' && localMode) {
+                const { localAdapter: la } = await import('./LocalAdapter.js');
+                const quickHash = await _computeFileHash(fileObj);
+                console.log(`[ProcessView] Pre-check hash for ${item.name}: ${quickHash?.slice(0,12)}…`);
+                if (quickHash) {
+                  const existing = await la.checkDuplicate(quickHash, null);
+                  if (existing) {
+                    console.log(`[ProcessView] Duplicate found (imageId=${existing}) — skipping ${item.name}`);
+                    dupSkippedCount++;
+                    queue = queue.map(q => q.id === item.id
+                      ? { ...q, status: 'skipped', msg: $t('pv_dup_skipped') }
+                      : q);
+                    doneCount++;
+                    continue;
+                  }
+                }
+              }
+
+              console.log(`[ProcessView] Running engine.processFile for ${item.name}...`);
+
               // VLM should run if the user hasn't checked 'Skip VLM' in the dialog.
               const vlmEnabledFinal = !detParams.skip_vlm;
-              console.error(`[ProcessView] VLM skip toggle value: ${detParams.skip_vlm}, vlmEnabledFinal: ${vlmEnabledFinal}, provider: ${vlmCfg.provider}`);
-              
+              console.log(`[ProcessView] VLM skip toggle value: ${detParams.skip_vlm}, vlmEnabledFinal: ${vlmEnabledFinal}, provider: ${vlmCfg.provider}`);
+
               const faceData = await engine.processFile(fileObj, {
                 det_thresh:    detParams.det_thresh,
                 min_face_size: detParams.min_face_size,
@@ -502,39 +554,48 @@
                 thumb_size:    thumb_size_final,
                 onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
               });
-              
-              console.error(`[ProcessView] processFile OK for ${item.name}. VLM description present: ${!!faceData.description}. Importing results...`);
+
+              console.log(`[ProcessView] processFile OK for ${item.name}. VLM description present: ${!!faceData.description}. Importing results...`);
               if (vlmEnabledFinal && !faceData.description) {
-                console.error('[ProcessView] CRITICAL: VLM was enabled but NO DESCRIPTION was returned!');
+                console.warn('[ProcessView] VLM was enabled but NO DESCRIPTION was returned.');
               }
-              
-              // In local mode, prefer the native filesystem path when available.
-        // FaceEngineWeb already provides a stable hash-based filepath for browser mode;
-        // only override it with item.path if it's a real path (not a blob: URL).
-        if (localMode) {
-          const p = item.path;
-          if (p && !p.startsWith('blob:') && p !== item.name) faceData.filepath = p;
-          // Otherwise keep faceData.filepath from FaceEngineWeb (hash-based for web mode)
-        }
-        
-        const resp = await importProcessed(faceData);
-        console.log(`[ProcessView] Import OK for ${item.name}, imageId: ${resp.image_id}`);
-        
-        queue = queue.map(q => q.id === item.id
-          ? { 
-              ...q, 
-              status: 'done', 
-              imageId: resp.image_id, 
-              faces: resp.face_count ?? faceData.faces.length,
-              description: faceData.description || resp.description,
-              sceneType: resp.scene_type || faceData.scene_type,
-              tags: faceData.tags || resp.tags,
-              people: resp.people || []
-            }
-          : q);
-        
-        // Short pause to allow GC and UI thread breathing room (especially for Android)
-        await new Promise(r => setTimeout(r, 300));
+
+              // Always preserve the original filename so it shows correctly in the image browser.
+              if (item.name) faceData.filename = item.name;
+              // Preserve origin path (local_path) — the full native path if available.
+              const nativePath = item.path;
+              if (nativePath && !nativePath.startsWith('blob:') && nativePath !== item.name) {
+                faceData.local_path = nativePath;
+                if (localMode || inElectron) faceData.filepath = nativePath;
+              }
+              console.log(`[ProcessView] Importing: filename=${faceData.filename} filepath=${faceData.filepath} local_path=${faceData.local_path || '—'} hash=${faceData.file_hash ? faceData.file_hash.slice(0,12)+'…' : '—'} dup_mode=${duplicateMode}`);
+
+              const resp = await importProcessed({ ...faceData, duplicate_mode: duplicateMode });
+
+              if (resp.skipped) {
+                console.log(`[ProcessView] Import skipped (duplicate) for ${item.name}`);
+                dupSkippedCount++;
+                queue = queue.map(q => q.id === item.id
+                  ? { ...q, status: 'skipped', msg: $t('pv_dup_skipped') }
+                  : q);
+              } else {
+                console.log(`[ProcessView] Import OK for ${item.name}, imageId: ${resp.image_id}`);
+                queue = queue.map(q => q.id === item.id
+                  ? {
+                      ...q,
+                      status: 'done',
+                      imageId: resp.image_id,
+                      faces: resp.face_count ?? faceData.faces.length,
+                      description: faceData.description || resp.description,
+                      sceneType: resp.scene_type || faceData.scene_type,
+                      tags: faceData.tags || resp.tags,
+                      people: resp.people || []
+                    }
+                  : q);
+              }
+
+              // Short pause to allow GC and UI thread breathing room (especially for Android)
+              await new Promise(r => setTimeout(r, 300));
       } catch (e) {
         console.error(`[ProcessView] Processing failed for ${item.name}:`, e);
         if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
@@ -649,7 +710,7 @@
         queue = queue.map(q => q.path === result.path ? { ...q, status: 'error', error: result.error } : q);
       } else {
         try {
-          const resp = await importProcessed({ ...result, local_model: $localModel });
+          const resp = await importProcessed({ ...result, local_model: $localModel, duplicate_mode: duplicateMode });
           queue = queue.map(q => q.path === result.path ? {
             ...q, status: 'done',
             imageId: resp.image_id,
@@ -1119,6 +1180,14 @@
           <input type="number" bind:value={maxSize} min="0" max="9999" step="100"
                  placeholder="0" class="num-input" />
         </div>
+        <div class="det-param-row">
+          <label>{$t('pv_dup_mode_label')}</label>
+          <select bind:value={duplicateMode}>
+            <option value="skip">{$t('pv_dup_mode_skip')}</option>
+            <option value="overwrite">{$t('pv_dup_mode_overwrite')}</option>
+            <option value="always_add">{$t('pv_dup_mode_add')}</option>
+          </select>
+        </div>
       </div>
     {/if}
   </div>
@@ -1135,6 +1204,7 @@
         {#if queuedCount > 0}<span class="queued-count"> · {queuedCount} {$t('offline_pending_push')}</span>{/if}
         {#if skippedCount > 0}<span class="skip-count"> · {skippedCount} {$t('pv_already_uploaded')}</span>{/if}
         {#if sharedDupCount > 0}<span class="shared-count"> · {sharedDupCount} {$t('pv_shared_by_others')}</span>{/if}
+        {#if dupSkippedCount > 0}<span class="skip-count"> · {dupSkippedCount} {$t('pv_dup_skipped')}</span>{/if}
         {#if finished} · {$t('batch_complete')} ✓{/if}
         {#if cancelled} · {$t('operation_cancelled')}{/if}
         <span class="pct">{progressPct}%</span>

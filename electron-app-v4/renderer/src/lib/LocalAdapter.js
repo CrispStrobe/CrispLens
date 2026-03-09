@@ -275,11 +275,60 @@ function _csvToFloat32(str) {
 // ── Health / Auth (mocked — local mode has no server session) ─────────────────
 
 
+/** Insert faces + tags + embeddings for an already-existing image row. Returns importProcessed result shape. */
+async function _insertFacesForImage(imageId, faces, tags, description, scene_type, thumbnail_b64) {
+  if (tags && tags.length > 0) {
+    for (const tag of tags)
+      await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
+  }
+  let faceCount = 0;
+  const people = [];
+  for (const face of faces) {
+    const x1 = face.bbox_left ?? 0;
+    const y1 = face.bbox_top ?? 0;
+    const x2 = face.bbox_right ?? 1;
+    const y2 = face.bbox_bottom ?? 1;
+    const faceRes = await run(
+      `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence, face_thumbnail)
+       VALUES(?,?,?,?,?,?,?)`,
+      [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null, face.face_crop_b64 || null],
+    );
+    const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;
+    if (faceId && face.embedding) {
+      const f32 = face.embedding instanceof Float32Array ? face.embedding : new Float32Array(face.embedding);
+      const match = await _voyBestMatch(f32, 0.4);
+      if (match) people.push(match.name);
+      const embStr = Array.from(f32).join(',');
+      await run(
+        `INSERT OR REPLACE INTO face_embeddings (face_id, person_id, embedding_vector, embedding_dimension) VALUES(?,?,?,?)`,
+        [faceId, match?.person_id ?? null, embStr, f32.length],
+      );
+      if (match) await run('UPDATE people SET total_appearances=total_appearances+1 WHERE id=?', [match.person_id]);
+      faceCount++;
+    }
+  }
+  _voyIndex = null; _embCache = null; _voyFailed = false;
+  return { ok: true, image_id: imageId, face_count: faceCount, people, description: description || null, scene_type: scene_type || null, tags: tags || [] };
+}
+
 console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260308.2300", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
   health() {
     return { ok: true, version: 'local', backend: 'capacitor-sqlite', model_ready: true };
+  },
+
+  /** Check if an image already exists in the DB by hash or filepath. Returns image_id or null. */
+  async checkDuplicate(file_hash, filepath) {
+    if (file_hash) {
+      const rows = await query('SELECT id FROM images WHERE file_hash=?', [file_hash]);
+      if (rows.length > 0) { console.log(`[LocalAdapter] checkDuplicate: hash match → imageId=${rows[0].id}`); return rows[0].id; }
+    }
+    if (filepath) {
+      const rows = await query('SELECT id FROM images WHERE filepath=?', [filepath]);
+      if (rows.length > 0) { console.log(`[LocalAdapter] checkDuplicate: filepath match → imageId=${rows[0].id}`); return rows[0].id; }
+    }
+    return null;
   },
 
   me() {
@@ -1092,33 +1141,74 @@ export const localAdapter = {
   // Called by ProcessView after local ONNX inference completes.
   // In local mode this writes directly to SQLite instead of POSTing to server.
 
-  async importProcessed({ filepath, filename, width, height, date_taken,
+  async importProcessed({ filepath, filename, local_path, file_hash, width, height, date_taken,
                           faces = [], description, scene_type, tags = [],
-                          thumbnail_b64, embedding_dim = 512 }) {
-    const fname = filename || filepath.split('/').pop();
+                          thumbnail_b64, embedding_dim = 512,
+                          duplicate_mode = 'skip' }) {
+    const fname = filename || filepath?.split('/').pop() || 'unknown';
     // Sanitize filepath: never store blob: URLs (Capacitor Camera webPath — revoked on reload).
     // FaceEngineWeb already returns a hash-based 'browser:...' path; other callers may pass
     // bare filenames or native paths which are fine.
     const safeFilepath = (filepath && !filepath.startsWith('blob:')) ? filepath : (filename || fname);
 
-    console.log(`[LocalAdapter] importProcessed: saving image ${fname} | filepath=${safeFilepath} | dims=${width}x${height} | vlm_max_size=${arguments[0].vlm_max_size || '0'}`);
+    console.log(`[LocalAdapter] importProcessed: ${fname} | filepath=${safeFilepath} | local_path=${local_path || '—'} | hash=${file_hash ? file_hash.slice(0,12)+'…' : '—'} | dims=${width}x${height} | dup_mode=${duplicate_mode}`);
     console.log(`[LocalAdapter] VLM results:`, { description: (description || '').slice(0, 50) + '...', scene_type, tagsCount: tags?.length });
+
+    // ── Duplicate detection ────────────────────────────────────────────────
+    // Check by file_hash first (most reliable), then by filepath.
+    let existingId = null;
+    if (file_hash) {
+      const hashRows = await query('SELECT id FROM images WHERE file_hash=?', [file_hash]);
+      if (hashRows.length > 0) existingId = hashRows[0].id;
+    }
+    if (!existingId) {
+      const fpRows = await query('SELECT id FROM images WHERE filepath=?', [safeFilepath]);
+      if (fpRows.length > 0) existingId = fpRows[0].id;
+    }
+
+    if (existingId !== null) {
+      if (duplicate_mode === 'skip') {
+        console.log(`[LocalAdapter] Duplicate detected (imageId=${existingId}) — skipping (mode=skip)`);
+        return { ok: true, image_id: existingId, face_count: 0, people: [], skipped: true };
+      }
+      if (duplicate_mode === 'overwrite') {
+        console.log(`[LocalAdapter] Duplicate detected (imageId=${existingId}) — overwriting (mode=overwrite)`);
+        // Delete existing faces + embeddings so they are re-inserted below
+        await run('DELETE FROM face_embeddings WHERE face_id IN (SELECT id FROM faces WHERE image_id=?)', [existingId]);
+        await run('DELETE FROM faces WHERE image_id=?', [existingId]);
+        await run('DELETE FROM image_tags WHERE image_id=?', [existingId]);
+        // Update the image row in-place
+        await run(`UPDATE images SET filename=?,local_path=?,file_hash=?,width=?,height=?,date_taken=?,description=?,scene_type=?,thumbnail_blob=? WHERE id=?`,
+          [fname, local_path ?? null, file_hash ?? null, width ?? null, height ?? null,
+           date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null, existingId]);
+        const imageId = existingId;
+        fileCache.set(imageId, safeFilepath);
+        if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
+        // Fall through to face insertion below using existingId
+        return await _insertFacesForImage(imageId, faces, tags, description, scene_type, thumbnail_b64);
+      }
+      // 'always_add' falls through — insert with new filepath variant
+      console.log(`[LocalAdapter] Duplicate detected (imageId=${existingId}) — inserting anyway (mode=always_add)`);
+    }
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
-               (filename, filepath, width, height, date_taken, description, scene_type, thumbnail_blob)
-               VALUES(?,?,?,?,?,?,?,?)`,
-              [fname, safeFilepath, width ?? null, height ?? null,
+               (filename, filepath, local_path, file_hash, width, height, date_taken, description, scene_type, thumbnail_blob)
+               VALUES(?,?,?,?,?,?,?,?,?,?)`,
+              [fname, safeFilepath, local_path ?? null, file_hash ?? null,
+               width ?? null, height ?? null,
                date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
-    
-    // Favor new VLM results if provided (only update if truthy)
+
+    // Update VLM/thumbnail if provided (handles re-run case when INSERT OR IGNORE is a no-op)
     if (description || scene_type || thumbnail_b64) {
       const updates = [];
       const params = [];
       if (description) { updates.push('description = ?'); params.push(description); }
       if (scene_type) { updates.push('scene_type = ?'); params.push(scene_type); }
       if (thumbnail_b64) { updates.push('thumbnail_blob = ?'); params.push(thumbnail_b64); }
-      
+      if (local_path) { updates.push('local_path = ?'); params.push(local_path); }
+      if (file_hash) { updates.push('file_hash = ?'); params.push(file_hash); }
+
       if (updates.length > 0) {
         params.push(safeFilepath);
         await run(`UPDATE images SET ${updates.join(', ')} WHERE filepath = ?`, params);
@@ -1131,81 +1221,7 @@ export const localAdapter = {
     fileCache.set(imageId, safeFilepath);
     if (thumbnail_b64) thumbCache.set(imageId, thumbnail_b64);
 
-    // Tags
-    if (tags && tags.length > 0) {
-      console.log(`[LocalAdapter] Saving ${tags.length} tags for image ${imageId}`);
-      for (const tag of tags)
-        await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [imageId, tag]);
-    }
-
-    // Faces + embeddings
-    console.log(`[LocalAdapter] importProcessed: processing ${faces.length} faces for image ${imageId}`);
-    let faceCount = 0;
-    const people = [];
-    for (const face of faces) {
-      const x1 = face.bbox_left ?? 0;
-      const y1 = face.bbox_top ?? 0;
-      const x2 = face.bbox_right ?? 1;
-      const y2 = face.bbox_bottom ?? 1;
-
-      const faceRes = await run(
-        `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence, face_thumbnail)
-         VALUES(?,?,?,?,?,?,?)`,
-        [imageId, x1, y1, x2, y2, face.detection_confidence ?? face.score ?? null, face.face_crop_b64 || null],
-      );
-      
-      const faceId = faceRes.lastInsertRowid || faceRes.changes?.lastId;
-      
-      const faceIdx = faceCount;
-      console.log(`[LocalAdapter]   Face[${faceIdx}] faceId=${faceId} bbox=[${x1.toFixed(3)},${y1.toFixed(3)},${x2.toFixed(3)},${y2.toFixed(3)}] conf=${(face.detection_confidence ?? face.score ?? 0).toFixed(3)} hasThumbnail=${!!(face.face_crop_b64)} embDim=${face.embedding?.length ?? 0}`);
-
-      if (faceId && face.embedding) {
-        const f32 = face.embedding instanceof Float32Array
-          ? face.embedding
-          : new Float32Array(face.embedding);
-
-        // Match against known people using Voy (WASM HNSW)
-        const match = await _voyBestMatch(f32, 0.4);
-        if (match) {
-          console.log(`[LocalAdapter]   Face[${faceIdx}] → MATCHED: "${match.name}" (person_id=${match.person_id})`);
-          people.push(match.name);
-        } else {
-          console.log(`[LocalAdapter]   Face[${faceIdx}] → no match (will be stored as unidentified)`);
-        }
-
-        // Store as comma-separated string (SQLite BLOB via @capacitor-community/sqlite)
-        const embStr = Array.from(f32).join(',');
-        await run(
-          `INSERT OR REPLACE INTO face_embeddings
-           (face_id, person_id, embedding_vector, embedding_dimension) VALUES(?,?,?,?)`,
-          [faceId, match?.person_id ?? null, embStr, f32.length],
-        );
-        if (match) {
-          // Increment total_appearances for matched person
-          await run('UPDATE people SET total_appearances=total_appearances+1 WHERE id=?',
-                    [match.person_id]);
-        }
-        faceCount++;
-      } else {
-        console.log(`[LocalAdapter]   Face[${faceIdx}] skipped — faceId=${faceId} embLen=${face.embedding?.length ?? 0}`);
-      }
-    }
-
-    // Invalidate Voy index + embedding cache so next match sees the new data.
-    // We reset _voyFailed too so the next batch can try WASM again after a
-    // soft failure (e.g. first call before WASM was ready).
-    _voyIndex  = null;
-    _embCache  = null;
-    _voyFailed = false;
-    console.log(`[LocalAdapter] importProcessed DONE for image ${imageId}`);
-    return { 
-      ok: true, 
-      image_id: imageId, 
-      face_count: faceCount, 
-      people,
-      description: description || null,
-      scene_type:  scene_type || null,
-      tags: tags || []
-    };
+    console.log(`[LocalAdapter] importProcessed: imageId=${imageId}, processing ${faces.length} faces`);
+    return await _insertFacesForImage(imageId, faces, tags, description, scene_type, thumbnail_b64);
   },
 };
