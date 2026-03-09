@@ -442,6 +442,9 @@ export const localAdapter = {
           },
         },
         processing: { backend: 'local' },
+        inference: {
+          ort_use_coreml: prefs.ort_use_coreml === 'true' || prefs.ort_use_coreml === true,
+        },
         vlm: {
           enabled:  prefs.vlm_enabled === 'true' || prefs.vlm_enabled === true,
           provider: prefs.vlm_provider || 'openrouter',
@@ -485,6 +488,7 @@ export const localAdapter = {
       'thumb_size':   body.thumb_size    !== undefined ? String(body.thumb_size)    : undefined,
       'max_items':    body.max_items     !== undefined ? String(body.max_items)     : undefined,
       'max_size_mb':  body.max_size_mb   !== undefined ? String(body.max_size_mb)   : undefined,
+      'ort_use_coreml': body.ort_use_coreml !== undefined ? (body.ort_use_coreml ? 'true' : 'false') : undefined,
     };
 
     const written = [];
@@ -681,8 +685,14 @@ export const localAdapter = {
     return await hardResetApp();
   },
 
-  i18n() {
-    return { language: localStorage.getItem('pwa_language') || 'en', translations: {} };
+  async i18n() {
+    try {
+      const rows = await query('SELECT value FROM settings WHERE key=?', ['pref_language']);
+      const language = rows[0]?.value || localStorage.getItem('pwa_language') || 'en';
+      return { language, translations: {} };
+    } catch {
+      return { language: localStorage.getItem('pwa_language') || 'en', translations: {} };
+    }
   },
 
   // ── Images ─────────────────────────────────────────────────────────────────
@@ -988,6 +998,7 @@ export const localAdapter = {
         ...faceData,
         filepath:        imgRow.filepath,
         filename:        imgRow.filename,
+        local_path:      imgRow.local_path ?? null,
         width:           imgRow.width  || faceData.width,
         height:          imgRow.height || faceData.height,
         file_hash:       imgRow.file_hash ?? faceData.file_hash,

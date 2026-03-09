@@ -1659,9 +1659,7 @@
         <input type="range" min="150" max="1200" step="50" bind:value={syncThumbSize} style="flex:1;" />
         <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncThumbSize}px</span>
       </div>
-      <p class="hint" style="margin-top:4px;">
-        Controls the resolution of thumbnails downloaded for offline use AND the resolution of images stored in your browser's Standalone database.
-      </p>
+      <p class="hint" style="margin-top:4px;">{$t('offline_thumb_size_hint')}</p>
     </div>
 
     {#if syncStats}
@@ -1960,7 +1958,7 @@
         <span class="hint" style="color:#c09030;">{$t('ort_use_webgpu_hint')}</span>
       </div>
     </div>
-    <p class="hint" style="margin-top:8px;">Reload the page after changing these settings.</p>
+    <p class="hint" style="margin-top:8px;">{$t('reload_after_settings')}</p>
   </section>
   {/if}
 
@@ -2026,7 +2024,7 @@
     {:else}
       <div class="users-table">
         <div class="users-head">
-          <span>Username</span><span>Role</span><span>Active</span><span>Last Login</span><span>Actions</span>
+          <span>{$t('username')}</span><span>{$t('role')}</span><span>{$t('active')}</span><span>{$t('last_login')}</span><span>{$t('actions')}</span>
         </div>
         {#each users as u (u.id)}
           <div class="user-row" class:inactive={!u.is_active}>
@@ -2104,11 +2102,11 @@
     <h3>{$t('settings_db_health')}</h3>
     {#if dbStatus}
       <div class="db-status-grid">
-        <span class="hint">Path</span>       <span class="db-path-display">{dbStatus.db_path}</span>
-        <span class="hint">Size</span>        <span class="hint">{dbStatus.file_size_mb ?? '?'} MB</span>
-        <span class="hint">Writable</span>   <span class="hint" class:ok={dbStatus.permissions_ok}>{dbStatus.permissions_ok ? '✓' : '✗'}</span>
-        <span class="hint">Users</span>      <span class="hint">{dbStatus.user_count ?? '?'}</span>
-        <span class="hint">Images</span>     <span class="hint">{dbStatus.image_count ?? '?'}</span>
+        <span class="hint">{$t('db_path_label')}</span>     <span class="db-path-display">{dbStatus.db_path}</span>
+        <span class="hint">{$t('db_size_label')}</span>     <span class="hint">{dbStatus.file_size_mb ?? '?'} MB</span>
+        <span class="hint">{$t('db_writable_label')}</span> <span class="hint" class:ok={dbStatus.permissions_ok}>{dbStatus.permissions_ok ? '✓' : '✗'}</span>
+        <span class="hint">{$t('db_users_label')}</span>    <span class="hint">{dbStatus.user_count ?? '?'}</span>
+        <span class="hint">{$t('db_images_label')}</span>   <span class="hint">{dbStatus.image_count ?? '?'}</span>
       </div>
     {/if}
     <div class="field-row" style="margin-top: 8px;">
@@ -2143,7 +2141,7 @@
           🗑 {$t('settings_db_clear')}
         </button>
         <button class="small danger" on:click={doHardReset} title="Clear database, settings, and cache">
-          🔥 Hard Reset App (Purge All)
+          🔥 {$t('hard_reset_app')}
         </button>
       </div>
       {#if dbMsg}
@@ -2269,11 +2267,13 @@
     </div>
 
     <div class="form-grid" style="margin-top:14px;">
+      {#if dbMode !== 'local'}
       <label>{$t('fix_db_path_label')}</label>
       <div>
         <input type="text" bind:value={fixDbPath} placeholder="/root/CrispLense/fix_db.sh" style="width:100%;box-sizing:border-box;" />
         <div class="hint">{$t('fix_db_path_hint')}</div>
       </div>
+      {/if}
 
       <label>{$t('exempt_paths_label')}</label>
       <div>
