@@ -771,11 +771,15 @@ export const localAdapter = {
       // Map to UI-compatible objects
       const images = rows.map(r => ({
         ...r,
-        ai_description: r.description, // map description -> ai_description
-        ai_scene_type:  r.scene_type,  // map scene_type -> ai_scene_type
-        ai_tags_list:   r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
-        origin_path:    r.local_path || r.filepath,
-        server_path:    r.filepath
+        ai_description:  r.description,
+        ai_scene_type:   r.scene_type,
+        ai_tags_list:    r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
+        origin_path:     r.local_path || r.filepath,
+        server_path:     r.filepath,
+        // Convert people_names CSV → detected_people array (face_id unavailable here; populated properly in getImage)
+        detected_people: r.people_names
+          ? r.people_names.split(',').map(name => ({ name: name.trim(), face_id: null }))
+          : [],
       }));
 
       return _cache(images);
@@ -801,13 +805,24 @@ export const localAdapter = {
     const rows = await query(sql, [id]);
     if (rows[0]) {
       const r = rows[0];
+      // Build detected_people array ({name, face_id}) for MetaPanel
+      const faceRows = await query(`
+        SELECT f.id AS face_id, p.name
+        FROM faces f
+        JOIN face_embeddings fe ON fe.face_id = f.id
+        JOIN people p ON p.id = fe.person_id
+        WHERE f.image_id = ? AND p.name IS NOT NULL AND p.name != ''
+        ORDER BY f.id
+      `, [id]);
       const img = {
         ...r,
-        ai_description: r.description,
-        ai_scene_type:  r.scene_type,
-        ai_tags_list:   r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
-        origin_path:    r.local_path || r.filepath,
-        server_path:    r.filepath
+        ai_description:  r.description,
+        ai_scene_type:   r.scene_type,
+        ai_tags_list:    r.ai_tags_csv ? r.ai_tags_csv.split(',') : [],
+        origin_path:     r.local_path || r.filepath,
+        server_path:     r.filepath,
+        detected_people: faceRows,
+        face_count:      (await query('SELECT COUNT(*) AS n FROM faces WHERE image_id=?', [id]))[0]?.n ?? 0,
       };
       _cache([img]);
       return img;
