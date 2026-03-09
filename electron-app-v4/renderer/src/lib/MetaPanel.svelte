@@ -142,10 +142,14 @@
   <!-- Basic Info -->
   <div class="section-label">{$t('details')}</div>
   <div class="exif-line"><b>ID:</b> {image.id}</div>
+  {#if image.local_path || image.filepath}
   <div class="exif-line" title={image.local_path || image.filepath}>
     <b>{$t('folder_path')}:</b> {image.local_path || image.filepath}
   </div>
+  {/if}
+  {#if image.width && image.height}
   <div class="exif-line"><b>{$t('quality')}:</b> {image.width} × {image.height}</div>
+  {/if}
   {#if image.taken_at}
     <div class="exif-line"><b>{$t('search_by_date')}:</b> {image.taken_at}</div>
   {/if}

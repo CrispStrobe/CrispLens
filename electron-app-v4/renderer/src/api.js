@@ -738,7 +738,7 @@ export function fetchTags() {
   return get('/tags');
 }
 export function fetchTagsStats()  {
-  const g = _guard('fetchTagsStats', () => []);
+  const g = _guard('fetchTagsStats', () => localAdapter.getTags());
   if (g) return g;
   return get('/tags/stats');
 }

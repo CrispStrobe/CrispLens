@@ -7,7 +7,7 @@
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../stores.js';
-  import { adjustImage, downloadImage, thumbnailUrl } from '../api.js';
+  import { adjustImage, downloadImage, thumbnailUrl, isLocalMode, importProcessed } from '../api.js';
 
   export let imageId   = null;
   export let imageFilename = '';
@@ -358,12 +358,44 @@
   async function doAdjust() {
     saving=true; error=''; done=false; result=null;
     try {
-      result = await adjustImage({
-        image_id:imageId,
-        black_in,white_in,gamma_mid,black_out,white_out,
-        brightness,contrast,saturation,sharpness,warmth,
-        preset:preset||null, save_as:saveAs, suffix,
-      });
+      if (isLocalMode() && displayCanvas && srcPixels) {
+        // Standalone mode: canvas already has adjusted pixels — convert to blob and import
+        renderPreview(); // ensure latest params are rendered
+        const blob = await new Promise(res => displayCanvas.toBlob(res, 'image/jpeg', 0.92));
+        const baseName = (imageFilename || `image_${imageId}`).replace(/\.[^.]+$/, '');
+        const adjName = `${baseName}${suffix || '_adj'}.jpg`;
+        const adjHash = `adj_${imageId}_${Date.now()}`;
+        // Convert blob to base64 for thumbnail storage
+        const b64 = await new Promise(res => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result.split(',')[1]);
+          reader.readAsDataURL(blob);
+        });
+        const res = await importProcessed({
+          filepath:     `browser:${adjHash}.jpg`,
+          filename:     adjName,
+          width:        srcW,
+          height:       srcH,
+          file_size:    blob.size,
+          thumbnail_b64: b64,
+          faces:        [],
+          duplicate_mode: 'skip',
+        });
+        result = {
+          ok: true,
+          new_image_id: res.image_id ?? null,
+          filepath: adjName,
+          width: srcW,
+          height: srcH,
+        };
+      } else {
+        result = await adjustImage({
+          image_id:imageId,
+          black_in,white_in,gamma_mid,black_out,white_out,
+          brightness,contrast,saturation,sharpness,warmth,
+          preset:preset||null, save_as:saveAs, suffix,
+        });
+      }
       done=true;
     } catch(e) { error=e.message||'Adjustment failed'; }
     finally { saving=false; }
