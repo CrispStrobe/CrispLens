@@ -429,6 +429,7 @@
 
   onMount(() => {
     loadFaces();
+    refreshPeople();
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', recalcSize);
     // Load user's preferred detection model and VLM status

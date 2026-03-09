@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── OS Trash (for duplicate cleanup) ─────────────────────────────────────────
   trashItems: (paths) => ipcRenderer.invoke('trash-items', paths),
 
+  // ── Logs ─────────────────────────────────────────────────────────────────────
+  getLogFile:  () => ipcRenderer.invoke('get-log-file'),
+  showLogFile: () => ipcRenderer.invoke('show-log-file'),
+
   // ── Generic IPC ─────────────────────────────────────────────────────────────
   on:   (channel, cb) => ipcRenderer.on(channel, (_e, ...args) => cb(...args)),
   send: (channel, ...args) => ipcRenderer.send(channel, ...args),

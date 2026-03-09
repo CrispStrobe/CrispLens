@@ -56,6 +56,36 @@ const VITE_URL = `http://localhost:5173`;
 process.env.DEBUG = '1';
 process.env.DEBUG_SQL = IS_DEV ? '1' : '0';
 
+// ── Log capture: redirect console.* to a rotating log file ───────────────────
+// The file is served by /api/admin/logs so the in-app log viewer works in prod.
+{
+  const LOG_DIR  = path.join(app.getPath('logs'));
+  const LOG_FILE = path.join(LOG_DIR, 'crisplens.log');
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    // Keep last 2 MB: rename existing log on startup
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 2 * 1024 * 1024) {
+      fs.renameSync(LOG_FILE, LOG_FILE + '.old');
+    }
+    const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+    const _stamp = () => new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+    const _wrap = (orig, tag) => (...args) => {
+      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      logStream.write(`${_stamp()} ${tag} ${msg}\n`);
+      orig.apply(console, args);
+    };
+    console.log   = _wrap(console.log,   '[LOG]');
+    console.info  = _wrap(console.info,  '[INF]');
+    console.warn  = _wrap(console.warn,  '[WRN]');
+    console.error = _wrap(console.error, '[ERR]');
+    process.env.LOG_FILE = LOG_FILE;
+    console.log(`[main] Log file: ${LOG_FILE}`);
+  } catch (e) {
+    // Non-fatal — proceed without file logging
+    console.warn('[main] Could not set up log file:', e.message);
+  }
+}
+
 const ICON_PATH = path.join(__dirname, 'assets',
   IS_MAC ? 'icon.icns' : IS_WIN ? 'icon.ico' : 'icon.png');
 
@@ -302,6 +332,12 @@ function registerIpc() {
         is_dir: e.isDirectory(),
       }));
     } catch { return []; }
+  });
+
+  ipcMain.handle('get-log-file', () => process.env.LOG_FILE || null);
+  ipcMain.handle('show-log-file', () => {
+    const f = process.env.LOG_FILE;
+    if (f && fs.existsSync(f)) shell.showItemInFolder(f);
   });
 
   ipcMain.handle('trash-items', async (_e, paths) => {

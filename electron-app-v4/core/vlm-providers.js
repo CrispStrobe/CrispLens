@@ -8,7 +8,6 @@
 
 const fs = require('fs');
 const sharp = require('sharp');
-const sharp = require('sharp');
 
 const OPENAI_COMPATIBLE = {
   'openai':     'https://api.openai.com/v1',
@@ -228,6 +227,12 @@ Respond in valid JSON: { "description": "...", "scene_type": "...", "tags": ["ta
       };
     } catch (e) {
       console.warn('[VlmClient] JSON parse failed, falling back to raw:', e.message);
+      // Try to salvage just the description field via regex before giving up
+      const descMatch = text.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (descMatch) {
+        const sceneMatch = text.match(/"scene_type"\s*:\s*"([^"]+)"/);
+        return { description: descMatch[1], scene_type: sceneMatch?.[1] || 'unknown', tags: [] };
+      }
       return { description: text, scene_type: 'unknown', tags: [] };
     }
   }

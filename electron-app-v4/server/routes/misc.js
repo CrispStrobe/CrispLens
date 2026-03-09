@@ -1074,16 +1074,37 @@ router.post('/admin/update', requireAdmin, (req, res) => {
   res.end();
 });
 
+function _readLogLines(n) {
+  const logFile = process.env.LOG_FILE;
+  if (!logFile || !fs.existsSync(logFile)) return { lines: [], path: null };
+  try {
+    const content = fs.readFileSync(logFile, 'utf8');
+    const all     = content.split('\n').filter(Boolean);
+    return { lines: all.slice(-n), path: logFile };
+  } catch (e) {
+    return { lines: [`[ERROR reading log: ${e.message}]`], path: logFile };
+  }
+}
+
 router.get('/admin/logs', requireAdmin, (req, res) => {
+  const n = Math.min(2000, Math.max(10, parseInt(req.query.lines) || 200));
   res.setHeader('Content-Type', 'text/event-stream');
-  res.flushHeaders();
-  res.write(`data: [PATH]/dev/null\n\n`);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const { lines, path: logPath } = _readLogLines(n);
+  if (logPath) res.write(`data: [PATH]${logPath}\n\n`);
+  else         res.write(`data: [ERROR]No log file found. App must be built and launched via Electron.\n\n`);
+  for (const line of lines) res.write(`data: ${line}\n\n`);
   res.write(`data: [DONE]\n\n`);
   res.end();
 });
 
 router.get('/admin/logs-json', requireAdmin, (req, res) => {
-  res.json({ lines: [], path: null });
+  const n = Math.min(2000, Math.max(10, parseInt(req.query.lines) || 200));
+  const { lines, path: logPath } = _readLogLines(n);
+  res.json({ lines, path: logPath });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

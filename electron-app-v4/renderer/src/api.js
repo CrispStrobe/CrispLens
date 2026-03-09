@@ -303,6 +303,17 @@ function normalizeImage(img) {
   if (typeof img.ai_tags === 'string')
     img.ai_tags = img.ai_tags ? img.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
   if (!Array.isArray(img.ai_tags)) img.ai_tags = [];
+  // ai_description: if stored as raw JSON (VLM parse fallback), salvage the description text
+  if (typeof img.ai_description === 'string' && img.ai_description.trimStart().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(img.ai_description);
+      if (parsed && typeof parsed.description === 'string') {
+        img.ai_description = parsed.description;
+        if (!img.ai_scene_type && parsed.scene_type) img.ai_scene_type = parsed.scene_type;
+        if ((!img.ai_tags || !img.ai_tags.length) && Array.isArray(parsed.tags)) img.ai_tags = parsed.tags;
+      }
+    } catch { /* leave as-is if not valid JSON */ }
+  }
   return img;
 }
 

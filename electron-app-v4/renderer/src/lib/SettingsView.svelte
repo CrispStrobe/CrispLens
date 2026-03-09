@@ -1109,7 +1109,11 @@
     keyTestMsg = { ...keyTestMsg, [provider]: '…' };
     try {
       const r = await testApiKey(provider);
-      keyTestMsg = { ...keyTestMsg, [provider]: '✓ ' + r.message };
+      if (r?.ok) {
+        keyTestMsg = { ...keyTestMsg, [provider]: '✓ ' + (r.message || 'OK') };
+      } else {
+        keyTestMsg = { ...keyTestMsg, [provider]: '✗ ' + (r?.error || r?.detail || 'Key not found') };
+      }
     } catch (e) {
       keyTestMsg = { ...keyTestMsg, [provider]: '✗ ' + e.message.replace(/^.*→ \d+: /, '') };
     }

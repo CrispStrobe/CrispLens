@@ -22,6 +22,12 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  const isElectron = typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined';
+
+  function showInFinder() {
+    window.electronAPI?.showLogFile?.();
+  }
+
   async function load() {
     if (loading) return;
     console.log('[LogsModal] load() started, transport=', transport);
@@ -128,6 +134,9 @@
           <button on:click={load} disabled={loading}>
             {loading ? '…' : '🔄 ' + $t('logs_refresh')}
           </button>
+          {#if isElectron && logPath}
+          <button on:click={showInFinder} title="Show log file in Finder/Explorer">📂</button>
+          {/if}
           <button class="close-btn" on:click={close}>✕</button>
         </div>
       </div>
