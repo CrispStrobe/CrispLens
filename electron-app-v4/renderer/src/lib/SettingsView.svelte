@@ -53,7 +53,7 @@
   let serverBenchResults = null;
   let benchProgress = '';
   let benchImageId = null;
-  $: isAppleSiliconClient = typeof navigator !== 'undefined' && /Macintosh/i.test(navigator.userAgent) && (navigator.maxTouchPoints > 0 || /Apple/i.test(navigator.vendor));
+  $: isAppleSiliconClient = typeof navigator !== 'undefined' && /Macintosh|Mac OS X/i.test(navigator.userAgent);
   $: isWindowsClient = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
   $: isLinuxClient = typeof navigator !== 'undefined' && /Linux/i.test(navigator.userAgent);
 
@@ -1707,19 +1707,6 @@
     <h3>{$t('settings_img_proc_section')}</h3>
     {#if connectionMode === 'local'}
       <p class="hint">Images are processed by the internal Node.js server using ONNX Runtime.</p>
-      <div class="form-grid" style="margin-top: 8px;">
-        <label>{$t('settings_python_path')}</label>
-        <div class="field-row">
-          <input type="text" bind:value={pythonPath} placeholder="(auto-detect python3)" style="flex:1;" />
-          <button on:click={doTestPython} disabled={testingPython} style="flex-shrink:0;">
-            {testingPython ? '…' : 'Test'}
-          </button>
-        </div>
-        {#if testResult}
-          <div></div>
-          <div class="test-result" class:ok={testResult.startsWith('✓')}>{testResult}</div>
-        {/if}
-      </div>
     {:else}
       <div class="mode-radios">
         <label class="radio-row">

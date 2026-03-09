@@ -51,6 +51,7 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
       skip_vlm,
       owner_id, det_model, det_thresh, min_face_size, max_size,
     });
+    const db = getDb();
     const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
     res.json({
       ok: true,

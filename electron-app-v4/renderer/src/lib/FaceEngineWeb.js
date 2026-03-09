@@ -168,7 +168,9 @@ export class FaceEngineWeb {
         this._progress(`Downloading ${filename}…`);
         resp=await fetch(fetchUrl);
         if(!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
-        await cache.put(canonicalKey, resp.clone());
+        try { await cache.put(canonicalKey, resp.clone()); } catch(e) {
+          console.warn('[FaceEngineWeb] Cache.put skipped (Electron/CSP restriction):', e.message);
+        }
       }
       return resp.arrayBuffer();
     }
