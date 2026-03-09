@@ -82,6 +82,20 @@
   let editingFaceId = null;
   let fixName = '';
 
+  // Sequential label for unidentified faces (no name assigned)
+  $: unidentifiedIdx = (() => {
+    const map = {};
+    let n = 0;
+    for (const p of (image?.detected_people ?? [])) {
+      if (!p.name) map[p.face_id] = ++n;
+    }
+    return map;
+  })();
+
+  function faceLabel(p) {
+    return p.name || `${$t('unidentified')} (${unidentifiedIdx[p.face_id] ?? '?'})`;
+  }
+
   async function startFix(face) {
     editingFaceId = face.face_id;
     fixName = face.name || '';
@@ -176,7 +190,7 @@
     <div class="chips">
       {#each image.detected_people as p}
         <div class="chip-group">
-          <span class="chip person">{p.name || 'Unknown'}</span>
+          <span class="chip person" class:unidentified={!p.name}>{faceLabel(p)}</span>
           <button class="small-fix" on:click={() => startFix(p)}>Fix</button>
           <button class="small-fix danger-text" on:click={() => doRemoveFace(p.face_id)}>✕</button>
         </div>
@@ -293,6 +307,7 @@
     border-radius: 8px;
   }
   .chip.person { background: #1e2e50; color: #80a8d8; }
+  .chip.person.unidentified { background: #2e2010; color: #a08050; font-style: italic; }
   .chip-group { display: flex; align-items: center; background: #1e2e50; border-radius: 8px; overflow: hidden; }
   .small-fix { background: #2a3a6a; color: #a0c4ff; border: none; padding: 2px 6px; font-size: 9px; cursor: pointer; height: 100%; }
   .small-fix:hover { background: #3a4a8a; }

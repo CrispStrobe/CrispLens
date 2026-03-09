@@ -192,6 +192,18 @@ async function _voyBestMatch(embedding, threshold = 0.4) {
 export const fileCache = new Map(); // image_id → filepath
 export const thumbCache = new Map(); // image_id → base64 jpeg string
 
+const THUMB_CACHE_MAX = 250; // ~12MB at ~50KB per entry average
+function _evictThumbCache() {
+  if (thumbCache.size < THUMB_CACHE_MAX) return;
+  // Map preserves insertion order — delete oldest entries
+  const toDelete = thumbCache.size - THUMB_CACHE_MAX + 50;
+  let n = 0;
+  for (const key of thumbCache.keys()) {
+    thumbCache.delete(key);
+    if (++n >= toDelete) break;
+  }
+}
+
 function uint8ToBase64(u8) {
   let b = '';
   for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]);
@@ -207,6 +219,7 @@ function _cache(images) {
         console.log(`[LocalAdapter] Converting binary thumb for image ${img.id}`);
         b64 = uint8ToBase64(b64);
       }
+      _evictThumbCache();
       thumbCache.set(String(img.id), b64);
       // Strip from the object so Svelte reactive state doesn't hold 21× 30KB blobs.
       // The data is now in thumbCache and will be served via fetchThumbnail().
@@ -777,6 +790,7 @@ export const localAdapter = {
              i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
              i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
+             (SELECT COUNT(*) FROM faces WHERE image_id = i.id) as face_count,
              (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
               JOIN face_embeddings fe ON fe.face_id = f.id
               JOIN people p ON p.id = fe.person_id
@@ -829,13 +843,14 @@ export const localAdapter = {
     const rows = await query(sql, [id]);
     if (rows[0]) {
       const r = rows[0];
-      // Build detected_people array ({name, face_id}) for MetaPanel
+      // Build detected_people array ({name, face_id}) for MetaPanel.
+      // Include ALL faces (named + unidentified) so MetaPanel can show "Unidentified (N)" chips.
       const faceRows = await query(`
         SELECT f.id AS face_id, p.name
         FROM faces f
-        JOIN face_embeddings fe ON fe.face_id = f.id
-        JOIN people p ON p.id = fe.person_id
-        WHERE f.image_id = ? AND p.name IS NOT NULL AND p.name != ''
+        LEFT JOIN face_embeddings fe ON fe.face_id = f.id
+        LEFT JOIN people p ON p.id = fe.person_id
+        WHERE f.image_id = ?
         ORDER BY f.id
       `, [id]);
       const img = {
@@ -846,7 +861,7 @@ export const localAdapter = {
         origin_path:     r.local_path || r.filepath,
         server_path:     r.filepath,
         detected_people: faceRows,
-        face_count:      (await query('SELECT COUNT(*) AS n FROM faces WHERE image_id=?', [id]))[0]?.n ?? 0,
+        face_count:      faceRows.length,
       };
       _cache([img]);
       return img;
@@ -860,7 +875,7 @@ export const localAdapter = {
     const rows = await query('SELECT thumbnail_blob FROM images WHERE id=?', [id]);
     let b64 = rows[0]?.thumbnail_blob;
     if (b64 instanceof Uint8Array) b64 = uint8ToBase64(b64);
-    if (b64) thumbCache.set(sid, b64);
+    if (b64) { _evictThumbCache(); thumbCache.set(sid, b64); }
     return b64;
   },
 
