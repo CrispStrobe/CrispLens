@@ -286,6 +286,26 @@ const put  = (path, body)  => _fetch('PUT',    path, body);
 const patch = (path, body) => _fetch('PATCH',  path, body);
 const del  = (path)        => _fetch('DELETE', path);
 
+// ── Image response normalizer (v2 ↔ v4 compat) ───────────────────────────────
+// Ensures field aliases are always present regardless of which server responded.
+
+function normalizeImage(img) {
+  if (!img || typeof img !== 'object') return img;
+  // Rating aliases: v2 uses star_rating, v4 uses rating — expose both
+  if (img.star_rating == null && img.rating != null) img.star_rating = img.rating;
+  if (img.rating      == null && img.star_rating != null) img.rating = img.star_rating;
+  if (img.star_rating == null) img.star_rating = 0;
+  if (img.rating      == null) img.rating      = 0;
+  // Flag aliases: v2 uses color_flag, v4 uses flag — expose both
+  if (img.color_flag == null && img.flag      != null) img.color_flag = img.flag;
+  if (img.flag       == null && img.color_flag != null) img.flag = img.color_flag;
+  // ai_tags: v2 returns a CSV string, v4 returns an array — always give array
+  if (typeof img.ai_tags === 'string')
+    img.ai_tags = img.ai_tags ? img.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+  if (!Array.isArray(img.ai_tags)) img.ai_tags = [];
+  return img;
+}
+
 // ── Images ────────────────────────────────────────────────────────────────────
 
 export async function fetchImages(params = {}) {
@@ -298,7 +318,8 @@ export async function fetchImages(params = {}) {
                                    date_to: dateTo, sort, limit, offset, unidentified, album });
   try {
     const data = await get(`/images?${q}`);
-    return Array.isArray(data) ? data : (data.images ?? []);
+    const images = Array.isArray(data) ? data : (data.images ?? []);
+    return images.map(normalizeImage);
   } catch (e) {
     if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
       return syncManager.getImages({ sort, limit, offset, person, tag });
@@ -310,7 +331,7 @@ export async function fetchImages(params = {}) {
 export function fetchImage(id) {
   const g = _guard('fetchImage', () => localAdapter.getImage(id));
   if (g) return g;
-  return get(`/images/${id}`);
+  return get(`/images/${id}`).then(normalizeImage);
 }
 
 const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];

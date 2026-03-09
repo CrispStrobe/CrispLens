@@ -9,6 +9,7 @@ const express = require('express');
 const path    = require('path');
 const fs      = require('fs');
 const crypto  = require('crypto');
+const sharp   = require('sharp');
 const { getDb }      = require('../db');
 const { requireAuth, requireAdmin } = require('../auth');
 
@@ -426,72 +427,226 @@ router.post('/filesystem/add', requireAuth, async (req, res) => {
 // DUPLICATES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── pHash helpers (difference hash via sharp) ─────────────────────────────────
+
+async function computeDHash(filepath) {
+  // Resize to 9×8 grayscale; compare each pixel to its right neighbour → 64-bit hash
+  const { data } = await sharp(filepath)
+    .resize(9, 8, { fit: 'fill' })
+    .grayscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let bits = 0n;
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const i = row * 9 + col;
+      bits = (bits << 1n) | (data[i] > data[i + 1] ? 1n : 0n);
+    }
+  }
+  return bits.toString(16).padStart(16, '0');
+}
+
+function hammingDistance(h1, h2) {
+  let xor = BigInt('0x' + h1) ^ BigInt('0x' + h2);
+  let d = 0;
+  while (xor > 0n) { d += Number(xor & 1n); xor >>= 1n; }
+  return d;
+}
+
+// ── Helper: full image row for duplicate groups ───────────────────────────────
+
+function dupImageRow(db, id) {
+  return db.prepare(
+    'SELECT id, filename, filepath, local_path, file_size, face_count, created_at, taken_at FROM images WHERE id=?'
+  ).get(Number(id));
+}
+
+// ── Helper: cascade-delete an image and optionally merge its faces ─────────────
+
+function deleteImageCascade(db, keepId, deleteId, action, mergeFaces) {
+  if (mergeFaces && keepId) {
+    // Reassign faces from deleted image to the kept one before deleting
+    db.prepare('UPDATE faces SET image_id=? WHERE image_id=?').run(Number(keepId), Number(deleteId));
+  } else {
+    db.prepare('DELETE FROM face_embeddings WHERE face_id IN (SELECT id FROM faces WHERE image_id=?)').run(Number(deleteId));
+    db.prepare('DELETE FROM faces WHERE image_id=?').run(Number(deleteId));
+  }
+  db.prepare('DELETE FROM image_tags WHERE image_id=?').run(Number(deleteId));
+  try { db.prepare('DELETE FROM album_images WHERE image_id=?').run(Number(deleteId)); } catch {}
+  if (action === 'delete_file') {
+    const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(deleteId));
+    if (row?.filepath) try { fs.unlinkSync(row.filepath); } catch {}
+  }
+  db.prepare('DELETE FROM images WHERE id=?').run(Number(deleteId));
+  // Update face_count of kept image after potential face merge
+  if (keepId && mergeFaces) {
+    const fc = db.prepare('SELECT COUNT(*) AS n FROM faces WHERE image_id=?').get(Number(keepId))?.n ?? 0;
+    db.prepare('UPDATE images SET face_count=? WHERE id=?').run(fc, Number(keepId));
+  }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
 router.get('/duplicates/stats', requireAuth, (req, res) => {
   const db = getDb();
   try {
-    const total      = db.prepare('SELECT COUNT(*) AS n FROM images').get().n;
+    const total       = db.prepare('SELECT COUNT(*) AS n FROM images').get().n;
     const hashMissing = db.prepare('SELECT COUNT(*) AS n FROM images WHERE file_hash IS NULL').get().n;
-    res.json({ total, hash_missing: hashMissing, phash_available: false });
-  } catch { res.json({ total: 0, hash_missing: 0 }); }
-});
 
-router.get('/duplicates/groups', requireAuth, (req, res) => {
-  const db     = getDb();
-  const method = req.query.method || 'hash';
+    const hashGroups = db.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT file_hash FROM images WHERE file_hash IS NOT NULL
+        GROUP BY file_hash HAVING COUNT(*) > 1
+      )
+    `).get().n;
 
-  if (method === 'hash') {
-    const groups = db.prepare(`
-      SELECT file_hash, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
-      FROM images WHERE file_hash IS NOT NULL
-      GROUP BY file_hash HAVING count > 1
-    `).all();
+    const nameSizeGroups = db.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT filename, file_size FROM images
+        WHERE filename IS NOT NULL AND file_size IS NOT NULL
+        GROUP BY filename, file_size HAVING COUNT(*) > 1
+      )
+    `).get().n;
 
-    const result = groups.map(g => ({
-      key:    g.file_hash,
-      count:  g.count,
-      images: g.ids.split(',').map(id => {
-        const img = db.prepare('SELECT id, filename, filepath, file_size FROM images WHERE id=?').get(Number(id));
-        return img;
-      }).filter(Boolean),
-    }));
-    res.json(result);
-  } else {
-    res.json([]);
+    // Wasted bytes: all duplicate rows except the one we'd keep (lowest id per group)
+    const wasted = db.prepare(`
+      SELECT COALESCE(SUM(i.file_size), 0) AS total
+      FROM images i
+      INNER JOIN (
+        SELECT file_hash, MIN(id) AS keep_id
+        FROM images WHERE file_hash IS NOT NULL
+        GROUP BY file_hash HAVING COUNT(*) > 1
+      ) grp ON i.file_hash = grp.file_hash AND i.id != grp.keep_id
+    `).get().total || 0;
+
+    // pHash availability
+    const hasPHash = db.pragma('table_info(images)').some(c => c.name === 'phash');
+    const phashMissing = hasPHash
+      ? db.prepare('SELECT COUNT(*) AS n FROM images WHERE phash IS NULL').get().n
+      : total;
+
+    res.json({
+      total,
+      hash_missing:      hashMissing,
+      hash_groups:       hashGroups,
+      name_size_groups:  nameSizeGroups,
+      visual_groups:     0,          // computed lazily when groups endpoint is called
+      visual_available:  hasPHash,
+      phash_available:   hasPHash,
+      phash_missing:     phashMissing,
+      wasted_bytes:      wasted,
+    });
+  } catch (e) {
+    console.error('[duplicates/stats]', e);
+    res.json({ total: 0, hash_missing: 0, hash_groups: 0, name_size_groups: 0,
+               visual_groups: 0, visual_available: false, phash_available: false,
+               phash_missing: 0, wasted_bytes: 0 });
   }
 });
+
+// ── Groups ────────────────────────────────────────────────────────────────────
+
+router.get('/duplicates/groups', requireAuth, (req, res) => {
+  const db        = getDb();
+  const method    = req.query.method || 'hash';
+  const threshold = parseInt(req.query.threshold ?? '8', 10);
+
+  if (method === 'name_size') {
+    const groups = db.prepare(`
+      SELECT filename, file_size, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+      FROM images WHERE filename IS NOT NULL AND file_size IS NOT NULL
+      GROUP BY filename, file_size HAVING count > 1
+    `).all();
+    return res.json(groups.map(g => ({
+      key:    `${g.filename}::${g.file_size}`,
+      count:  g.count,
+      method: 'name_size',
+      images: g.ids.split(',').map(id => dupImageRow(db, id)).filter(Boolean),
+    })));
+  }
+
+  if (method === 'visual') {
+    const hasPHash = db.pragma('table_info(images)').some(c => c.name === 'phash');
+    if (!hasPHash) return res.json([]);
+    const rows = db.prepare(
+      'SELECT id, filename, filepath, local_path, file_size, face_count, created_at, taken_at, phash FROM images WHERE phash IS NOT NULL'
+    ).all();
+    // O(n²) cluster — acceptable for typical library sizes (<50 k images)
+    const assigned = new Set();
+    const result   = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (assigned.has(i)) continue;
+      const group = [i];
+      for (let j = i + 1; j < rows.length; j++) {
+        if (!assigned.has(j) && hammingDistance(rows[i].phash, rows[j].phash) <= threshold) {
+          group.push(j);
+          assigned.add(j);
+        }
+      }
+      if (group.length > 1) {
+        assigned.add(i);
+        result.push({
+          key:    rows[i].phash,
+          count:  group.length,
+          method: 'visual',
+          images: group.map(idx => {
+            const { phash: _, ...rest } = rows[idx];
+            return rest;
+          }),
+        });
+      }
+    }
+    return res.json(result);
+  }
+
+  // Default: hash
+  const groups = db.prepare(`
+    SELECT file_hash, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+    FROM images WHERE file_hash IS NOT NULL
+    GROUP BY file_hash HAVING count > 1
+  `).all();
+  res.json(groups.map(g => ({
+    key:    g.file_hash,
+    count:  g.count,
+    method: 'hash',
+    images: g.ids.split(',').map(id => dupImageRow(db, id)).filter(Boolean),
+  })));
+});
+
+// ── Resolve ───────────────────────────────────────────────────────────────────
 
 router.post('/duplicates/resolve', requireAuth, (req, res) => {
   const db = getDb();
-  const { keep_id, delete_ids = [], action = 'db_only' } = req.body || {};
+  const { keep_id, delete_ids = [], action = 'db_only', merge_faces = true } = req.body || {};
   if (!keep_id) return res.status(400).json({ detail: 'keep_id required' });
 
-  for (const did of delete_ids) {
-    if (action === 'delete_file') {
-      const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(did));
-      if (row) try { fs.unlinkSync(row.filepath); } catch {}
+  const tx = db.transaction(() => {
+    for (const did of delete_ids) {
+      deleteImageCascade(db, keep_id, did, action, merge_faces);
     }
-    db.prepare('DELETE FROM images WHERE id=?').run(Number(did));
-  }
-  res.json({ ok: true });
+  });
+  tx();
+  res.json({ ok: true, deleted_ids: delete_ids, merged_count: merge_faces ? delete_ids.length : 0 });
 });
 
 router.post('/duplicates/resolve-batch', requireAuth, (req, res) => {
   const db = getDb();
-  const { groups = [], action = 'db_only' } = req.body || {};
+  const { groups = [], action = 'db_only', merge_faces = true } = req.body || {};
   let resolved = 0;
-  for (const g of groups) {
-    const { keep_id, delete_ids = [] } = g;
-    for (const did of delete_ids) {
-      if (action === 'delete_file') {
-        const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(did));
-        if (row) try { fs.unlinkSync(row.filepath); } catch {}
+  const tx = db.transaction(() => {
+    for (const g of groups) {
+      const { keep_id, delete_ids = [] } = g;
+      for (const did of delete_ids) {
+        deleteImageCascade(db, keep_id, did, action, merge_faces);
+        resolved++;
       }
-      db.prepare('DELETE FROM images WHERE id=?').run(Number(did));
-      resolved++;
     }
-  }
-  res.json({ ok: true, resolved });
+  });
+  tx();
+  res.json({ ok: true, resolved, total_resolved: resolved });
 });
+
+// ── Scan hashes (SHA-256) ─────────────────────────────────────────────────────
 
 router.post('/duplicates/scan-hashes', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -501,27 +656,52 @@ router.post('/duplicates/scan-hashes', requireAuth, async (req, res) => {
   const send = data => res.write(`data: ${JSON.stringify(data)}\n\n`);
   const db   = getDb();
   const rows = db.prepare('SELECT id, filepath FROM images WHERE file_hash IS NULL').all();
-  send({ type: 'start', total: rows.length });
+  send({ started: true, total: rows.length });
 
-  const crypto2 = require('crypto');
   let done = 0;
   for (const row of rows) {
     try {
       const buf  = fs.readFileSync(row.filepath);
-      const hash = crypto2.createHash('md5').update(buf).digest('hex');
+      const hash = require('crypto').createHash('sha256').update(buf).digest('hex');
       db.prepare('UPDATE images SET file_hash=? WHERE id=?').run(hash, row.id);
-      done++;
-      send({ done, total: rows.length });
-    } catch {
-      done++;
-    }
+    } catch {}
+    done++;
+    send({ index: done, total: rows.length });
   }
-  send({ type: 'done', done, total: rows.length });
+  send({ done: true, total: rows.length });
   res.end();
 });
 
-router.post('/duplicates/scan-phash', requireAuth, (req, res) => {
-  res.json({ available: false, error: 'pHash scanning not yet implemented in Node.js backend' });
+// ── Scan pHash (dHash via sharp) ──────────────────────────────────────────────
+
+router.post('/duplicates/scan-phash', requireAuth, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+
+  const send = data => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const db   = getDb();
+
+  // Ensure phash column exists
+  const hasPHash = db.pragma('table_info(images)').some(c => c.name === 'phash');
+  if (!hasPHash) {
+    try { db.prepare('ALTER TABLE images ADD COLUMN phash TEXT').run(); } catch {}
+  }
+
+  const rows = db.prepare('SELECT id, filepath FROM images WHERE phash IS NULL').all();
+  send({ available: true, started: true, total: rows.length });
+
+  let done = 0;
+  for (const row of rows) {
+    try {
+      const h = await computeDHash(row.filepath);
+      db.prepare('UPDATE images SET phash=? WHERE id=?').run(h, row.id);
+    } catch {}
+    done++;
+    send({ index: done, total: rows.length });
+  }
+  send({ done: true, total: rows.length });
+  res.end();
 });
 
 router.post('/duplicates/cleanup-script', requireAuth, (req, res) => {
@@ -915,8 +1095,6 @@ router.get('/cloud-drives', requireAuth, (req, res) => res.json([]));
 // ─────────────────────────────────────────────────────────────────────────────
 // EDITING
 // ─────────────────────────────────────────────────────────────────────────────
-
-const sharp = require('sharp');
 
 // Resolve a DB filepath to an actual path on disk
 function resolveImgPath(filepath) {

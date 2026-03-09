@@ -54,7 +54,7 @@ function reloadStore() {
 // ── File hash ─────────────────────────────────────────────────────────────────
 
 function fileHash(p) {
-  const h = crypto.createHash('md5');
+  const h = crypto.createHash('sha256');
   h.update(fs.readFileSync(p));
   return h.digest('hex');
 }

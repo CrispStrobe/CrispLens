@@ -160,7 +160,7 @@ router.post('/import-processed', requireAuth, (req, res) => {
     .run(stored, imageId);
   if (store) { try { store.close(); } catch {} }
 
-  res.json({ ok: true, image_id: imageId, faces_stored: stored });
+  res.json({ ok: true, image_id: imageId, faces_stored: stored, face_count: stored });
 });
 
 module.exports = router;

@@ -197,21 +197,25 @@
     scanProg = { total: 0, done: 0 };
 
     scanStream = scanPhash(event => {
-      if (!event.available) {
+      // v4: { available: false } → library not ready
+      if (event.available === false && !event.started) {
         scanning = false;
-        alert('imagehash library not installed on server. Run: pip install imagehash');
+        alert('pHash scanning not available on this server.');
         return;
       }
-      if (event.started) {
+      // Start: v4 { started: true, total } or v2 { type: 'start', total }
+      if (event.started || event.type === 'start') {
         scanProg = { total: event.total, done: 0 };
-      } else if (event.done) {
+      // Done: v4 { done: true } or v2 { type: 'done' }
+      } else if (event.done === true || event.type === 'done') {
         scanning = false;
         scanDone = true;
         scanStream = null;
         loadStats();
         if (method === 'visual') loadGroups();
+      // Progress: v4 { index: N } or v2 { index: N }
       } else {
-        scanProg = { ...scanProg, done: event.index };
+        scanProg = { ...scanProg, done: event.index ?? scanProg.done + 1 };
       }
     });
   }
@@ -229,16 +233,19 @@
     hashProg = { total: 0, done: 0 };
 
     hashStream = scanHashes(event => {
-      if (event.started) {
+      // Start: v4 { started: true, total } or v2 { type: 'start', total }
+      if (event.started || event.type === 'start') {
         hashProg = { total: event.total, done: 0 };
-      } else if (event.done) {
+      // Done: v4 { done: true } or v2 { type: 'done' }
+      } else if (event.done === true || event.type === 'done') {
         hashScanning = false;
         hashScanDone = true;
         hashStream = null;
         loadStats();
         if (method === 'hash') loadGroups();
+      // Progress: v4/v2 { index: N }
       } else {
-        hashProg = { ...hashProg, done: event.index };
+        hashProg = { ...hashProg, done: event.index ?? hashProg.done + 1 };
       }
     });
   }

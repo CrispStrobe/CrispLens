@@ -114,6 +114,9 @@ function getDb() {
       ['ai_description',  'ALTER TABLE images ADD COLUMN ai_description TEXT'],
       ['ai_scene_type',   'ALTER TABLE images ADD COLUMN ai_scene_type TEXT'],
       ['ai_tags',         'ALTER TABLE images ADD COLUMN ai_tags TEXT'],
+      ['file_hash',       'ALTER TABLE images ADD COLUMN file_hash TEXT'],
+      ['local_path',      'ALTER TABLE images ADD COLUMN local_path TEXT'],
+      ['phash',           'ALTER TABLE images ADD COLUMN phash TEXT'],
     ];
     for (const [col, sql] of imgMigrations) {
       if (!imgCols.has(col)) {
