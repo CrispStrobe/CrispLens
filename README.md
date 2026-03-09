@@ -12,10 +12,11 @@ A self-hosted face recognition and photo management system. Ships as a high-perf
 |---|---|---|
 | **Backend** | Python / FastAPI / Uvicorn | Node.js / Express |
 | **Inference** | InsightFace (Python) / dlib | SCRFD + ArcFace (ONNX) |
-| **Connection Modes** | Client+Server / Thin Client | Server / Standalone (Browser-only) |
-| **Hardware Accel** | CoreML (macOS) / CUDA (Linux) | WASM / WebGL / WebGPU |
-| **Mobile** | Capacitor (connects to VPS) | PWA / Capacitor (Local Inference) |
-| **Recommended for** | High-perf server deployments | Privacy-first / Serverless / Demo |
+| **Connection Modes** | Client+Server / Thin Client | Server / Standalone / Electron |
+| **Hardware Accel** | CoreML (macOS) / CUDA (Linux) | CoreML / CUDA / DirectML / WebGL / WebGPU |
+| **Mobile** | Capacitor (connects to VPS) | PWA / Capacitor (Local On-Device Inference) |
+| **Duplicate Detection** | SHA256 / pHash / name+size | SHA256 (pre-ONNX, skip/overwrite/always-add) |
+| **Recommended for** | High-perf server deployments | Privacy-first / Serverless / Desktop / Mobile |
 
 > **v4** lives in `electron-app-v4/` — zero Python dependency, same 512D ArcFace vectors, same SQLite DB.
 > Run with `cd electron-app-v4 && npm install && node server.js`.
@@ -25,14 +26,15 @@ A self-hosted face recognition and photo management system. Ships as a high-perf
 ## Table of Contents
 
 - [Features](#features)
-- [v4 — Pure Node.js (Server & Standalone)](#v4--pure-nodejs-server--standalone)
+- [v4 — Pure Node.js](#v4--pure-nodejs)
   - [Server Mode](#server-mode)
-  - [Standalone Mode (Browser-only)](#standalone-mode-browser-only)
+  - [Standalone Mode](#standalone-mode-browser-only)
+  - [Desktop App (Electron)](#desktop-app-electron)
+  - [Mobile (Capacitor)](#mobile-capacitor)
 - [v2 — Python FastAPI Setup](#v2--python-fastapi-setup)
-- [Desktop App V2 — Build & Run](#desktop-app-v2--build--run)
 - [Architecture Overview](#architecture-overview)
-- [VPS Deployment](#vps-deployment)
 - [Deployment Topologies](#deployment-topologies)
+- [VPS Deployment](#vps-deployment)
 - [Troubleshooting](#troubleshooting)
 - [Legacy Versions (v1 Gradio)](#legacy-versions-v1-gradio)
 
@@ -41,17 +43,18 @@ A self-hosted face recognition and photo management system. Ships as a high-perf
 ## Features
 
 - **Face detection & recognition** — SCRFD + ArcFace ONNX (v4) or InsightFace/dlib (v2). Bit-identical 512D vectors across versions.
-- **High-Resolution Standalone Storage** — v4 Standalone mode supports dynamic storage resolution (up to 1200px) in the browser's IndexedDB.
-- **Hybrid Ingest Modes** — Upload-full or `local_infer` (ONNX on client, only vectors sent to remote).
-- **Privacy Mode** — `local_infer` ensures full images never leave your local machine.
-- **AI Image Enrichment** — 9 VLM providers (Anthropic, OpenAI, etc.); scene type, description, auto-tags.
+- **Duplicate Import Detection** — v4: SHA-256 pre-check before ONNX (fast skip), plus overwrite and always-add modes. v2: SHA256 / pHash / name+size with resolve actions.
+- **Privacy Mode** — `local_infer`: ONNX runs on your device, only 512D vectors + thumbnail sent to remote. Full images never leave your machine.
+- **Hybrid Ingest Modes** — direct upload, server-side folder scan, or `import-processed` (pre-computed vectors from any client).
+- **AI Image Enrichment** — 9 VLM providers (Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama); scene type, description, auto-tags.
+- **Offline-First (Standalone)** — browser-side WASM SQLite + HNSW index (Voy). Works without any server. Syncs to remote when back online.
 - **Role-based Access Control** — admin / mediamanager / user roles; image visibility (shared/private).
-- **Duplicate Detection** — filename+size, SHA256, pHash visual; resolve: delete/db-only/symlink.
-- **Image Editing** — EXIF-preserving rotate, free-draw crop, format conversion.
+- **Settings Persistence** — key settings survive hard reset via SQLite `pref_*` keys and preserved `localStorage` config keys.
+- **Image Editing** — EXIF-preserving rotate, free-draw crop, canvas resize, BFL AI editing (Flux Kontext/Fill).
 
 ---
 
-## v4 — Pure Node.js (Server & Standalone)
+## v4 — Pure Node.js
 
 No Python setup required. Uses ONNX Runtime for server-side or browser-side inference.
 
@@ -62,18 +65,48 @@ cd electron-app-v4
 npm install
 node server.js          # → http://localhost:7861
 ```
+Login: **admin / admin**
 
 ### Standalone Mode (Browser-only)
-The app runs entirely in the browser using WASM SQLite and WASM ONNX.
+The app runs entirely in the browser using WASM SQLite and WASM ONNX — no server required.
 - **Database**: Browser IndexedDB (WASM SQLite).
-- **Inference**: SCRFD + ArcFace (WASM) + Optional MediaPipe (GPU).
-- **Resolution**: Adjustable via **Settings → Offline Cache → Thumbnail size**. Storing images at up to 1200px allows for high-quality archival entirely within the browser.
+- **Inference**: SCRFD + ArcFace (WASM) + optional MediaPipe (GPU).
+- **Storage Resolution**: Adjustable via **Settings → Offline Cache → Thumbnail size** (200–1200 px).
+- **Offline Sync**: Processed results queue locally and push to a remote server on reconnect.
+
+### Desktop App (Electron)
+```bash
+cd electron-app-v4
+npm run build:ui        # build the Svelte renderer
+npm run start:electron  # launch Electron
+```
+The Electron app embeds the Express server in-process — no separate terminal needed. It automatically finds a free port (starting at 7861) and offers full database file management (open existing, create new, reset to default).
+
+### Mobile (Capacitor)
+Local inference on iOS/Android — full images never leave the device. Only 512D vectors + thumbnails are sent to your configured remote server.
+```bash
+npm run mobile:setup:ios    # or :android (first time)
+npm run mobile:sync
+npm run mobile:run:ios      # or :android
+```
+
+---
+
+## Duplicate Import Detection (v4)
+
+Found in **Process → ⚙ Detection settings → Duplicates**:
+
+| Mode | Behaviour |
+|---|---|
+| **Skip** (default) | Hash the file before running ONNX; skip entirely if already in DB. Fast — saves full inference time on re-scanned folders. |
+| **Overwrite** | Delete existing faces/tags, re-process the image, update the existing row in-place. |
+| **Always add** | Insert a new record even if the same content exists — for intentional re-imports. |
 
 ---
 
 ## v2 — Python FastAPI Setup
 
-Best for high-performance server deployments where Python InsightFace can utilize GPU or CoreML acceleration.
+Best for high-performance server deployments where Python InsightFace can utilise GPU or CoreML acceleration.
 
 ### Prerequisites
 - Python 3.10+
@@ -90,11 +123,8 @@ uvicorn fastapi_app:app --reload --port 7865
 ```
 Open `http://localhost:7865`. Create admin account on first login.
 
----
+### v2 Desktop App (Electron + Python backend)
 
-## Desktop App V2 — Build & Run
-
-### Development Mode
 ```bash
 # Terminal 1 — FastAPI backend
 uvicorn fastapi_app:app --reload --port 7865
@@ -108,7 +138,7 @@ cd electron-app-v2
 ELECTRON_DEV=1 npm start
 ```
 
-### Building Binaries
+**Building binaries:**
 ```bash
 cd electron-app-v2/renderer && npm run build
 cd .. && npm run build           # DMG (macOS), NSIS (Win), AppImage (Linux)
@@ -120,19 +150,36 @@ cd .. && npm run build           # DMG (macOS), NSIS (Win), AppImage (Linux)
 
 ### v4 — Three-Axis Connection Model
 
-v4 separates three concerns: UI Source, API Server, and Inference Engine.
+v4 separates three independent concerns: UI Source, API Server, and Inference Engine.
 
 ```
-Axis 1: UI source         Axis 2: API + DB server     Axis 3: Inference engine
-─────────────────         ──────────────────────────   ──────────────────────────
-Where the JS bundle       Where all API calls go        Where face detection runs
-comes from                (set in Settings UI)          (set in Processing Override)
+Axis 1: UI source        Axis 2: API + DB server      Axis 3: Inference engine
+─────────────────        ──────────────────────────    ────────────────────────
+Where the JS bundle      Where all API calls go         Where face detection runs
+comes from               (set in Settings UI)           (set in Processing settings)
 
-local v4 Node.js    ──►   localhost:7861 (local v4)  ──►  Local ONNX (default)
-compiled/hosted     ──►   https://vps (remote v2)    ──►  [remote handles its own]
-any static host     ──►   any CrispLens instance     ──►  Remote v2 (upload_bytes)
-                                                      ──►  Local ONNX → vectors only
-                                                           (local_infer = privacy mode)
+local v4 Node.js   ──►   localhost:7861 (local v4) ──►  Local ONNX (Node.js / WASM)
+compiled/hosted    ──►   https://vps (remote v2)   ──►  Remote v2 (upload_bytes)
+Vercel / GitHub    ──►   any CrispLens instance    ──►  Local ONNX → vectors only
+                                                         (local_infer = privacy mode)
+```
+
+### Duplicate detection flow (v4 local/standalone)
+
+```
+File selected
+    │
+    ├─ duplicateMode = 'skip'?
+    │       └── SHA-256 hash → DB lookup → already exists? → skip (no ONNX run)
+    │
+    └── Run SCRFD + ArcFace (ONNX)
+            │
+            ├── importProcessed({ file_hash, local_path, duplicate_mode })
+            │       ├── 'skip'      → return {skipped:true} if hash/path matches
+            │       ├── 'overwrite' → DELETE old faces/tags, UPDATE row, re-insert
+            │       └── 'always_add' → INSERT new row regardless
+            │
+            └── Store: filename, filepath, local_path, file_hash, thumbnail, embeddings
 ```
 
 ---
@@ -147,7 +194,7 @@ sudo bash /opt/crisp-lens/deploy-v2.sh
 ```
 
 ### Container / Docker (v4)
-The v4 edition is ideal for containerized environments.
+The v4 edition is ideal for containerised environments.
 ```bash
 docker build -t crisplens .
 docker run -d -p 7861:7861 -v crisp-data:/data --name crisplens crisplens
@@ -157,9 +204,11 @@ docker run -d -p 7861:7861 -v crisp-data:/data --name crisplens crisplens
 
 ## Deployment Topologies
 
-- **Local-only**: Each user runs their own Electron app with a local database.
+- **Local-only**: Each user runs their own Electron app with a local database file.
 - **Shared NAS**: Multiple clients point to a single `face_recognition.db` on a network share.
 - **Central VPS**: A single high-power server handles API and storage; clients connect via browser or thin Electron shell.
+- **Privacy / Offline**: Standalone mode — no server at all; full ONNX inference and storage in-browser; optionally sync to VPS when online.
+- **Hybrid mobile**: Capacitor app runs ONNX locally on iOS/Android; only vectors + thumbnails are sent to the remote server.
 
 ---
 
@@ -167,10 +216,15 @@ docker run -d -p 7861:7861 -v crisp-data:/data --name crisplens crisplens
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| "No faces found" | Image too small / threshold too high | Lower `detection_threshold` or increase storage resolution (v4 Standalone). |
-| Startup takes >60 s | `buffalo_l` loading on CPU | Use `buffalo_s` or enable `use_coreml` (macOS). |
-| `localfile://` fail | macOS Full Disk Access | Add CrispLens to System Preferences → Privacy → Full Disk Access. |
-| SSE stream stops | nginx buffering | Ensure `proxy_buffering off` in nginx config for `/api/`. |
+| "No images shown" in Electron | `db_mode` defaulted to `local` | Fixed automatically; check Settings → Storage Mode |
+| Port 7861 in use | Another process | Electron auto-picks next free port (7862–7881) |
+| "No faces found" | Image too small / threshold too high | Lower `detection_threshold`; increase storage resolution in Standalone mode |
+| Startup takes >60 s | `buffalo_l` loading on CPU | Enable CoreML (macOS) or CUDA in Settings → Hardware Acceleration |
+| iOS photo picker needs 2 taps | Capacitor Camera plugin lazy-loaded | Fixed — plugin pre-imported at module init |
+| `localfile://` fail | macOS Full Disk Access | Add CrispLens to System Preferences → Privacy → Full Disk Access |
+| SSE stream stops | nginx buffering | Add `proxy_buffering off` in nginx config for `/api/` |
+| Voy match returns "Unknown" | Unidentified embeddings in HNSW index | Fixed — only named-person embeddings are indexed |
+| Settings wiped after hard reset | Config keys not preserved | Fixed — `hardResetApp()` saves/restores `_CONFIG_KEYS` from `localStorage` |
 
 ---
 
@@ -178,14 +232,13 @@ docker run -d -p 7861:7861 -v crisp-data:/data --name crisplens crisplens
 
 The original Gradio-based UI is still available but no longer actively developed.
 
-### Python setup (v1 Gradio)
 ```bash
 source venv/bin/activate
 python face_rec_ui.py   # → http://localhost:7860
 ```
-Default credentials: **admin / admin123**.
+Default credentials: **admin / admin123**
 
 ---
 
-For detailed v2 documentation, see [electron-app-v2/README.md](electron-app-v2/README.md).
 For detailed v4 documentation, see [electron-app-v4/README.md](electron-app-v4/README.md).
+For detailed v2 documentation, see [electron-app-v2/README.md](electron-app-v2/README.md).
