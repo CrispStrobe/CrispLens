@@ -1107,6 +1107,9 @@ export const localAdapter = {
     const person = people[0];
     if (!person) throw new Error('Failed to create or find person');
     
+    // Ensure row exists — face may have been detected without an embedding stored
+    await run('INSERT OR IGNORE INTO face_embeddings(face_id, person_id, embedding_dimension) VALUES(?,?,?)',
+      [face_id, person.id, 0]);
     await run('UPDATE face_embeddings SET person_id=? WHERE face_id=?', [person.id, face_id]);
     const countRows = await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?', [person.id]);
     const cnt = countRows[0]?.n ?? 0;
