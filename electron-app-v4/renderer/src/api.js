@@ -975,6 +975,11 @@ export function adjustImage(params) {
   if (g) return g;
   return post('/edit/adjust', params);
 }
+export function cloneImageMetadata(sourceId, targetId) {
+  const g = _guard('cloneImageMetadata', () => localAdapter.cloneImageMetadata(sourceId, targetId));
+  if (g) return g;
+  return Promise.resolve({ ok: true }); // server mode: metadata preserved by server
+}
 
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 

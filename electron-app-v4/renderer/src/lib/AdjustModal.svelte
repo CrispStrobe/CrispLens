@@ -7,7 +7,7 @@
    */
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../stores.js';
-  import { adjustImage, downloadImage, thumbnailUrl, isLocalMode, importProcessed } from '../api.js';
+  import { adjustImage, downloadImage, thumbnailUrl, isLocalMode, importProcessed, cloneImageMetadata } from '../api.js';
 
   export let imageId   = null;
   export let imageFilename = '';
@@ -381,9 +381,12 @@
           faces:        [],
           duplicate_mode: 'skip',
         });
+        const newId = res.image_id ?? null;
+        // Copy faces, person names, tags, description from original
+        if (newId) await cloneImageMetadata(imageId, newId);
         result = {
           ok: true,
-          new_image_id: res.image_id ?? null,
+          new_image_id: newId,
           filepath: adjName,
           width: srcW,
           height: srcH,

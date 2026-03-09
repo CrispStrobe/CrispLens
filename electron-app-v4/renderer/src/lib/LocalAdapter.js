@@ -1102,6 +1102,49 @@ export const localAdapter = {
     return mapped;
   },
 
+  /**
+   * Copy faces (with embeddings + person assignments), tags, description and scene_type
+   * from sourceId to targetId. Used when saving an adjusted/cropped variant so the new
+   * image entry inherits all recognition work already done on the original.
+   */
+  async cloneImageMetadata(sourceId, targetId) {
+    // 1. Copy description + scene_type
+    const [src] = await query('SELECT description, scene_type FROM images WHERE id=?', [sourceId]);
+    if (src?.description || src?.scene_type) {
+      await run('UPDATE images SET description=?, scene_type=? WHERE id=?',
+                [src.description ?? null, src.scene_type ?? null, targetId]);
+    }
+
+    // 2. Copy tags
+    const tags = await query('SELECT tag FROM image_tags WHERE image_id=?', [sourceId]);
+    for (const { tag } of tags)
+      await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [targetId, tag]);
+
+    // 3. Copy faces (bbox + confidence) and their embeddings/person assignments
+    const faces = await query('SELECT * FROM faces WHERE image_id=?', [sourceId]);
+    for (const f of faces) {
+      const faceRes = await run(
+        `INSERT INTO faces(image_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_confidence)
+         VALUES(?,?,?,?,?,?)`,
+        [targetId, f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2, f.detection_confidence]
+      );
+      const newFaceId = faceRes.lastInsertRowid ?? faceRes.insertId;
+      if (!newFaceId) continue;
+
+      const [emb] = await query('SELECT * FROM face_embeddings WHERE face_id=?', [f.id]);
+      if (emb) {
+        await run(
+          `INSERT OR IGNORE INTO face_embeddings
+             (face_id, person_id, embedding_vector, embedding_dimension, verified)
+           VALUES(?,?,?,?,?)`,
+          [newFaceId, emb.person_id ?? null, emb.embedding_vector ?? null,
+           emb.embedding_dimension ?? 0, emb.verified ?? 0]
+        );
+      }
+    }
+    return { ok: true, faces_copied: faces.length };
+  },
+
   async patchMetadata(id, { description='', scene_type='', tags_csv='' }) {
     await run(`UPDATE images SET description=?, scene_type=? WHERE id=?`,
               [description || null, scene_type || null, id]);
