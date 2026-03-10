@@ -193,4 +193,77 @@ router.post('/assign-cluster', requireAuth, (req, res) => {
   res.json({ ok: true, person_id: person.id });
 });
 
+// ── POST /faces/re-identify ────────────────────────────────────────────────────
+// Run recognition on all (or selected) unidentified faces against the trained index.
+// Body: { face_ids?: number[], rec_thresh?: number }
+// Returns: { updated: number, total_checked: number }
+
+router.post('/re-identify', requireAuth, (req, res) => {
+  const db = getDb();
+  const { face_ids, rec_thresh = 0.40 } = req.body || {};
+  const threshold = parseFloat(rec_thresh) || 0.40;
+
+  // Load recognition store
+  let store = null;
+  try {
+    const { VectorStore } = require('../../core/search');
+    const dbPath = process.env.DB_PATH ||
+      require('path').join(__dirname, '..', '..', '..', 'face_recognition.db');
+    store = new VectorStore(dbPath);
+    store.load();
+  } catch (e) {
+    console.warn('[re-identify] VectorStore unavailable:', e.message);
+  }
+
+  if (!store || store.vectors.length === 0) {
+    if (store) { try { store.close(); } catch {} }
+    return res.json({ updated: 0, total_checked: 0, message: 'No trained faces in index' });
+  }
+
+  // Get unidentified face embeddings (or specific face_ids)
+  let rows;
+  if (face_ids?.length) {
+    const placeholders = face_ids.map(() => '?').join(',');
+    rows = db.prepare(`
+      SELECT fe.face_id, fe.id AS emb_id, fe.embedding_vector
+      FROM face_embeddings fe
+      WHERE fe.face_id IN (${placeholders}) AND fe.person_id IS NULL AND fe.embedding_vector IS NOT NULL
+    `).all(...face_ids.map(Number));
+  } else {
+    rows = db.prepare(`
+      SELECT fe.face_id, fe.id AS emb_id, fe.embedding_vector
+      FROM face_embeddings fe
+      WHERE fe.person_id IS NULL AND fe.embedding_vector IS NOT NULL
+    `).all();
+  }
+
+  let updated = 0;
+  const updateStmt = db.prepare('UPDATE face_embeddings SET person_id=?, recognition_confidence=? WHERE id=?');
+  const updateCounts = db.prepare('UPDATE people SET total_appearances=(SELECT COUNT(*) FROM face_embeddings WHERE person_id=?) WHERE id=?');
+
+  const updatedPeople = new Set();
+  for (const row of rows) {
+    try {
+      const emb = new Float32Array(row.embedding_vector.buffer,
+        row.embedding_vector.byteOffset, row.embedding_vector.byteLength / 4);
+      const top1 = store.search(emb, 1)[0];
+      if (top1 && top1.similarity >= threshold) {
+        const conf = Math.max(0, Math.min(1, top1.similarity));
+        updateStmt.run(top1.personId, conf, row.emb_id);
+        updatedPeople.add(top1.personId);
+        updated++;
+      }
+    } catch {}
+  }
+
+  // Update appearance counts for all affected people
+  for (const pid of updatedPeople) {
+    updateCounts.run(pid, pid);
+  }
+
+  try { store.close(); } catch {}
+  console.log(`[re-identify] Checked ${rows.length} unidentified faces, updated ${updated}`);
+  res.json({ updated, total_checked: rows.length });
+});
+
 module.exports = router;

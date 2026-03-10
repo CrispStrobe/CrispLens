@@ -44,14 +44,53 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
   const min_face_size = req.body.min_face_size ? parseInt(req.body.min_face_size)   : undefined;
   const max_size      = req.body.max_size      ? parseInt(req.body.max_size)        : undefined;
 
+  const db = getDb();
   try {
+    // ── Duplicate check by file hash ──────────────────────────────────────────
+    let uploadedHash = null;
+    try {
+      const h = crypto.createHash('sha256');
+      h.update(fs.readFileSync(req.file.path));
+      uploadedHash = h.digest('hex');
+    } catch {}
+
+    if (uploadedHash) {
+      const dup = db.prepare('SELECT id, owner_id FROM images WHERE file_hash=? LIMIT 1').get(uploadedHash);
+      if (dup) {
+        // Clean up the redundant upload
+        try { fs.unlinkSync(req.file.path); } catch {}
+        const sharedDup = (dup.owner_id !== owner_id);
+        console.log(`[upload-local] Duplicate hash ${uploadedHash.slice(0, 12)}… → image_id=${dup.id} (shared=${sharedDup})`);
+        return res.json({
+          ok: true, skipped: true, shared_duplicate: sharedDup,
+          image_id: dup.id, face_count: 0, faces_found: 0,
+          vlm: { description: null, scene_type: null, tags: [] },
+        });
+      }
+    }
+
+    // Also check by local_path (same source file re-uploaded)
+    if (local_path) {
+      const dup = db.prepare('SELECT id, owner_id FROM images WHERE local_path=? OR filepath=? LIMIT 1').get(local_path, local_path);
+      if (dup) {
+        try { fs.unlinkSync(req.file.path); } catch {}
+        const sharedDup = (dup.owner_id !== owner_id);
+        console.log(`[upload-local] Duplicate local_path ${local_path} → image_id=${dup.id} (shared=${sharedDup})`);
+        return res.json({
+          ok: true, skipped: true, shared_duplicate: sharedDup,
+          image_id: dup.id, face_count: 0, faces_found: 0,
+          vlm: { description: null, scene_type: null, tags: [] },
+        });
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const result = await processImageIntoDb(req.file.path, null, {
       local_path, visibility, rec_thresh,
       skip_recognition: skip_faces,
       skip_vlm,
       owner_id, det_model, det_thresh, min_face_size, max_size,
     });
-    const db = getDb();
     const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
     const vlmTags  = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     res.json({
@@ -145,7 +184,7 @@ router.post('/import-processed', requireAuth, (req, res) => {
         const top1 = store.search(embF32, 1)[0];
         if (top1 && top1.similarity >= 0.40) {
           personId = top1.personId;
-          recConf  = top1.similarity;
+          recConf  = Math.max(0, Math.min(1, top1.similarity));
         }
       }
 

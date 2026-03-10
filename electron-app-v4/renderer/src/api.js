@@ -1057,6 +1057,7 @@ export function faceCropUrl(imageId, faceId, size = 128) {
   return `${BASE}/faces/face-crop?image_id=${imageId}&face_id=${faceId}&size=${size}`; 
 }
 export function assignCluster(faceIds, personName) { return post('/faces/assign-cluster', { face_ids: faceIds, person_name: personName }); }
+export function reIdentifyFaces(faceIds, recThresh) { return post('/faces/re-identify', { face_ids: faceIds?.length ? faceIds : undefined, rec_thresh: recThresh }); }
 
 // ── Ratings, flags, rotation ──────────────────────────────────────────────────
 

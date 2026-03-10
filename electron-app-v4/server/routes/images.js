@@ -132,7 +132,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const rows = db.prepare(
     `SELECT i.* FROM images i ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`
-  ).all(...params, Number(limit), Number(offset));
+  ).all(...params, Math.floor(Number(limit) || 500), Math.floor(Number(offset) || 0));
 
   const total = db.prepare(`SELECT COUNT(*) AS n FROM images i ${whereClause}`).get(...params).n;
 

@@ -196,7 +196,7 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
       const top1 = store.search(face.embedding, 1)[0];
       if (top1 && top1.similarity >= recThresh) {
         personId = top1.personId;
-        recConf  = top1.similarity;
+        recConf  = Math.max(0, Math.min(1, top1.similarity));
       }
     }
 

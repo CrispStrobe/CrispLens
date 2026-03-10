@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { allPeople, t } from '../stores.js';
-  import { fetchFaceClusters, faceCropUrl, assignCluster, fetchPeople } from '../api.js';
+  import { fetchFaceClusters, faceCropUrl, assignCluster, fetchPeople, reIdentifyFaces } from '../api.js';
 
   let clusters = [];
   let loading = false;
@@ -90,6 +90,27 @@
     skipped = new Set([...skipped, clusterId]);
   }
 
+  let reIdentifying = false;
+  let reIdentifyMsg = '';
+
+  async function doReIdentifyAll() {
+    if (!confirm('Run recognition on all unidentified faces against the trained person index?')) return;
+    reIdentifying = true;
+    reIdentifyMsg = 'Running…';
+    try {
+      const r = await reIdentifyFaces(null, threshold);
+      reIdentifyMsg = `✓ ${r.updated} of ${r.total_checked} faces matched`;
+      if (r.updated > 0) {
+        allPeople.set(await fetchPeople().catch(() => []));
+        await loadClusters();
+      }
+    } catch (e) {
+      reIdentifyMsg = '✗ ' + e.message;
+    } finally {
+      reIdentifying = false;
+    }
+  }
+
   $: visibleClusters = clusters.filter(c => !skipped.has(c.cluster_id) && c.size > 0);
   $: totalFaces = clusters.reduce((s, c) => s + c.size, 0);
 </script>
@@ -116,6 +137,11 @@
       </label>
       <button class="primary" on:click={applyThreshold}>{$t('apply')}</button>
       <button on:click={loadClusters} title={$t('refresh')}>🔄</button>
+      <button class="re-id-btn" on:click={doReIdentifyAll} disabled={reIdentifying}
+        title="Match all unidentified faces against the trained person index">
+        {reIdentifying ? '…' : '🔍 Re-identify all'}
+      </button>
+      {#if reIdentifyMsg}<span class="re-id-msg">{reIdentifyMsg}</span>{/if}
       <label class="toggle-label" title="Include already-identified faces in clusters">
         <input type="checkbox" bind:checked={showAll} on:change={loadClusters} />
         All faces
