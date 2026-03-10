@@ -1194,16 +1194,24 @@
     engineReloading = true;
     engineReloadMsg = '';
     try {
-      await reloadEngine();
-      engineReloadMsg = 'Reload queued — refreshing status in 5 s…';
-      // Poll once after a short delay to show the updated state
-      setTimeout(async () => {
-        try { engineStatus = await fetchEngineStatus(); } catch {}
-        engineReloadMsg = engineStatus?.ready
-          ? '✓ Engine ready'
-          : (engineStatus?.error ? '✗ ' + engineStatus.error : 'Still loading…');
+      if (isLocalMode()) {
+        // In standalone mode, release ONNX sessions so they'll be reloaded fresh on next inference
+        const { faceEngineWeb } = await import('./FaceEngineWeb.js');
+        await faceEngineWeb.releaseModels();
+        engineReloadMsg = '✓ Engine sessions released — will reload on next use';
         engineReloading = false;
-      }, 5000);
+      } else {
+        await reloadEngine();
+        engineReloadMsg = 'Reload queued — refreshing status in 5 s…';
+        // Poll once after a short delay to show the updated state
+        setTimeout(async () => {
+          try { engineStatus = await fetchEngineStatus(); } catch {}
+          engineReloadMsg = engineStatus?.ready
+            ? '✓ Engine ready'
+            : (engineStatus?.error ? '✗ ' + engineStatus.error : 'Still loading…');
+          engineReloading = false;
+        }, 5000);
+      }
     } catch (e) {
       engineReloadMsg = '✗ ' + e.message;
       engineReloading = false;

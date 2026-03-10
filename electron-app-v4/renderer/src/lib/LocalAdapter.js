@@ -853,6 +853,21 @@ export const localAdapter = {
         WHERE f.image_id = ?
         ORDER BY f.id
       `, [id]);
+      // Decode thumbnail dimensions from blob without loading a full Image element
+      let thumb_width = null, thumb_height = null;
+      if (r.thumbnail_blob) {
+        try {
+          let b64 = r.thumbnail_blob instanceof Uint8Array ? uint8ToBase64(r.thumbnail_blob) : r.thumbnail_blob;
+          if (!b64.startsWith('data:')) b64 = `data:image/jpeg;base64,${b64}`;
+          const dims = await new Promise(resolve => {
+            const im = new Image();
+            im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+            im.onerror = () => resolve(null);
+            im.src = b64;
+          });
+          if (dims) { thumb_width = dims.w; thumb_height = dims.h; }
+        } catch {}
+      }
       const img = {
         ...r,
         ai_description:  _unwrapDescription(r.description),
@@ -862,6 +877,8 @@ export const localAdapter = {
         server_path:     r.filepath,
         detected_people: faceRows,
         face_count:      faceRows.length,
+        thumb_width,
+        thumb_height,
       };
       _cache([img]);
       return img;
@@ -947,7 +964,9 @@ export const localAdapter = {
       // Fallback to thumbnail_blob if full file failed
       if (!fileObj && imgRow.thumbnail_blob) {
         console.log(`[LocalAdapter] Falling back to thumbnail_blob...`);
-        const b64 = imgRow.thumbnail_blob.startsWith('data:') ? imgRow.thumbnail_blob : `data:image/jpeg;base64,${imgRow.thumbnail_blob}`;
+        let rawThumb = imgRow.thumbnail_blob;
+        if (rawThumb instanceof Uint8Array) rawThumb = uint8ToBase64(rawThumb);
+        const b64 = rawThumb.startsWith('data:') ? rawThumb : `data:image/jpeg;base64,${rawThumb}`;
         const res = await fetch(b64);
         const blob = await res.blob();
         fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: 'image/jpeg' });

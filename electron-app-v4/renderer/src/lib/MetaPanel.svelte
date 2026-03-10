@@ -182,8 +182,8 @@
       {#if image.focal_length} · {image.focal_length}mm{/if}
     </div>
   {/if}
-  {#if image.width && image.height}
-    <div class="exif-line dim">{image.width} × {image.height}</div>
+  {#if image.thumb_width && image.thumb_height}
+    <div class="exif-line dim">🖼 {image.thumb_width} × {image.thumb_height} (stored)</div>
   {/if}
 
   <div class="divider"></div>

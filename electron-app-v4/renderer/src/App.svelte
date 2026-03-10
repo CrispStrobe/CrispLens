@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages } from './stores.js';
   import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages, isLocalMode, setLocalMode } from './api.js';
+  import { installConsoleCapture } from './lib/ConsoleCapture.js';
+  installConsoleCapture(); // capture console output for in-app log viewer (standalone mode)
   import syncManager from './lib/SyncManager.js';
 
   import Sidebar     from './lib/Sidebar.svelte';

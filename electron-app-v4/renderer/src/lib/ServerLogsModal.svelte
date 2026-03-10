@@ -1,6 +1,7 @@
 <script>
   import { t } from '../stores.js';
-  import { fetchServerLogs, fetchServerLogsJson } from '../api.js';
+  import { fetchServerLogs, fetchServerLogsJson, isLocalMode } from '../api.js';
+  import { getCapturedLines } from './ConsoleCapture.js';
   import { createEventDispatcher, onMount, tick } from 'svelte';
 
   export let show = false;
@@ -34,7 +35,15 @@
     loading = true;
     error   = '';
     lines   = [];
-    
+
+    // In standalone/local mode, show captured browser console log
+    if (isLocalMode()) {
+      lines = getCapturedLines(lineCount);
+      logPath = 'browser console (standalone mode)';
+      loading = false;
+      return;
+    }
+
     if (controller) controller.abort();
     controller = new AbortController();
 
