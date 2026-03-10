@@ -143,9 +143,20 @@ router.get('/', requireAuth, (req, res) => {
 
 router.get('/:id', requireAuth, (req, res) => {
   const db  = getDb();
-  const row = db.prepare('SELECT * FROM images WHERE id = ?').get(Number(req.params.id));
+  const id  = Number(req.params.id);
+  const row = db.prepare('SELECT * FROM images WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  res.json(rowToApi(row));
+  const image = rowToApi(row);
+  // Populate detected_people for MetaPanel face list
+  image.detected_people = db.prepare(`
+    SELECT f.id AS face_id, fe.person_id, p.name
+    FROM faces f
+    LEFT JOIN face_embeddings fe ON fe.face_id = f.id
+    LEFT JOIN people p ON fe.person_id = p.id
+    WHERE f.image_id = ?
+    ORDER BY f.id
+  `).all(id);
+  res.json(image);
 });
 
 // ── GET /images/:id/faces ─────────────────────────────────────────────────────
@@ -282,18 +293,17 @@ router.patch('/:id/metadata', requireAuth, (req, res) => {
   const { description = '', scene_type = '', tags_csv = '' } = req.body || {};
   const id = Number(req.params.id);
 
-  db.prepare('UPDATE images SET description=?, ai_scene_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .run(description || null, scene_type || null, id);
+  const tagNames = tags_csv ? tags_csv.split(',').map(t => t.trim()).filter(Boolean) : [];
+  db.prepare(`
+    UPDATE images SET ai_description=?, ai_scene_type=?, ai_tags=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+  `).run(description || null, scene_type || null, tagNames.length ? tagNames.join(',') : null, id);
 
-  // Sync tags
-  if (tags_csv !== undefined) {
-    const tagNames = tags_csv.split(',').map(t => t.trim()).filter(Boolean);
-    db.prepare('DELETE FROM image_tags WHERE image_id=?').run(id);
-    for (const name of tagNames) {
-      db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
-      const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
-      db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(id, tag.id);
-    }
+  // Sync tags junction table
+  db.prepare('DELETE FROM image_tags WHERE image_id=?').run(id);
+  for (const name of tagNames) {
+    db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+    const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+    db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(id, tag.id);
   }
 
   res.json({ ok: true });

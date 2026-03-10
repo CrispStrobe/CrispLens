@@ -1011,12 +1011,16 @@ router.get('/api-keys/models/:provider', requireAuth, async (req, res) => {
         });
         if (resp.ok) {
           const data = await resp.json();
+          // Only include vision/multimodal models (those that accept image input)
           const models = (data.data || [])
-            .filter(m => m.id)
+            .filter(m => m.id && (
+              m.architecture?.modality?.includes('image') ||
+              m.architecture?.input_modalities?.includes?.('image')
+            ))
             .map(m => m.id)
             .sort();
           if (models.length > 0) {
-            console.log(`[api-keys/models] OpenRouter: ${models.length} models fetched`);
+            console.log(`[api-keys/models] OpenRouter: ${models.length} vision models fetched`);
             return res.json({ models });
           }
         } else {

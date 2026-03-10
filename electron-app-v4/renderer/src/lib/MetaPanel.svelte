@@ -231,11 +231,13 @@
 
   <!-- Scene type -->
   <div class="section-label">🎬 {$t('scene_type')}</div>
-  <select bind:value={scene_type} class="full">
-    {#each SCENE_TYPES as st}
-      <option value={st}>{st || $t('no_results_found')}</option>
+  <input type="text" bind:value={scene_type} class="full" placeholder="indoor, portrait, conference…"
+         list="scene-type-suggestions" />
+  <datalist id="scene-type-suggestions">
+    {#each SCENE_TYPES.filter(Boolean) as st}
+      <option value={st}></option>
     {/each}
-  </select>
+  </datalist>
 
   <!-- Description -->
   <div class="section-label">📝 {$t('description')}</div>

@@ -52,14 +52,15 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
       owner_id, det_model, det_thresh, min_face_size, max_size,
     });
     const db = getDb();
-    const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
+    const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
+    const vlmTags  = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     res.json({
       ok: true,
       image_id:    result.imageId,
       face_count:  result.facesFound,
       faces_found: result.facesFound,
       filepath:    req.file.path,
-      vlm: { description: enriched?.ai_description || null, scene_type: enriched?.ai_scene_type || null },
+      vlm: { description: enriched?.ai_description || null, scene_type: enriched?.ai_scene_type || null, tags: vlmTags },
     });
   } catch (err) {
     // Clean up uploaded file on failure

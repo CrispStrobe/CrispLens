@@ -676,7 +676,12 @@
           }
         } else {
           queue = queue.map(q => q.id === item.id
-            ? { ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? 0 }
+            ? {
+                ...q, status: 'done', imageId: resp.image_id, faces: resp.face_count ?? 0,
+                description: resp.vlm?.description ?? '',
+                sceneType:   resp.vlm?.scene_type  ?? '',
+                tags:        resp.vlm?.tags        ?? [],
+              }
             : q);
         }
       } catch (e) {
