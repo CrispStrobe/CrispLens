@@ -150,41 +150,46 @@
   {#if image.width && image.height}
   <div class="exif-line"><b>{$t('quality')}:</b> {image.width} × {image.height}</div>
   {/if}
+  {#if image.thumb_width && image.thumb_height && (image.thumb_width !== image.width || image.thumb_height !== image.height)}
+  <div class="exif-line dim">🖼 {image.thumb_width} × {image.thumb_height} ({$t('stored_thumbnail') || 'stored'})</div>
+  {/if}
   {#if image.taken_at}
-    <div class="exif-line"><b>{$t('search_by_date')}:</b> {image.taken_at}</div>
+    <div class="exif-line">📅 <b>{$t('exif_date') || 'EXIF'}:</b> {image.taken_at}</div>
   {/if}
   {#if image.created_at}
-    <div class="exif-line"><b>{$t('date_created')}:</b> {image.created_at}</div>
-  {/if}
-  {#if image.updated_at}
-    <div class="exif-line"><b>{$t('date_modified')}:</b> {image.updated_at}</div>
-  {/if}
-  {#if image.camera_model}
-    <div class="exif-line"><b>{$t('camera_model')}:</b> {image.camera_model}</div>
+    <div class="exif-line">📥 <b>{$t('date_imported') || 'Imported'}:</b> {image.created_at}</div>
   {/if}
 
-  <div class="divider"></div>
-
-  <!-- Camera / EXIF summary -->
-  {#if image.camera_make || image.camera_model}
-    <div class="exif-line cam">
-      📷 {[image.camera_make, image.camera_model].filter(Boolean).join(' ')}
-    </div>
-  {/if}
-  {#if image.taken_at}
-    <div class="exif-line">📅 {image.taken_at}</div>
-  {/if}
-  {#if image.iso || image.aperture || image.shutter_speed || image.focal_length}
-    <div class="exif-line">
-      {#if image.iso}ISO {image.iso}{/if}
-      {#if image.aperture} · f/{image.aperture}{/if}
-      {#if image.shutter_speed} · {image.shutter_speed}{/if}
-      {#if image.focal_length} · {image.focal_length}mm{/if}
-    </div>
-  {/if}
-  {#if image.thumb_width && image.thumb_height}
-    <div class="exif-line dim">🖼 {image.thumb_width} × {image.thumb_height} (stored)</div>
-  {/if}
+  <!-- Collapsible extended details -->
+  <details class="exif-details">
+    <summary class="exif-summary">More details…</summary>
+    {#if image.updated_at}
+      <div class="exif-line">✏️ <b>{$t('date_modified')}:</b> {image.updated_at}</div>
+    {/if}
+    {#if image.processed_at}
+      <div class="exif-line">⚙️ <b>{$t('date_processed') || 'Processed'}:</b> {image.processed_at}</div>
+    {/if}
+    {#if image.file_size}
+      <div class="exif-line">💾 <b>{$t('file_size') || 'Size'}:</b> {(image.file_size / 1024 / 1024).toFixed(2)} MB</div>
+    {/if}
+    {#if image.camera_make || image.camera_model}
+      <div class="exif-line cam">📷 {[image.camera_make, image.camera_model].filter(Boolean).join(' ')}</div>
+    {/if}
+    {#if image.iso || image.aperture || image.shutter_speed || image.focal_length}
+      <div class="exif-line">
+        {#if image.iso}ISO {image.iso}{/if}
+        {#if image.aperture} · f/{image.aperture}{/if}
+        {#if image.shutter_speed} · {image.shutter_speed}{/if}
+        {#if image.focal_length} · {image.focal_length}mm{/if}
+      </div>
+    {/if}
+    {#if image.location_name || (image.location_lat && image.location_lng)}
+      <div class="exif-line">📍 {image.location_name || `${Number(image.location_lat).toFixed(4)}, ${Number(image.location_lng).toFixed(4)}`}</div>
+    {/if}
+    {#if image.format}
+      <div class="exif-line">🗂 {image.format}</div>
+    {/if}
+  </details>
 
   <div class="divider"></div>
 
@@ -294,6 +299,14 @@
   }
   .exif-line.cam { color: #a0b0c8; font-weight: 600; }
   .exif-line.dim { color: #606080; }
+  .exif-details { margin: 2px 0; }
+  .exif-summary {
+    font-size: 10px; color: #505070; cursor: pointer;
+    user-select: none; list-style: none; padding: 2px 0;
+  }
+  .exif-summary::-webkit-details-marker { display: none; }
+  .exif-summary::before { content: '▶ '; font-size: 8px; }
+  details[open] > .exif-summary::before { content: '▼ '; }
   .divider { border-top: 1px solid #2a2a3a; margin: 6px 0; }
   .section-label {
     font-size: 10px;

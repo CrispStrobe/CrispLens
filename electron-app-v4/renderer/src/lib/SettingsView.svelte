@@ -1358,6 +1358,10 @@
     testingPython = true;
     testResult = '';
     try {
+      if (typeof window.electronAPI?.testPython !== 'function') {
+        testResult = '✗ Python test not available (Node.js ONNX mode — no Python needed)';
+        return;
+      }
       const r = await window.electronAPI.testPython(pythonPath || null);
       testResult = r.ok ? '✓ Python OK — InsightFace found' : '✗ ' + r.error;
     } catch (e) {
@@ -2128,7 +2132,7 @@
       <div class="save-msg" class:error-msg={credCheckMsg.startsWith('✗')}>{credCheckMsg}</div>
     {/if}
 
-    {#if isLocalMode()}
+    {#if isLocalMode() || (isElectron && connectionMode === 'local')}
       <div class="field-row" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
         <div class="hint" style="margin-bottom: 8px; width: 100%;">
           <strong>{$t('settings_db_backup_title')}</strong><br/>

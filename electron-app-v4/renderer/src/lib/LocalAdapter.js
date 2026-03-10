@@ -830,7 +830,8 @@ export const localAdapter = {
   async getImage(id) {
     const sql = `
       SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
-             i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
+             i.date_taken, i.date_processed, i.file_size,
+             i.description, i.scene_type, i.visibility,
              i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
              (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
@@ -877,6 +878,10 @@ export const localAdapter = {
         server_path:     r.filepath,
         detected_people: faceRows,
         face_count:      faceRows.length,
+        // Normalize date field names to match server API convention
+        taken_at:     r.date_taken    ?? null,
+        created_at:   r.date_processed ?? null,
+        file_size:    r.file_size ?? null,
         thumb_width,
         thumb_height,
       };

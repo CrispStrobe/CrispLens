@@ -267,6 +267,8 @@ export class FaceEngineWeb {
       let n=b.length; const u=new Uint8Array(n); while(n--) u[n]=b.charCodeAt(n);
       file=new File([u], 'image.jpg', {type:m});
     }
+    console.log(`[FaceEngineWeb] processFile START | name=${file.name} size=${(file.size/1024).toFixed(1)}KB det_thresh=${opts.det_thresh??'default'} min_face=${opts.min_face_size??'default'} vlm=${opts.vlm_enabled?opts.vlm_provider:'off'}`);
+    const t0=performance.now();
     const img=await this._loadImage(file);
     // Always revoke the blob URL when done, even on error.
     const imgBlobUrl = img.src.startsWith('blob:') ? img.src : null;
@@ -290,6 +292,7 @@ export class FaceEngineWeb {
         // canvas, ctx, rgba go out of scope here → GC-eligible
       }
       faces=applyNMS(faces);
+      console.log(`[FaceEngineWeb] Detection: ${faces.length} face(s) after NMS | ${(performance.now()-t0).toFixed(0)}ms`);
 
       // ── Recognition ───────────────────────────────────────────────────────
       await this._initRecognizer();
@@ -381,6 +384,8 @@ export class FaceEngineWeb {
         }
       }
 
+      const elapsed = (performance.now()-t0).toFixed(0);
+      console.log(`[FaceEngineWeb] processFile DONE | faces=${facePayloads.length} vlm=${description?'✓':'none'} thumb=${thumbnail_b64?'✓':'none'} total=${elapsed}ms`);
       const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '.jpg';
       return { local_path:file.name, filename:file.name,
                filepath:`browser:${hash}${ext}`,

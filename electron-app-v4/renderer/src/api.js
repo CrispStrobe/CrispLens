@@ -655,10 +655,10 @@ export function fetchTranslations(nocache = false) {
 }
 export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
 export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', () => localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
-export function exportDB()                          { const g = _guard('exportDB', () => localAdapter.exportDB()); if (g) return g; throw new Error('Export only supported in local mode'); }
-export function importDB(json)                      { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; throw new Error('Import only supported in local mode'); }
-export function clearDB()                           { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; throw new Error('Clear only supported in local mode'); }
-export function hardResetApp()                      { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; /* server mode reset implemented in App.svelte already */ }
+export function exportDB()     { const g = _guard('exportDB', () => localAdapter.exportDB()); if (g) return g; return get('/settings/db-export'); }
+export function importDB(json) { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; return post('/settings/db-import', { tables: json.tables ?? json }); }
+export function clearDB()      { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; return post('/settings/db-clear', {}); }
+export function hardResetApp() { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; return post('/settings/hard-reset', {}); }
 export function fetchEngineStatus() {
   const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
   if (g) return g;

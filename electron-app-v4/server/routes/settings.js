@@ -446,6 +446,85 @@ router.post('/test-remote-v2', requireAuth, async (req, res) => {
   }
 });
 
+// ── GET /settings/db-export ───────────────────────────────────────────────────
+// Export all DB tables as JSON (admin only — local server mode).
+
+router.get('/db-export', requireAdmin, (req, res) => {
+  const db = getDb();
+  const tables = ['images', 'people', 'faces', 'face_embeddings', 'image_tags',
+                  'albums', 'album_images', 'events', 'settings', 'users', 'watch_folders'];
+  const out = {};
+  for (const t of tables) {
+    try { out[t] = db.prepare(`SELECT * FROM ${t}`).all(); } catch { out[t] = []; }
+  }
+  res.json({ ok: true, tables: out, exported_at: new Date().toISOString(), db_path: getDbPath() });
+});
+
+// ── POST /settings/db-import ──────────────────────────────────────────────────
+// Restore DB from JSON export (wipes all rows first, re-inserts from payload).
+
+router.post('/db-import', requireAdmin, (req, res) => {
+  const { tables } = req.body || {};
+  if (!tables || typeof tables !== 'object') return res.status(400).json({ ok: false, error: 'Missing tables payload' });
+  const db = getDb();
+  const order = ['face_embeddings', 'faces', 'image_tags', 'album_images', 'images',
+                 'people', 'albums', 'events', 'watch_folders', 'settings'];
+  try {
+    db.prepare('BEGIN').run();
+    for (const t of order) {
+      try { db.prepare(`DELETE FROM ${t}`).run(); } catch {}
+    }
+    for (const t of order) {
+      const rows = tables[t];
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      const cols = Object.keys(rows[0]);
+      const stmt = db.prepare(`INSERT OR IGNORE INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`);
+      for (const r of rows) stmt.run(cols.map(c => r[c]));
+    }
+    db.prepare('COMMIT').run();
+    res.json({ ok: true, imported_tables: order.length });
+  } catch (err) {
+    try { db.prepare('ROLLBACK').run(); } catch {}
+    console.error('[db-import] error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── POST /settings/db-clear ───────────────────────────────────────────────────
+// Delete all image/face/people data (keep settings and users).
+
+router.post('/db-clear', requireAdmin, (req, res) => {
+  const db = getDb();
+  const tables = ['face_embeddings', 'faces', 'image_tags', 'album_images', 'images', 'people', 'albums', 'events'];
+  try {
+    db.prepare('BEGIN').run();
+    for (const t of tables) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} }
+    db.prepare('COMMIT').run();
+    res.json({ ok: true });
+  } catch (err) {
+    try { db.prepare('ROLLBACK').run(); } catch {}
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── POST /settings/hard-reset ─────────────────────────────────────────────────
+// Wipe ALL tables including settings and users.
+
+router.post('/hard-reset', requireAdmin, (req, res) => {
+  const db = getDb();
+  const tables = ['face_embeddings', 'faces', 'image_tags', 'album_images', 'images',
+                  'people', 'albums', 'events', 'settings', 'watch_folders'];
+  try {
+    db.prepare('BEGIN').run();
+    for (const t of tables) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} }
+    db.prepare('COMMIT').run();
+    res.json({ ok: true });
+  } catch (err) {
+    try { db.prepare('ROLLBACK').run(); } catch {}
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 module.exports = router;
 
 // ── Helper: read processing_backend flat setting (used by other routes) ───────
