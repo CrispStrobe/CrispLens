@@ -156,6 +156,17 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
   const meta    = await readImageMeta(imagePath);
   const imageId = existingImageId || upsertImage(db, imagePath, meta, opts);
 
+  // Guard: skip if this is a content-duplicate (hash collision mapped to a DIFFERENT stored
+  // filepath that is already fully processed).  Without this check, re-uploading the same
+  // image via a UUID-named staging file would add duplicate face rows to the original record.
+  if (!opts.force && !existingImageId) {
+    const row = db.prepare('SELECT filepath, processed, face_count FROM images WHERE id=?').get(imageId);
+    if (row && row.filepath !== imagePath && row.processed) {
+      console.log(`[processor] ${path.basename(imagePath)}: content duplicate of "${path.basename(row.filepath)}" (image_id=${imageId}, ${row.face_count} faces already stored) — skipping`);
+      return { imageId, facesFound: row.face_count ?? 0, meta, skipped: true };
+    }
+  }
+
   // Clear old faces if force re-detect
   if (opts.force) {
     db.prepare('DELETE FROM faces WHERE image_id=?').run(imageId);

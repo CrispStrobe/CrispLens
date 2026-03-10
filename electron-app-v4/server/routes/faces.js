@@ -1,4 +1,6 @@
 'use strict';
+// ⚠ PARALLEL IMPLEMENTATION: response shapes here must stay in sync with
+// LocalAdapter.js in the renderer.  Canonical shapes → renderer/src/lib/api-shapes.js
 
 const express = require('express');
 const path    = require('path');

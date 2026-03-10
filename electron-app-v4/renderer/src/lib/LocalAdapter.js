@@ -6,6 +6,18 @@
  * Used when db_mode='local' (standalone Capacitor, no server required).
  * All three paths — local, v4 server, v2 FastAPI — share the same Svelte UI;
  * only api.js routes differently based on db_mode.
+ *
+ * ⚠ PARALLEL IMPLEMENTATION WARNING
+ * Every public method here must return the same shape as the corresponding
+ * server route in server/routes/*.js.  The canonical shapes are documented in
+ * ./api-shapes.js — update that file whenever you add or change a field here
+ * OR in the server routes.
+ *
+ * Known shape differences (intentional, documented in api-shapes.js):
+ *   - importProcessed: returns top-level description/scene_type/tags
+ *     instead of nested vlm:{} (ProcessView handles both)
+ *   - fetchFaceClusters: faces include _crop_data_url (data URL from stored thumbnail)
+ *   - getImages batch: detected_people[].face_id is always null (SQL join cost)
  */
 
 import { Capacitor } from '@capacitor/core';

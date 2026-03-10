@@ -753,12 +753,15 @@ function ensureBatchTables(db) {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
     filepath TEXT NOT NULL,
+    local_path TEXT,
     status TEXT DEFAULT 'pending',
     error_msg TEXT,
     image_id INTEGER,
     processed_at TIMESTAMP,
     FOREIGN KEY(job_id) REFERENCES batch_jobs(id) ON DELETE CASCADE
   )`).run();
+  // Migrate existing tables that are missing the local_path column
+  try { db.prepare('ALTER TABLE batch_job_files ADD COLUMN local_path TEXT').run(); } catch {}
 }
 
 router.get('/batch-jobs', requireAuth, (req, res) => {
@@ -832,7 +835,7 @@ router.post('/batch-jobs/:id/add-file', requireAuth, (req, res) => {
   if (!job) return res.status(404).json({ detail: 'Job not found' });
   const { filepath, local_path } = req.body || {};
   if (!filepath) return res.status(400).json({ detail: 'filepath required' });
-  db.prepare('INSERT INTO batch_job_files(job_id, filepath) VALUES(?,?)').run(jobId, filepath);
+  db.prepare('INSERT INTO batch_job_files(job_id, filepath, local_path) VALUES(?,?,?)').run(jobId, filepath, local_path || null);
   db.prepare('UPDATE batch_jobs SET total_count=total_count+1 WHERE id=?').run(jobId);
   res.json({ ok: true });
 });
@@ -902,20 +905,32 @@ router.post('/batch-jobs/:id/start', requireAuth, async (req, res) => {
 
   const det_params = (() => { try { return job.det_params ? JSON.parse(job.det_params) : {}; } catch { return {}; } })();
 
+  const UPLOAD_DIR = process.env.UPLOAD_DIR ||
+    path.join(__dirname, '..', '..', '..', 'data', 'uploads');
+
   for (const f of files) {
     if (cancelled) break;
+    // Detect whether this file was staged (UUID upload) — if so, clean it up after processing
+    const isStaged = f.filepath.startsWith(UPLOAD_DIR);
     try {
       const r = await processImageIntoDb(f.filepath, null, {
-        visibility: job.visibility || 'shared',
+        visibility:   job.visibility || 'shared',
+        local_path:   f.local_path || f.filepath,
         ...det_params,   // det_model, det_thresh, rec_thresh, min_face_size, max_size, skip_faces, skip_vlm
       });
       db.prepare("UPDATE batch_job_files SET status='done', image_id=?, processed_at=CURRENT_TIMESTAMP WHERE id=?")
         .run(r.imageId, f.id);
       db.prepare('UPDATE batch_jobs SET done_count=done_count+1 WHERE id=?').run(jobId);
+      console.log(`[batch-job/${jobId}] ${path.basename(f.filepath)}: image_id=${r.imageId} faces=${r.facesFound}${r.skipped ? ' (duplicate — skipped)' : ''}`);
     } catch (err) {
       db.prepare("UPDATE batch_job_files SET status='error', error_msg=? WHERE id=?")
         .run(err.message, f.id);
       db.prepare('UPDATE batch_jobs SET error_count=error_count+1 WHERE id=?').run(jobId);
+      console.error(`[batch-job/${jobId}] ${path.basename(f.filepath)}: ERROR — ${err.message}`);
+    }
+    // Remove staged upload file regardless of success/failure to free disk space
+    if (isStaged) {
+      try { fs.unlinkSync(f.filepath); } catch {}
     }
 
     const updated = db.prepare('SELECT * FROM batch_jobs WHERE id=?').get(jobId);
