@@ -316,6 +316,8 @@ router.post('/:id/re-detect', requireAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM images WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ detail: 'Not found' });
 
+  console.log(`[re-detect] POST for image ${id} | filepath=${row.filepath} | local_path=${row.local_path || 'none'} | body=${JSON.stringify(req.body || {})}`);
+
   // Check if using remote v2 backend
   try {
     const { loadFlat } = require('../routes/settings');
@@ -336,22 +338,28 @@ router.post('/:id/re-detect', requireAuth, (req, res) => {
     }
   } catch {}
 
-  const p = resolveImagePath(row.filepath);
-  if (!p) return res.status(404).json({ detail: 'Image file not found' });
+  // Try filepath first, fall back to local_path (original source path)
+  const p = resolveImagePath(row.filepath) || resolveImagePath(row.local_path);
+  if (!p) {
+    console.warn(`[re-detect] Image ${id} not found on disk. filepath=${row.filepath} local_path=${row.local_path}`);
+    return res.status(404).json({ detail: 'Image file not found on disk' });
+  }
+  console.log(`[re-detect] Resolved path for image ${id}: ${p}`);
 
   // Respond immediately — ONNX inference can take several seconds on CPU
   res.json({ ok: true, pending: true, message: 'reprocessing started' });
 
-  // Run processing in background (off the response cycle)
+  // Run processing in background (off the response cycle).
+  // Use force:true so processImageIntoDb atomically replaces faces
+  // (delete + insert happen close together, reducing the "0 faces" window during polling).
   setImmediate(async () => {
     try {
       const { processImageIntoDb } = require('../processor');
-      // Clear old faces so re-detect starts fresh
-      db.prepare('DELETE FROM faces WHERE image_id=?').run(id);
-      await processImageIntoDb(p, id, { ...(req.body || {}), force: false });
-      console.log(`[re-detect] done: image ${id}`);
+      console.log(`[re-detect] Starting ONNX detection for image ${id}: ${path.basename(p)}`);
+      await processImageIntoDb(p, id, { ...(req.body || {}), force: true });
+      console.log(`[re-detect] Done for image ${id}`);
     } catch (err) {
-      console.error(`[re-detect] image ${id}:`, err.message);
+      console.error(`[re-detect] Failed for image ${id}:`, err.message, err.stack?.split('\n')[1] || '');
     }
   });
 });

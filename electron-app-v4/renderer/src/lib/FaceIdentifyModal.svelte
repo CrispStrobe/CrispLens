@@ -367,14 +367,24 @@
         console.log('[FaceIdentifyModal] LocalMode: loading faces immediately...');
         await loadFaces();
       } else {
-        // Server responds immediately (fire-and-forget); poll until face count changes (max ~30s)
-        const prevCount = faces.length;
-        console.log(`[FaceIdentifyModal] ServerMode: polling for results (prevCount=${prevCount})...`);
-        for (let i = 0; i < 15; i++) {
+        // Server responds immediately (fire-and-forget background detection).
+        // Poll on processed_at timestamp — it updates when detection finishes, even if 0 faces found.
+        // (Watching face count is unreliable because faces are deleted before detection starts.)
+        let processedAtBefore = null;
+        try { processedAtBefore = (await fetchImage(imageId))?.processed_at; } catch {}
+        console.log(`[FaceIdentifyModal] ServerMode: polling for processed_at change (before=${processedAtBefore})...`);
+        for (let i = 0; i < 30; i++) {  // max 60s
           await new Promise(r => setTimeout(r, 2000));
-          await loadFaces();
-          if (faces.length !== prevCount) break;
+          let imgNow = null;
+          try { imgNow = await fetchImage(imageId); } catch {}
+          const processedAtNow = imgNow?.processed_at;
+          console.log(`[FaceIdentifyModal] Poll ${i + 1}/30: processed_at=${processedAtNow}`);
+          if (processedAtNow !== processedAtBefore) {
+            console.log(`[FaceIdentifyModal] Detection completed after ${(i + 1) * 2}s`);
+            break;
+          }
         }
+        await loadFaces();
       }
       showParams = false;
     } catch (e) {

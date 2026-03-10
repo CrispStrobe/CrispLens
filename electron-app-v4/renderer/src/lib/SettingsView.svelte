@@ -1278,9 +1278,15 @@
   }
 
   async function doHardReset() {
-    if (!confirm('This will purge EVERYTHING: database, settings, and all locally cached data. The app will reload. Continue?')) return;
+    const isLocal = isLocalMode();
+    const msg = isLocal
+      ? 'This will purge all image/face data, settings, and cached data. The app will reload. Continue?'
+      : 'This will reset app settings to defaults (watch folders, configuration). Your image data is safe. Continue?';
+    if (!confirm(msg)) return;
     try {
       await hardResetApp();
+      dbMsg = '✓ Settings reset. Reloading…';
+      setTimeout(() => location.reload(), 1000);
     } catch (e) {
       dbMsg = '✗ ' + e.message;
     }
@@ -2152,7 +2158,7 @@
         <button class="small danger" style="margin-left: auto;" on:click={doClearDB}>
           🗑 {$t('settings_db_clear')}
         </button>
-        <button class="small danger" on:click={doHardReset} title="Clear database, settings, and cache">
+        <button class="small danger" on:click={doHardReset} title="Reset settings to defaults (image data is safe)">
           🔥 {$t('hard_reset_app')}
         </button>
       </div>

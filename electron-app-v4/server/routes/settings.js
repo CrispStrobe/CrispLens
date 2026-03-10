@@ -508,16 +508,18 @@ router.post('/db-clear', requireAdmin, (req, res) => {
 });
 
 // ── POST /settings/hard-reset ─────────────────────────────────────────────────
-// Wipe ALL tables including settings and users.
+// Reset app settings to defaults (clears settings + watch_folders).
+// Does NOT delete image/face/people data — use POST /settings/db-clear for that.
 
 router.post('/hard-reset', requireAdmin, (req, res) => {
   const db = getDb();
-  const tables = ['face_embeddings', 'faces', 'image_tags', 'album_images', 'images',
-                  'people', 'albums', 'events', 'settings', 'watch_folders'];
+  // Only wipe settings rows, NOT image data (images/faces/people are precious).
+  const tables = ['settings', 'watch_folders'];
   try {
     db.prepare('BEGIN').run();
     for (const t of tables) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} }
     db.prepare('COMMIT').run();
+    console.log('[hard-reset] Cleared settings + watch_folders. Image data untouched.');
     res.json({ ok: true });
   } catch (err) {
     try { db.prepare('ROLLBACK').run(); } catch {}
