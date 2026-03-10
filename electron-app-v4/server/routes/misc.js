@@ -995,8 +995,40 @@ router.get('/api-keys/status', requireAuth, (req, res) => {
 });
 
 // GET /api-keys/models/:provider
-router.get('/api-keys/models/:provider', requireAuth, (req, res) => {
-  const models = _MODELS[req.params.provider] || [];
+router.get('/api-keys/models/:provider', requireAuth, async (req, res) => {
+  const provider = req.params.provider;
+
+  // OpenRouter: fetch live model list using stored API key
+  if (provider === 'openrouter') {
+    try {
+      const db = getDb();
+      const keyRow = db.prepare(
+        "SELECT key_value FROM api_keys WHERE provider='openrouter' ORDER BY CASE scope WHEN 'system' THEN 0 ELSE 1 END LIMIT 1"
+      ).get();
+      if (keyRow?.key_value) {
+        const resp = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: { 'Authorization': `Bearer ${keyRow.key_value}` },
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const models = (data.data || [])
+            .filter(m => m.id)
+            .map(m => m.id)
+            .sort();
+          if (models.length > 0) {
+            console.log(`[api-keys/models] OpenRouter: ${models.length} models fetched`);
+            return res.json({ models });
+          }
+        } else {
+          console.warn(`[api-keys/models] OpenRouter API responded ${resp.status}`);
+        }
+      }
+    } catch (err) {
+      console.warn('[api-keys/models] OpenRouter fetch failed:', err.message);
+    }
+  }
+
+  const models = _MODELS[provider] || [];
   res.json({ models });
 });
 

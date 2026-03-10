@@ -31,12 +31,14 @@ router.post('/single', requireAuth, async (req, res) => {
   try {
     const result = await processImageIntoDb(filepath, null, { force, skip_recognition: skip_faces, skip_vlm, rec_thresh, det_model });
     const db = require('../db').getDb();
-    const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
-    res.json({ 
-      ok: true, 
-      image_id: result.imageId, 
+    const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
+    const tags = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+    res.json({
+      ok: true,
+      image_id: result.imageId,
       faces_found: result.facesFound,
-      vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type }
+      tags,
+      vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type, tags }
     });
   } catch (err) {
     res.status(500).json({ detail: err.message });
@@ -61,7 +63,8 @@ router.post('/batch', requireAuth, async (req, res) => {
   for (const fp of files) {
     try {
       const result = await processImageIntoDb(fp, null, { force, rec_thresh, skip_vlm, det_model, det_thresh, min_face_size, max_size });
-      const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
+      const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
+      const tags = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
       done++;
       sseSend(res, {
         index:    done,
@@ -72,7 +75,8 @@ router.post('/batch', requireAuth, async (req, res) => {
           faces_detected: result.facesFound,
           people: [],
           scene_type: enriched?.ai_scene_type,
-          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type }
+          tags,
+          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type, tags }
         },
       });
     } catch (err) {
@@ -102,7 +106,8 @@ router.post('/batch-files', requireAuth, async (req, res) => {
   for (const fp of files) {
     try {
       const result = await processImageIntoDb(fp, null, { force, rec_thresh, skip_vlm, det_model, det_thresh, min_face_size, max_size });
-      const enriched = db.prepare('SELECT ai_description, ai_scene_type FROM images WHERE id=?').get(result.imageId);
+      const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
+      const tags = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
       done++;
       sseSend(res, {
         index:    done,
@@ -113,7 +118,8 @@ router.post('/batch-files', requireAuth, async (req, res) => {
           faces_detected: result.facesFound,
           people: [],
           scene_type: enriched?.ai_scene_type,
-          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type }
+          tags,
+          vlm: { description: enriched?.ai_description, scene_type: enriched?.ai_scene_type, tags }
         },
       });
     } catch (err) {

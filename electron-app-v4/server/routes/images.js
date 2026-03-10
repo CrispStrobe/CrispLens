@@ -56,6 +56,7 @@ function rowToApi(row) {
     ai_description: row.ai_description,
     ai_scene_type:  row.ai_scene_type,
     ai_tags:        row.ai_tags ? row.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+    ai_tags_list:   row.ai_tags ? row.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [],
     rating:       row.rating || row.star_rating || 0,
     star_rating:  row.rating || row.star_rating || 0,   // v2 compat alias
     flag:         row.flag ?? row.color_flag ?? null,

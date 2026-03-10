@@ -776,8 +776,9 @@
         imageId: data.image_id ?? null,
         faces: r.faces_detected ?? 0,
         people: r.people ?? [],
-        sceneType: r.scene_type ?? '',
+        sceneType: r.scene_type ?? r.vlm?.scene_type ?? '',
         description: r.vlm?.description ?? '',
+        tags: r.tags ?? r.vlm?.tags ?? [],
       };
     });
 

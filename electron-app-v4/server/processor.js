@@ -242,17 +242,22 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
         const vlmResult = await vlmClient.enrichImage(imagePath, flat.vlm_provider, flat.vlm_model, vlmPrompt, flat.vlm_max_size);
         console.log(`[processor] VLM success for image ${imageId}`);
 
-        db.prepare(`
-          UPDATE images SET ai_description=?, ai_scene_type=? WHERE id=?
-        `).run(vlmResult.description || null, vlmResult.scene_type || null, imageId);
+        const tagsArr = (vlmResult.tags && vlmResult.tags.length > 0) ? vlmResult.tags : [];
 
-        // Store tags
-        if (vlmResult.tags && vlmResult.tags.length > 0) {
-          for (const name of vlmResult.tags) {
-            db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
-            const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
-            db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(imageId, tag.id);
-          }
+        db.prepare(`
+          UPDATE images SET ai_description=?, ai_scene_type=?, ai_tags=? WHERE id=?
+        `).run(
+          vlmResult.description || null,
+          vlmResult.scene_type  || null,
+          tagsArr.length > 0 ? tagsArr.join(',') : null,
+          imageId,
+        );
+
+        // Store tags to junction table
+        for (const name of tagsArr) {
+          db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+          const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+          db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(imageId, tag.id);
         }
       }
     } catch (vlmErr) {

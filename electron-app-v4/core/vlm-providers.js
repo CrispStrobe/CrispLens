@@ -35,36 +35,13 @@ class VlmClient {
   async _prepareImage(imagePath, maxDimension) {
     let buffer = fs.readFileSync(imagePath);
     let mediaType = 'image/jpeg';
-    
+
     if (maxDimension > 0) {
       try {
         const image = sharp(buffer);
         const metadata = await image.metadata();
         if (metadata.width > maxDimension || metadata.height > maxDimension) {
           console.log(`[VlmClient] Resizing image to max ${maxDimension}px`);
-          buffer = await image
-            .resize(maxDimension, maxDimension, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 85 })
-            .toBuffer();
-          mediaType = 'image/jpeg';
-        }
-      } catch (err) {
-        console.warn('[VlmClient] Resize failed, using original:', err.message);
-      }
-    }
-    return { base64: buffer.toString('base64'), mediaType };
-  }
-
-  async _prepareImage(imagePath, maxDimension) {
-    let buffer = fs.readFileSync(imagePath);
-    let mediaType = 'image/jpeg';
-    
-    if (maxDimension > 0) {
-      try {
-        const image = sharp(buffer);
-        const metadata = await image.metadata();
-        if (metadata.width > maxDimension || metadata.height > maxDimension) {
-          console.log();
           buffer = await image
             .resize(maxDimension, maxDimension, { fit: 'inside', withoutEnlargement: true })
             .jpeg({ quality: 85 })
