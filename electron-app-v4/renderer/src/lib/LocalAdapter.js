@@ -1359,4 +1359,135 @@ export const localAdapter = {
     console.log(`[LocalAdapter] importProcessed: imageId=${imageId}, processing ${faces.length} faces`);
     return await _insertFacesForImage(imageId, faces, tags, description, scene_type, thumbnail_b64);
   },
+
+  // ── Face clusters ────────────────────────────────────────────────────────────
+  // Equivalent to GET /faces/clusters — union-find cosine clustering in-browser.
+
+  async fetchFaceClusters(threshold = 0.55, limit = 500, includeIdentified = false) {
+    const rows = await query(`
+      SELECT fe.id AS emb_id, fe.face_id, fe.person_id, fe.embedding_vector,
+             f.image_id,
+             f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
+             f.detection_confidence, f.face_thumbnail,
+             p.name AS person_name
+      FROM face_embeddings fe
+      JOIN faces f ON fe.face_id = f.id
+      LEFT JOIN people p ON fe.person_id = p.id
+      WHERE fe.embedding_vector IS NOT NULL
+        ${includeIdentified ? '' : 'AND fe.person_id IS NULL'}
+      LIMIT ?
+    `, [Math.min(1000, limit)]);
+
+    if (rows.length === 0) return [];
+
+    const vecs = rows.map(r => r.embedding_vector ? _csvToFloat32(r.embedding_vector) : null);
+
+    // Union-find
+    const parent = rows.map((_, i) => i);
+    function find(i) { return parent[i] === i ? i : (parent[i] = find(parent[i])); }
+    function union(a, b) { parent[find(a)] = find(b); }
+    function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+
+    for (let i = 0; i < rows.length; i++) {
+      if (!vecs[i]) continue;
+      for (let j = i + 1; j < rows.length; j++) {
+        if (!vecs[j]) continue;
+        if (dot(vecs[i], vecs[j]) >= threshold) union(i, j);
+      }
+    }
+
+    const groups = new Map();
+    for (let i = 0; i < rows.length; i++) {
+      const root = find(i);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(rows[i]);
+    }
+
+    const result = [...groups.values()]
+      .filter(g => g.length >= 1)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 200);
+
+    return result.map((faces, i) => ({
+      cluster_id: i,
+      size:       faces.length,
+      faces:      faces.map(f => ({
+        face_id:              f.face_id,
+        image_id:             f.image_id,
+        bbox:                 { top: f.bbox_y1, right: f.bbox_x2, bottom: f.bbox_y2, left: f.bbox_x1 },
+        face_quality:         1.0,
+        detection_confidence: f.detection_confidence,
+        person_name:          f.person_name || null,
+        // In local mode, provide stored face thumbnail so face crops render without a server
+        _crop_data_url:       f.face_thumbnail ? `data:image/jpeg;base64,${f.face_thumbnail}` : null,
+      })),
+    }));
+  },
+
+  // ── Assign cluster ───────────────────────────────────────────────────────────
+  // Equivalent to POST /faces/assign-cluster
+
+  async assignCluster(faceIds, personName) {
+    const name = (personName || '').trim();
+    if (!faceIds?.length || !name) throw new Error('face_ids and person_name required');
+
+    await run('INSERT OR IGNORE INTO people(name) VALUES(?)', [name]);
+    const people = await query('SELECT id FROM people WHERE name=?', [name]);
+    const person = people[0];
+    if (!person) throw new Error('Failed to find or create person');
+
+    for (const fid of faceIds) {
+      await run('INSERT OR IGNORE INTO face_embeddings(face_id, person_id, embedding_dimension) VALUES(?,?,?)',
+        [Number(fid), person.id, 0]);
+      await run('UPDATE face_embeddings SET person_id=? WHERE face_id=?', [person.id, Number(fid)]);
+    }
+    const cntRows = await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?', [person.id]);
+    await run('UPDATE people SET total_appearances=? WHERE id=?', [cntRows[0]?.n ?? 0, person.id]);
+    _voyIndex = null; _embCache = null;
+    return { ok: true, person_id: person.id };
+  },
+
+  // ── Re-identify unidentified faces ───────────────────────────────────────────
+  // Equivalent to POST /faces/re-identify
+
+  async reIdentifyFaces(faceIds, recThresh = 0.40) {
+    const threshold = parseFloat(recThresh) || 0.40;
+
+    let rows;
+    if (faceIds?.length) {
+      const ph = faceIds.map(() => '?').join(',');
+      rows = await query(`
+        SELECT fe.face_id, fe.id AS emb_id, fe.embedding_vector
+        FROM face_embeddings fe
+        WHERE fe.face_id IN (${ph}) AND fe.person_id IS NULL AND fe.embedding_vector IS NOT NULL
+      `, faceIds.map(Number));
+    } else {
+      rows = await query(`
+        SELECT fe.face_id, fe.id AS emb_id, fe.embedding_vector
+        FROM face_embeddings fe
+        WHERE fe.person_id IS NULL AND fe.embedding_vector IS NOT NULL
+      `);
+    }
+
+    let updated = 0;
+    const updatedPeople = new Set();
+    for (const row of rows) {
+      const vec = _csvToFloat32(row.embedding_vector);
+      if (vec.length === 0) continue;
+      const match = await _voyBestMatch(vec, threshold);
+      if (match) {
+        await run('UPDATE face_embeddings SET person_id=? WHERE id=?', [match.person_id, row.emb_id]);
+        updatedPeople.add(match.person_id);
+        updated++;
+      }
+    }
+
+    for (const pid of updatedPeople) {
+      const cnt = await query('SELECT COUNT(*) AS n FROM face_embeddings WHERE person_id=?', [pid]);
+      await run('UPDATE people SET total_appearances=? WHERE id=?', [cnt[0]?.n ?? 0, pid]);
+    }
+    if (updated > 0) { _voyIndex = null; _embCache = null; }
+
+    return { updated, total_checked: rows.length };
+  },
 };

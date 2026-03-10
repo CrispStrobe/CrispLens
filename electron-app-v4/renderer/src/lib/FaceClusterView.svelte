@@ -181,7 +181,7 @@
                 title="{face.person_name ? face.person_name + ' · ' : ''}#{face.face_id} · {$t('quality')}: {face.face_quality?.toFixed(2) ?? 'n/a'}"
               >
                 <img
-                  src={faceCropUrl(face.image_id, face.face_id, 96)}
+                  src={face._crop_data_url || faceCropUrl(face.image_id, face.face_id, 96)}
                   alt="face"
                   loading="lazy"
                   width="80"
