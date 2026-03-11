@@ -87,12 +87,6 @@
       if (!$backendReady) {
         backendReady.set(true);
         isOffline.set(false);
-        // If a valid CrispLens server responded but localStorage still says "local"
-        // (e.g. first-run default was set before the server was running), override it.
-        if (!inElectron && !inCapacitor && isLocalMode()) {
-          console.log('[App] Server health check passed in browser mode — overriding db_mode from "local" → "server"');
-          setLocalMode(false);
-        }
         loadAll();
         // Auto-push any items processed while offline
         const apiBase = localStorage.getItem('remote_url') || window.location.origin;
@@ -276,9 +270,9 @@
       }
     } catch { /* ignore */ }
 
-    // ── Local (standalone) mode: no server needed ──────────────────────────
+    // ── Local (standalone) mode: native Capacitor with no server ──────────────
     if (isLocalMode()) {
-      console.log('[App] Standalone mode detected, ensuring engine is ready...');
+      console.log('[App] Standalone mode (Capacitor native, no server) — initializing local engine...');
       // Small delay to let jeep-sqlite component upgrade in DOM
       setTimeout(async () => {
         try {
@@ -289,7 +283,7 @@
           console.error('[App] Standalone engine initialization failed:', e);
         }
       }, 500);
-      
+
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;

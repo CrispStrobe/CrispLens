@@ -180,19 +180,21 @@ const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?
 
 let _localMode = localStorage.getItem('db_mode') === 'local';
 
-if (_inElectron) {
-  // Electron ALWAYS has a local Node.js/Express server — never use standalone SQLite mode.
-  // Force server mode regardless of whatever localStorage says.
+if (_inElectron || !_inCapacitor) {
+  // Electron always has a server. Plain browser also always uses a server —
+  // LocalAdapter requires Capacitor native plugins that don't exist in a browser,
+  // so db_mode=local in a browser is always wrong (often a stale first-run value).
+  // Only native Capacitor can legitimately run in standalone SQLite mode.
   if (_localMode) {
-    console.log('[api] Electron detected: overriding db_mode from "local" → "server" (Electron always has a server)');
+    console.log(`[api] ${_inElectron ? 'Electron' : 'Browser'}: resetting stale db_mode "local" → "server"`);
   }
   _localMode = false;
   localStorage.setItem('db_mode', 'server');
-} else if (localStorage.getItem('db_mode') === null) {
-  // First run in browser/PWA without a server — default to standalone SQLite mode.
+} else if (_inCapacitor && localStorage.getItem('db_mode') === null) {
+  // First run in native Capacitor with no server configured — start in standalone mode.
   _localMode = true;
   localStorage.setItem('db_mode', 'local');
-  console.log('[api] No db_mode set and no Electron detected — defaulting to standalone local mode');
+  console.log('[api] First run in Capacitor native — defaulting to standalone local mode');
 }
 
 console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} (db_mode=${localStorage.getItem('db_mode')})`);
