@@ -58,6 +58,7 @@
   let cloudDriveName = '';
   let cloudDriveType = '';
   let cloudLoading = false;
+  let cloudPathTrail = [];    // [{path, name}] — navigation history for breadcrumbs
 
   // Restore path from store (server mode only)
   fsUnsubscribe = fsCurrentPath.subscribe(p => {
@@ -124,6 +125,7 @@
     entries        = [];
     selected       = new Set();
     error          = '';
+    cloudPathTrail = [];
     browse('/');
   }
 
@@ -135,6 +137,7 @@
     selected = new Set();
     currentPath = '/';
     parentPath = null;
+    cloudPathTrail = [];
     loadCloudDrives();
   }
 
@@ -230,8 +233,11 @@
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
-  function navigate(p) {
+  function navigate(p, name = null) {
     if (localMode && !hasElectron && hasFSA) { navigateFSA(p); return; }
+    if (cloudMode && name) {
+      cloudPathTrail = [...cloudPathTrail, { path: p, name }];
+    }
     browse(p);
   }
   function goUp() {
@@ -239,16 +245,14 @@
     if (cloudMode && cloudDriveId !== null && !parentPath) {
       leaveCloudDrive(); return;
     }
+    if (cloudMode && cloudPathTrail.length > 0) {
+      cloudPathTrail = cloudPathTrail.slice(0, -1);
+    }
     if (parentPath) browse(parentPath);
   }
 
-  function cloudBreadcrumbs(p) {
-    if (!p || p === '/') return [];
-    const parts = p.split('/').filter(Boolean);
-    return parts.map((seg, i) => ({
-      label: seg,
-      path:  '/' + parts.slice(0, i + 1).join('/'),
-    }));
+  function cloudBreadcrumbs() {
+    return cloudPathTrail;
   }
 
   function breadcrumbs(p) {
@@ -331,7 +335,7 @@
     if (!entry) return;
 
     if (action === 'navigate') {
-      navigate(entry.path);
+      navigate(entry.path, entry.name);
     } else if (action === 'browse-gallery') {
       // Show images in this folder in the gallery
       const folderPath = entry.is_dir ? entry.path : entry.path.substring(0, entry.path.lastIndexOf('/'));
@@ -725,9 +729,12 @@
           {cloudDriveType === 'smb' ? '🗄' : cloudDriveType === 'sftp' ? '🔒' : cloudDriveType === 'filen' ? '☁' : '🌐'}
           {cloudDriveName}
         </button>
-        {#each cloudBreadcrumbs(currentPath) as crumb}
+        {#each cloudBreadcrumbs() as crumb, i}
           <span class="crumb-sep">/</span>
-          <button class="crumb" on:click={() => navigate(crumb.path)}>{crumb.label}</button>
+          <button class="crumb" on:click={() => {
+            cloudPathTrail = cloudPathTrail.slice(0, i + 1);
+            browse(crumb.path);
+          }}>{crumb.name}</button>
         {/each}
       </div>
     {:else if localMode && !hasElectron && hasFSA && fsaStack.length > 0}
@@ -933,9 +940,9 @@
                 role="button"
                 tabindex="0"
                 on:click={(e) => entry.is_dir && !e.shiftKey && !e.metaKey && !e.ctrlKey
-                  ? navigate(entry.path)
+                  ? navigate(entry.path, entry.name)
                   : toggleSelect(entry.path, e.shiftKey, e.metaKey || e.ctrlKey)}
-                on:keydown={e => e.key === 'Enter' && (entry.is_dir ? navigate(entry.path) : toggleSelect(entry.path))}
+                on:keydown={e => e.key === 'Enter' && (entry.is_dir ? navigate(entry.path, entry.name) : toggleSelect(entry.path))}
                 on:contextmenu={(e) => showCtxMenu(e, entry)}
               >
                 {#if selectable}
