@@ -4,11 +4,9 @@
   import {
     fetchCloudDrives, createCloudDrive, updateCloudDrive, deleteCloudDrive,
     getCloudDriveConfig, testCloudDrive, mountCloudDrive, unmountCloudDrive,
-    isLocalMode,
   } from '../api.js';
 
   const DRIVE_TYPES = ['smb', 'sftp', 'filen', 'internxt'];
-  const localMode = isLocalMode();
 
   let drives = [];
   let loading = false;
@@ -55,7 +53,6 @@
   }
 
   async function load() {
-    if (localMode) { drives = []; return; }
     loading = true; error = '';
     try {
       drives = await fetchCloudDrives();
@@ -211,10 +208,6 @@
       <button class="primary" on:click={openCreate}>+ {$t('add_drive')}</button>
     </div>
   </div>
-
-  {#if localMode}
-    <div class="info-banner">☁️ Cloud drives require a server connection. Switch to server mode in Settings to use this feature.</div>
-  {/if}
 
   {#if error}
     <div class="err-banner">{error}</div>

@@ -178,9 +178,6 @@ const _inElectron = typeof window !== 'undefined' && typeof window.electronAPI !
 const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?? (globalThis.Capacitor)) !== 'undefined'
   && (globalThis.Capacitor?.isNativePlatform?.() ?? false);
 
-// Whether the user explicitly chose a db_mode via Settings (vs the automatic first-run default).
-const _dbModeExplicit = localStorage.getItem('db_mode_explicit') === 'true';
-
 let _localMode = localStorage.getItem('db_mode') === 'local';
 
 if (_inElectron) {
@@ -188,41 +185,28 @@ if (_inElectron) {
   if (_localMode) console.log('[api] Electron: overriding db_mode "local" → "server"');
   _localMode = false;
   localStorage.setItem('db_mode', 'server');
-} else if (_inCapacitor) {
-  // Native Capacitor (iOS/Android): respect explicit user choice.
-  // On first run with no choice yet, default to standalone (no server required).
-  if (localStorage.getItem('db_mode') === null) {
+} else if (localStorage.getItem('db_mode') === null) {
+  // First run with no stored preference.
+  // Only native Capacitor defaults to standalone (no server needed on device).
+  // Browser/PWA always needs a server — default to server mode.
+  if (_inCapacitor) {
     _localMode = true;
     localStorage.setItem('db_mode', 'local');
     console.log('[api] First run in Capacitor native — defaulting to standalone local mode');
-  }
-} else {
-  // Plain browser or PWA (including Vercel deploy, localhost:7861, etc.).
-  // LocalAdapter requires Capacitor native plugins — db_mode=local never works here
-  // UNLESS the user explicitly chose it (e.g. to use browser-WASM SQLite in SettingsView).
-  if (localStorage.getItem('db_mode') === null) {
-    // First run: default to server mode (not local — LocalAdapter needs Capacitor native).
+  } else {
     _localMode = false;
     localStorage.setItem('db_mode', 'server');
-    console.log('[api] First run in browser — defaulting to server mode');
-  } else if (_localMode && !_dbModeExplicit) {
-    // db_mode=local was set automatically by the old first-run default, not by the user.
-    // Treat it as stale and reset to server mode.
-    _localMode = false;
-    localStorage.setItem('db_mode', 'server');
-    console.log('[api] Browser: clearing stale automatic db_mode=local → server');
+    console.log('[api] First run in browser/PWA — defaulting to server mode');
   }
-  // If _dbModeExplicit=true the user intentionally chose local mode in Settings — respect it.
 }
 
-console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} explicit=${_dbModeExplicit} (db_mode=${localStorage.getItem('db_mode')})`);
+console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} (db_mode=${localStorage.getItem('db_mode')})`);
 
-/** Switch to local SQLite mode (standalone — no server needed). Called from SettingsView. */
+/** Switch to local SQLite mode (standalone Capacitor — no server needed). */
 export function setLocalMode(enabled) {
-  console.log(`[api] setLocalMode(${enabled}) [explicit user action]`);
+  console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
   localStorage.setItem('db_mode', enabled ? 'local' : 'server');
-  localStorage.setItem('db_mode_explicit', 'true'); // mark as intentional user choice
 }
 
 export function isLocalMode() { return _localMode; }
@@ -912,21 +896,14 @@ export function scanHashes(onEvent) {
 }
 
 // ── Cloud drives ──────────────────────────────────────────────────────────────
-// Cloud drives require a server — return safe stubs in local/standalone mode.
 
 export function fetchCloudDrives() {
-  if (_localMode) {
-    console.log('[api] fetchCloudDrives: local mode — skipping server request, returning []');
-    return Promise.resolve([]);
-  }
   return get('/cloud-drives');
 }
 export function createCloudDrive(body) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post('/cloud-drives', body);
 }
 export function updateCloudDrive(id, body) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return fetch(`${BASE}/cloud-drives/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -935,34 +912,27 @@ export function updateCloudDrive(id, body) {
   }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
 }
 export function deleteCloudDrive(id) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return fetch(`${BASE}/cloud-drives/${id}`, {
     method: 'DELETE', credentials: 'include',
   }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
 }
 export function getCloudDriveConfig(id) {
-  if (_localMode) return Promise.resolve({});
   return get(`/cloud-drives/${id}/config`);
 }
 export function testCloudDrive(type, config) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post('/cloud-drives/test', { type, config });
 }
 export function mountCloudDrive(id) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post(`/cloud-drives/${id}/mount`, {});
 }
 export function unmountCloudDrive(id) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post(`/cloud-drives/${id}/unmount`, {});
 }
 export function browseCloudDrive(id, path = '/') {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   const q = new URLSearchParams({ path });
   return get(`/cloud-drives/${id}/browse?${q}`);
 }
 export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
 export function renameCloudDriveItem(driveId, path, newName) {
