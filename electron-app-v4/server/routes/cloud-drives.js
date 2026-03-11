@@ -881,7 +881,9 @@ async function filenDownloadFile(tokenData, fileUuid, destPath) {
 // ── POST /:id/ingest — download cloud files and process into DB ───────────────
 
 router.post('/:id/ingest', requireAuth, async (req, res) => {
-  const { paths = [], visibility = 'shared' } = req.body || {};
+  // skip_vlm defaults to true — VLM enrichment adds latency and is often
+  // misconfigured; users can opt in by passing skip_vlm: false
+  const { paths = [], visibility = 'shared', skip_vlm = true } = req.body || {};
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -934,7 +936,7 @@ router.post('/:id/ingest', requireAuth, async (req, res) => {
       const finalPath = path.join(UPLOAD_DIR, finalName);
       fs.renameSync(destPath, finalPath);
 
-      const r = await processImageIntoDb(finalPath, null, { visibility });
+      const r = await processImageIntoDb(finalPath, null, { visibility, skip_vlm });
       done++;
       send({ index: done + errors, total: fileEntries.length, path: entry.path,
              name: downloadedName, image_id: r.imageId,
