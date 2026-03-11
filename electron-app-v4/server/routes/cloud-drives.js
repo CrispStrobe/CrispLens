@@ -24,8 +24,14 @@ const express = require('express');
 const crypto  = require('crypto');
 const https   = require('https');
 const http    = require('http');
+const path    = require('path');
+const fs      = require('fs');
 const { getDb }       = require('../db');
 const { requireAuth } = require('../auth');
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR ||
+  path.join(__dirname, '..', '..', '..', 'data', 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const router = express.Router();
 
@@ -654,6 +660,142 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
     console.error('[cloud-drives/browse]', drive.type, e.message);
     return res.status(500).json({ detail: e.message });
   }
+});
+
+// ── Binary download helper ────────────────────────────────────────────────────
+
+function downloadBinaryToFile(url, headers, destPath) {
+  return new Promise((resolve, reject) => {
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      hostname: u.hostname,
+      port:     u.port || (u.protocol === 'https:' ? 443 : 80),
+      path:     u.pathname + u.search,
+      method:   'GET',
+      headers,
+    }, res => {
+      if (res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} from storage`));
+      }
+      const out = fs.createWriteStream(destPath);
+      res.pipe(out);
+      out.on('finish', resolve);
+      out.on('error', reject);
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// ── Internxt file download ────────────────────────────────────────────────────
+
+async function internxtDownloadFile(tokenData, fileUuid, destPath) {
+  const bearer = tokenData.newToken || tokenData.token;
+  const auth   = { Authorization: `Bearer ${bearer}` };
+
+  // Step 1: get file metadata (uuid → fileId + filename)
+  let meta;
+  try {
+    meta = await apiGet(`${DRIVE_API_URL}/files/${fileUuid}`, auth);
+  } catch (e) {
+    throw new Error(`Internxt metadata fetch failed: ${e.message}`);
+  }
+
+  const fileId  = meta.fileId || meta.id;
+  const name    = (meta.plainName || meta.name || fileUuid) + (meta.type ? '.' + meta.type : '');
+  if (!fileId) throw new Error('Internxt: no fileId in file metadata');
+
+  // Step 2: download binary from storage API
+  // The storage API returns the raw (possibly encrypted) file binary.
+  const downloadUrl = `${DRIVE_API_URL}/storage/v2/file/${fileId}`;
+  console.log(`[internxt/download] uuid=${fileUuid} fileId=${fileId} name="${name}" → ${downloadUrl}`);
+
+  await downloadBinaryToFile(downloadUrl, { ...INTERNXT_HEADERS, ...auth }, destPath);
+  return { name };
+}
+
+// ── Filen file download (stub — chunk-based E2E encryption not yet implemented) ─
+
+async function filenDownloadFile(_tokenData, fileUuid, _destPath) {
+  throw new Error(`Filen file download not yet implemented (uuid=${fileUuid}). Filen uses chunk-based E2E encryption that requires the full SDK.`);
+}
+
+// ── POST /:id/ingest — download cloud files and process into DB ───────────────
+
+router.post('/:id/ingest', requireAuth, async (req, res) => {
+  const { paths = [], visibility = 'shared' } = req.body || {};
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+
+  const send = data => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  const db    = getDb();
+  const drive = getOne(db, req.params.id);
+  if (!drive) { send({ error: 'Drive not found' }); return res.end(); }
+  if (!drive.is_mounted) { send({ error: 'Drive not connected — connect it first' }); return res.end(); }
+
+  const { processImageIntoDb } = require('../processor');
+  const tokenData = JSON.parse(drive.token || '{}');
+
+  // Extract file UUIDs from paths.
+  // Internxt path format: /folderUUID/file/fileUUID
+  // Filen path format: /folderUUID/file/fileUUID
+  const fileEntries = paths.map(p => {
+    const parts   = p.split('/').filter(Boolean);
+    const fileIdx = parts.indexOf('file');
+    const fileUuid = fileIdx >= 0 && fileIdx + 1 < parts.length ? parts[fileIdx + 1] : null;
+    return { path: p, fileUuid };
+  }).filter(e => e.fileUuid);
+
+  console.log(`[cloud-drives/ingest] drive=${drive.name} type=${drive.type} paths=${fileEntries.length}`);
+  send({ started: true, total: fileEntries.length });
+
+  let done = 0, errors = 0;
+
+  for (const entry of fileEntries) {
+    // Save to UPLOAD_DIR with a unique name so the path stays valid after ingest
+    const tmpName = `cloud_${drive.type}_${Date.now()}_${entry.fileUuid}`;
+    const destPath = path.join(UPLOAD_DIR, tmpName);
+    let downloadedName = entry.fileUuid;
+
+    try {
+      if (drive.type === 'internxt') {
+        const info = await internxtDownloadFile(tokenData, entry.fileUuid, destPath);
+        downloadedName = info.name;
+      } else if (drive.type === 'filen') {
+        await filenDownloadFile(tokenData, entry.fileUuid, destPath);
+      } else {
+        throw new Error(`Cloud type '${drive.type}' not supported for ingest`);
+      }
+
+      // Rename to include the actual filename for readability
+      const ext      = path.extname(downloadedName) || '';
+      const finalName = `cloud_${drive.type}_${Date.now()}_${path.basename(downloadedName, ext)}${ext}`;
+      const finalPath = path.join(UPLOAD_DIR, finalName);
+      fs.renameSync(destPath, finalPath);
+
+      const r = await processImageIntoDb(finalPath, null, { visibility });
+      done++;
+      send({ index: done + errors, total: fileEntries.length, path: entry.path,
+             name: downloadedName, image_id: r.imageId,
+             result: { faces_detected: r.facesFound } });
+    } catch (err) {
+      errors++;
+      console.error(`[cloud-drives/ingest] error for ${entry.path}:`, err.message);
+      // Clean up partial download if it exists
+      try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch {}
+      send({ index: done + errors, total: fileEntries.length, path: entry.path,
+             name: downloadedName, error: err.message });
+    }
+  }
+
+  send({ done: true, total: fileEntries.length, processed: done, errors });
+  res.end();
 });
 
 module.exports = router;
