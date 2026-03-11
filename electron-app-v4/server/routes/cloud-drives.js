@@ -130,13 +130,15 @@ function generateKeys(password) {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-function jsonRequest(method, url, { body, headers = {} } = {}) {
+function jsonRequest(method, url, { body, headers = {}, auth } = {}) {
   return new Promise((resolve, reject) => {
     const u   = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
     const bodyBuf = body ? Buffer.from(JSON.stringify(body), 'utf8') : null;
+    const authHeader = auth ? { Authorization: 'Basic ' + Buffer.from(`${auth.user}:${auth.pass}`).toString('base64') } : {};
     const reqHeaders = {
       ...INTERNXT_HEADERS,
+      ...authHeader,
       ...headers,
       ...(bodyBuf ? { 'Content-Length': bodyBuf.length } : {}),
     };
@@ -173,23 +175,20 @@ const apiPost = (url, body, headers) => jsonRequest('POST', url, { body, headers
 
 /**
  * Full "Hydrated Login" matching internxt-cli auth.py do_login().
- * Returns { token, newToken, user: { rootFolderUuid, ... } }
+ * Returns all fields needed for download: token, mnemonic (decrypted), bridgeUser, userId.
  */
 async function internxtLogin(email, password, tfaCode) {
   const cleanEmail = email.toLowerCase().trim();
 
-  // Step 1: security_details → sKey
   console.log('[internxt] Step 1: security_details for', cleanEmail);
   const secDetails = await apiPost(`${DRIVE_API_URL}/auth/login`, { email: cleanEmail });
   const sKey = secDetails.sKey;
   if (!sKey) throw new Error(`Login failed: sKey missing. Response: ${JSON.stringify(secDetails)}`);
 
-  // Step 2: client-side crypto
   console.log('[internxt] Step 2: encrypting password hash');
   const encPasswordHash = await encryptPasswordHash(password, sKey);
   const keys = generateKeys(password);
 
-  // Step 3: login/access
   const loginPayload = {
     email:      cleanEmail,
     password:   encPasswordHash,
@@ -201,19 +200,38 @@ async function internxtLogin(email, password, tfaCode) {
     publicKey:  keys.publicKey,
   };
   console.log('[internxt] Step 3: login/access');
-  const accessRes  = await apiPost(`${DRIVE_API_URL}/auth/login/access`, loginPayload);
-  const tempToken  = accessRes.newToken || accessRes.token;
+  const accessRes = await apiPost(`${DRIVE_API_URL}/auth/login/access`, loginPayload);
+  const tempToken = accessRes.newToken || accessRes.token;
   if (!tempToken) throw new Error(`Auth access failed — no token. Response: ${JSON.stringify(accessRes)}`);
 
-  // Step 4: hydration via /users/refresh
   console.log('[internxt] Step 4: hydrating session');
-  const hydrated = await apiGet(`${DRIVE_API_URL}/users/refresh`, { Authorization: `Bearer ${tempToken}` });
+  const hydrated  = await apiGet(`${DRIVE_API_URL}/users/refresh`, { Authorization: `Bearer ${tempToken}` });
+  const user      = hydrated.user || {};
 
-  console.log('[internxt] Login successful, rootFolderUuid:', hydrated.user?.rootFolderUuid);
+  // Decrypt the mnemonic (stored AES-256-CBC encrypted, decrypt with user's plaintext password)
+  let mnemonic = null;
+  if (user.mnemonic) {
+    try {
+      mnemonic = decryptTextWithKey(user.mnemonic, password);
+      console.log('[internxt] Mnemonic decrypted OK');
+    } catch (e) {
+      console.warn('[internxt] Could not decrypt mnemonic:', e.message);
+    }
+  }
+
+  const rootFolderUuid = user.rootFolderUuid || user.rootFolderId;
+  const bridgeUser     = user.bridgeUser || cleanEmail;
+  const userId         = String(user.userId || user.id || '');
+  console.log('[internxt] Login OK — rootFolderUuid:', rootFolderUuid, 'bridgeUser:', bridgeUser);
+
   return {
-    token:    hydrated.token,
-    newToken: hydrated.newToken,
-    user:     hydrated.user,
+    token:          hydrated.token,
+    newToken:       hydrated.newToken,
+    rootFolderUuid,
+    mnemonic,
+    bridgeUser,
+    userId,
+    user,
   };
 }
 
@@ -524,11 +542,12 @@ router.post('/:id/mount', requireAuth, async (req, res) => {
   try {
     if (drive.type === 'internxt') {
       const authData = await internxtLogin(cfg.email, cfg.password, cfg.tfa_code);
-      // Store newToken as bearer + rootFolderUuid for browse
-      // rootFolderId is already a UUID; root_folder_id is the legacy numeric ID
       const tokenData = {
         token:          authData.newToken || authData.token,
-        rootFolderUuid: authData.user?.rootFolderId || authData.user?.rootFolderUuid,
+        rootFolderUuid: authData.rootFolderUuid,
+        mnemonic:       authData.mnemonic,   // decrypted BIP39 phrase for file decryption
+        bridgeUser:     authData.bridgeUser, // email-like identifier for network Basic auth
+        userId:         authData.userId,     // sha256(userId) = bridgePass
       };
       db.prepare('UPDATE cloud_drives SET is_mounted=1, token=? WHERE id=?')
         .run(JSON.stringify(tokenData), drive.id);
@@ -690,37 +709,173 @@ function downloadBinaryToFile(url, headers, destPath) {
   });
 }
 
+// ── Internxt file decryption ──────────────────────────────────────────────────
+// Matches internxt-cli/services/crypto.py decrypt_stream_internxt_protocol()
+// Key derivation: BIP39-seed → bucket_key → file_key; AES-256-CTR with iv=index[:16]
+
+function _bip39ToSeed(mnemonic) {
+  // PBKDF2-SHA512(password=mnemonic, salt="mnemonic", iterations=2048, len=64)
+  return new Promise((resolve, reject) =>
+    crypto.pbkdf2(mnemonic, 'mnemonic', 2048, 64, 'sha512', (e, k) => e ? reject(e) : resolve(k))
+  );
+}
+
+async function _internxtFileKey(mnemonic, bucketId, indexHex) {
+  const seed       = await _bip39ToSeed(mnemonic);
+  const bucketIdBuf = Buffer.from(bucketId, 'hex');      // bucket_id is a hex string
+  const indexBuf    = Buffer.from(indexHex, 'hex');       // index is a hex string
+
+  // bucket_key = SHA512(seed + bucketIdBytes)
+  const bucketKey = crypto.createHash('sha512').update(seed).update(bucketIdBuf).digest();
+
+  // file_key = SHA512(bucketKey[:32] + indexBytes)[:32]
+  const fileKey = crypto.createHash('sha512').update(bucketKey.slice(0, 32)).update(indexBuf).digest().slice(0, 32);
+
+  const iv = indexBuf.slice(0, 16);
+  return { fileKey, iv };
+}
+
 // ── Internxt file download ────────────────────────────────────────────────────
+// Matches internxt-cli/services/drive.py download_file():
+//   1. GET /drive/files/{uuid}/meta            → bucket, fileId, size, plainName, type
+//   2. GET /network/buckets/{b}/files/{f}/info  → shards[0].url + index (hex)
+//   3. GET pre-signed URL                       → raw encrypted bytes
+//   4. Decrypt AES-256-CTR, trim to file_size
+
+const NETWORK_URL = 'https://gateway.internxt.com/network';
 
 async function internxtDownloadFile(tokenData, fileUuid, destPath) {
-  const bearer = tokenData.newToken || tokenData.token;
-  const auth   = { Authorization: `Bearer ${bearer}` };
+  const bearer  = tokenData.token;
+  const auth    = { Authorization: `Bearer ${bearer}` };
 
-  // Step 1: get file metadata (uuid → fileId + filename)
+  // Step 1: file metadata
+  console.log(`[internxt/dl] Step 1: GET /drive/files/${fileUuid}/meta`);
   let meta;
   try {
-    meta = await apiGet(`${DRIVE_API_URL}/files/${fileUuid}`, auth);
+    meta = await apiGet(`${DRIVE_API_URL}/files/${fileUuid}/meta`, auth);
   } catch (e) {
     throw new Error(`Internxt metadata fetch failed: ${e.message}`);
   }
+  const bucketId = meta.bucket;
+  const fileId   = meta.fileId;
+  const fileSize = parseInt(meta.size || 0, 10);
+  const name     = (meta.plainName || meta.name || fileUuid) + (meta.type ? '.' + meta.type : '');
+  console.log(`[internxt/dl] meta: name="${name}" bucket=${bucketId} fileId=${fileId} size=${fileSize}`);
+  if (!bucketId || !fileId) throw new Error(`Internxt: missing bucket/fileId in metadata`);
 
-  const fileId  = meta.fileId || meta.id;
-  const name    = (meta.plainName || meta.name || fileUuid) + (meta.type ? '.' + meta.type : '');
-  if (!fileId) throw new Error('Internxt: no fileId in file metadata');
+  // Step 2: get pre-signed download URL + encryption index
+  // Network Basic auth: (bridgeUser, sha256(userId))
+  const bridgeUser = tokenData.bridgeUser;
+  const bridgePass = crypto.createHash('sha256').update(String(tokenData.userId)).digest('hex');
+  const networkInfoUrl = `${NETWORK_URL}/buckets/${bucketId}/files/${fileId}/info`;
+  console.log(`[internxt/dl] Step 2: GET ${networkInfoUrl} (Basic auth bridgeUser=${bridgeUser})`);
+  let linkInfo;
+  try {
+    linkInfo = await jsonRequest('GET', networkInfoUrl, {
+      headers: { 'x-api-version': '2' },
+      auth:    { user: bridgeUser, pass: bridgePass },
+    });
+  } catch (e) {
+    throw new Error(`Internxt network info failed: ${e.message}`);
+  }
+  const downloadUrl = linkInfo?.shards?.[0]?.url;
+  const indexHex    = linkInfo?.index;
+  console.log(`[internxt/dl] indexHex=${indexHex?.slice(0,16)}... downloadUrl=${downloadUrl?.slice(0,60)}...`);
+  if (!downloadUrl) throw new Error('Internxt: no shard URL in network info response');
+  if (!indexHex)    throw new Error('Internxt: no index in network info response');
 
-  // Step 2: download binary from storage API
-  // The storage API returns the raw (possibly encrypted) file binary.
-  const downloadUrl = `${DRIVE_API_URL}/storage/v2/file/${fileId}`;
-  console.log(`[internxt/download] uuid=${fileUuid} fileId=${fileId} name="${name}" → ${downloadUrl}`);
+  // Step 3: download encrypted binary
+  console.log(`[internxt/dl] Step 3: downloading encrypted binary`);
+  await downloadBinaryToFile(downloadUrl, {}, destPath);
+  const encryptedData = fs.readFileSync(destPath);
+  console.log(`[internxt/dl] downloaded ${encryptedData.length} bytes encrypted`);
 
-  await downloadBinaryToFile(downloadUrl, { ...INTERNXT_HEADERS, ...auth }, destPath);
+  // Step 4: decrypt AES-256-CTR
+  const mnemonic = tokenData.mnemonic;
+  if (!mnemonic) throw new Error('Internxt: no mnemonic stored in token_data — remount the drive to refresh credentials');
+  const { fileKey, iv } = await _internxtFileKey(mnemonic, bucketId, indexHex);
+  console.log(`[internxt/dl] Step 4: decrypting AES-256-CTR fileKey=${fileKey.toString('hex').slice(0,16)}...`);
+  const decipher   = crypto.createDecipheriv('aes-256-ctr', fileKey, iv);
+  const decrypted  = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+  const trimmed    = fileSize > 0 ? decrypted.slice(0, fileSize) : decrypted;
+  fs.writeFileSync(destPath, trimmed);
+  console.log(`[internxt/dl] decrypted → ${trimmed.length} bytes, saved to ${destPath}`);
   return { name };
 }
 
-// ── Filen file download (stub — chunk-based E2E encryption not yet implemented) ─
+// ── Filen file download ───────────────────────────────────────────────────────
+// Matches filen-python/services/drive.py download_file():
+//   1. POST /v3/file {uuid}         → metadata (encrypted) + chunks + region + bucket
+//   2. Decrypt metadata             → {key, name, size}
+//   3. GET egest.filen.io/{r}/{b}/{uuid}/{i}  for each chunk
+//   4. Decrypt each chunk AES-256-GCM: iv=[:12], tag=[-16:], ct=[12:-16]
 
-async function filenDownloadFile(_tokenData, fileUuid, _destPath) {
-  throw new Error(`Filen file download not yet implemented (uuid=${fileUuid}). Filen uses chunk-based E2E encryption that requires the full SDK.`);
+const FILEN_EGEST = 'https://egest.filen.io';
+
+async function filenDownloadFile(tokenData, fileUuid, destPath) {
+  const { apiKey, masterKeys } = tokenData;
+
+  async function tryDecrypt(enc) {
+    for (let i = masterKeys.length - 1; i >= 0; i--) {
+      try { return await filenDecryptMetadata(enc, masterKeys[i]); } catch {}
+    }
+    return null;
+  }
+
+  // Step 1: file metadata
+  console.log(`[filen/dl] Step 1: POST /v3/file uuid=${fileUuid}`);
+  const metadata = await filenRequest('POST', '/v3/file', { body: { uuid: fileUuid }, apiKey });
+  const chunks   = parseInt(metadata.chunks || 0, 10);
+  const region   = metadata.region;
+  const bucket   = metadata.bucket;
+  const encMeta  = metadata.metadata;
+  console.log(`[filen/dl] meta: chunks=${chunks} region=${region} bucket=${bucket}`);
+  if (!encMeta) throw new Error('Filen: no metadata in file response');
+
+  // Step 2: decrypt metadata → {key, name, size}
+  const metaStr = await tryDecrypt(encMeta);
+  if (!metaStr) throw new Error('Filen: could not decrypt file metadata');
+  const meta    = JSON.parse(metaStr);
+  const name    = meta.name || fileUuid;
+  const fileSize = parseInt(meta.size || 0, 10);
+  let fileKeyBytes;
+  if (meta.key && meta.key.length === 32) {
+    fileKeyBytes = Buffer.from(meta.key, 'utf8');
+  } else if (meta.key) {
+    fileKeyBytes = Buffer.from(meta.key, 'base64');
+  } else {
+    throw new Error('Filen: no file key in decrypted metadata');
+  }
+  console.log(`[filen/dl] decrypted meta: name="${name}" size=${fileSize} key=${meta.key?.slice(0,8)}...`);
+
+  // Step 3+4: download + decrypt each chunk
+  const out = fs.createWriteStream(destPath);
+  let bytesWritten = 0;
+  for (let i = 0; i < chunks; i++) {
+    const url = `${FILEN_EGEST}/${region}/${bucket}/${fileUuid}/${i}`;
+    console.log(`[filen/dl] chunk ${i}/${chunks}: GET ${url}`);
+    const chunkData = await new Promise((resolve, reject) => {
+      https.get(url, res => {
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Filen chunk HTTP ${res.statusCode}`)); }
+        const parts = [];
+        res.on('data', d => parts.push(d));
+        res.on('end', () => resolve(Buffer.concat(parts)));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+    // AES-256-GCM: iv=[:12], tag=[-16:], ct=[12:-16]
+    const iv         = chunkData.slice(0, 12);
+    const tag        = chunkData.slice(-16);
+    const ciphertext = chunkData.slice(12, -16);
+    const decipher   = crypto.createDecipheriv('aes-256-gcm', fileKeyBytes, iv);
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    out.write(plain);
+    bytesWritten += plain.length;
+  }
+  await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
+  console.log(`[filen/dl] wrote ${bytesWritten} bytes to ${destPath}`);
+  return { name };
 }
 
 // ── POST /:id/ingest — download cloud files and process into DB ───────────────
