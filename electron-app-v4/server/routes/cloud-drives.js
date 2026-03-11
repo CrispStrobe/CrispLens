@@ -935,7 +935,15 @@ router.post('/:id/ingest', requireAuth, async (req, res) => {
       }
 
       // Rename to include the actual filename for readability
-      const ext      = path.extname(downloadedName) || '';
+      const ext      = path.extname(downloadedName).toLowerCase() || '';
+      // Skip non-image files (e.g. PDFs) — processImageIntoDb would throw
+      if (!IMAGE_EXTS.has(ext)) {
+        try { fs.unlinkSync(destPath); } catch {}
+        errors++;
+        send({ index: done + errors, total: fileEntries.length, path: entry.path,
+               name: downloadedName, error: `Not an image file (${ext || 'unknown type'})` });
+        continue;
+      }
       const finalName = `cloud_${drive.type}_${Date.now()}_${path.basename(downloadedName, ext)}${ext}`;
       const finalPath = path.join(UPLOAD_DIR, finalName);
       fs.renameSync(destPath, finalPath);

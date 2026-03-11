@@ -52,6 +52,7 @@
   let ingestDetModel    = 'auto';
   let ingestSkipVlm     = true;
   let ingestDupMode     = 'skip';
+  let ingestThumbSize   = 400;    // px, stored thumbnail max-dimension
   $: ingestDetParams = {
     det_thresh:    ingestDetThresh,
     min_face_size: ingestMinFace,
@@ -489,7 +490,11 @@
     addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
     backgroundTask.set({ label: 'Fetching from cloud', done: 0, total: 0 });
 
-    const paths   = [...selected];
+    // Only send image files — non-images (PDFs, etc.) can't be face-detected
+    const paths   = [...selected].filter(p => {
+      const e = entries.find(en => en.path === p);
+      return e?.is_dir || e?.is_image;
+    });
     const hasDirs = paths.some(p => entries.find(e => e.path === p)?.is_dir);
 
     addStream = ingestCloudDrive(cloudDriveId, paths, hasDirs, visibility, event => {
@@ -532,7 +537,8 @@
 
   async function startCloudIngestLocal() {
     if (selected.size === 0 || adding) return;
-    const filePaths = [...selected].filter(p => !entries.find(e => e.path === p)?.is_dir);
+    // Only process image files — skip directories and non-images (PDFs, etc.)
+    const filePaths = [...selected].filter(p => entries.find(e => e.path === p)?.is_image);
     if (filePaths.length === 0) return;
 
     adding = true;
@@ -568,7 +574,7 @@
         // 2. Run ONNX face detection + embedding in browser
         const faceData = await engine.processFile(file, {
           visibility,
-          thumb_size:    200,
+          thumb_size:    ingestThumbSize,
           det_thresh:    ingestDetParams.det_thresh,
           min_face_size: ingestDetParams.min_face_size,
           det_model:     ingestDetParams.det_model,
@@ -1312,6 +1318,10 @@
             <option value="overwrite">{$t('pv_dup_mode_overwrite')}</option>
             <option value="always_add">{$t('pv_dup_mode_add')}</option>
           </select>
+        </div>
+        <div class="det-param-row">
+          <label>Thumbnail: <strong>{ingestThumbSize}px</strong></label>
+          <input type="range" min="200" max="800" step="100" bind:value={ingestThumbSize} />
         </div>
         <label class="skip-check">
           <input type="checkbox" bind:checked={ingestSkipVlm} />
