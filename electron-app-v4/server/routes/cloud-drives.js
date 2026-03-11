@@ -5,8 +5,14 @@
  *
  * Supported types: internxt, filen (cloud auth), smb, sftp (network mounts).
  * SMB/SFTP: stub only — no native mount support in Node without OS tools.
- * Internxt: full auth + browse via their REST API.
+ * Internxt: full auth + browse via their REST API (modern "Hydrated Login" flow).
  * Filen: stub — requires their custom E2E encrypted protocol.
+ *
+ * Internxt auth matches internxt-cli/services/auth.py + crypto.py exactly:
+ *   1. POST /auth/login  {email}  → {sKey}  (encrypted salt)
+ *   2. decrypt sKey → salt; PBKDF2(password, salt) → hash; encrypt(hash) → encryptedPasswordHash
+ *   3. POST /auth/login/access  {email, password: encryptedPasswordHash, keys, ...}  → {newToken}
+ *   4. GET  /users/refresh  Bearer: newToken  → {token, newToken, user: {rootFolderUuid, ...}}
  */
 
 const express = require('express');
@@ -17,6 +23,213 @@ const { getDb }       = require('../db');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
+
+// ── Internxt constants ────────────────────────────────────────────────────────
+// Matches internxt-cli/config/config.py
+const DRIVE_API_URL     = 'https://gateway.internxt.com/drive';
+const APP_CRYPTO_SECRET = '6KYQBP847D4ATSFA';
+const INTERNXT_HEADERS  = {
+  'Content-Type': 'application/json',
+  'Accept':       'application/json',
+  'internxt-client': 'internxt-cli',
+};
+
+// ── Crypto helpers (ported from internxt-cli/services/crypto.py) ──────────────
+
+/**
+ * OpenSSL EVP_BytesToKey-compatible key+IV derivation (MD5 x3).
+ * Matches Python _get_key_and_iv_from().
+ */
+function _getKeyAndIv(secret, salt) {
+  const password = Buffer.concat([Buffer.from(secret, 'latin1'), salt]);
+  const d0 = crypto.createHash('md5').update(password).digest();
+  const d1 = crypto.createHash('md5').update(Buffer.concat([d0, password])).digest();
+  const d2 = crypto.createHash('md5').update(Buffer.concat([d1, password])).digest();
+  return { key: Buffer.concat([d0, d1]), iv: d2 };
+}
+
+/**
+ * AES-256-CBC decrypt of an OpenSSL "Salted__" hex-encoded string.
+ * Matches Python decrypt_text_with_key().
+ */
+function decryptTextWithKey(encryptedHex, secret) {
+  const buf  = Buffer.from(encryptedHex, 'hex');
+  const salt = buf.slice(8, 16);           // skip "Salted__" (8 bytes)
+  const { key, iv } = _getKeyAndIv(secret, salt);
+  const dec  = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  return Buffer.concat([dec.update(buf.slice(16)), dec.final()]).toString('utf8');
+}
+
+/**
+ * AES-256-CBC encrypt → OpenSSL "Salted__" hex-encoded string.
+ * Matches Python encrypt_text_with_key().
+ */
+function encryptTextWithKey(text, secret) {
+  const salt = crypto.randomBytes(8);
+  const { key, iv } = _getKeyAndIv(secret, salt);
+  const enc  = crypto.createCipheriv('aes-256-cbc', key, iv);
+  const ct   = Buffer.concat([enc.update(Buffer.from(text, 'utf8')), enc.final()]);
+  return Buffer.concat([Buffer.from('Salted__'), salt, ct]).toString('hex');
+}
+
+const decryptText = (hex)  => decryptTextWithKey(hex, APP_CRYPTO_SECRET);
+const encryptText = (text) => encryptTextWithKey(text, APP_CRYPTO_SECRET);
+
+/**
+ * PBKDF2-SHA1 (10 000 iter, 32 bytes). Matches Python pass_to_hash().
+ * Returns { salt: hexString, hash: hexString }.
+ */
+function passToHash(password, saltHex) {
+  return new Promise((resolve, reject) => {
+    const salt = saltHex ? Buffer.from(saltHex, 'hex') : crypto.randomBytes(16);
+    crypto.pbkdf2(password, salt, 10000, 32, 'sha1', (err, key) => {
+      if (err) return reject(err);
+      resolve({ salt: salt.toString('hex'), hash: key.toString('hex') });
+    });
+  });
+}
+
+/**
+ * Derives the encrypted password hash from a plaintext password and the sKey
+ * returned by the Internxt API. Matches Python encrypt_password_hash().
+ *
+ * Flow: decrypt(sKey) → saltHex → PBKDF2(password, salt) → encrypt(hashHex)
+ */
+async function encryptPasswordHash(password, sKey) {
+  const saltHex  = decryptText(sKey);
+  const hashObj  = await passToHash(password, saltHex);
+  return encryptText(hashObj.hash);
+}
+
+/**
+ * Placeholder key pairs (same as internxt-cli generate_keys).
+ * The Internxt backend validates the payload structure but doesn't use the
+ * placeholder values for drive-browse access.
+ */
+function generateKeys(password) {
+  const encPk = encryptTextWithKey('placeholder-private-key-for-login', password);
+  return {
+    privateKeyEncrypted: encPk,
+    publicKey: 'placeholder-public-key-for-login',
+    revocationCertificate: 'placeholder-revocation-cert-for-login',
+    ecc:   { publicKey: 'placeholder-ecc-public-key', privateKeyEncrypted: encPk },
+    kyber: { publicKey: null, privateKeyEncrypted: null },
+  };
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+function jsonRequest(method, url, { body, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const u   = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const bodyBuf = body ? Buffer.from(JSON.stringify(body), 'utf8') : null;
+    const reqHeaders = {
+      ...INTERNXT_HEADERS,
+      ...headers,
+      ...(bodyBuf ? { 'Content-Length': bodyBuf.length } : {}),
+    };
+    const req = mod.request({
+      hostname: u.hostname,
+      port:     u.port || (u.protocol === 'https:' ? 443 : 80),
+      path:     u.pathname + u.search,
+      method,
+      headers:  reqHeaders,
+    }, res => {
+      const chunks = [];
+      res.on('data', d => chunks.push(d));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = raw; }
+        if (res.statusCode >= 400) {
+          const msg = (typeof data === 'object' && (data.message || data.error)) || `HTTP ${res.statusCode}`;
+          return reject(new Error(msg));
+        }
+        resolve(data);
+      });
+    });
+    req.on('error', reject);
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
+const apiGet  = (url, headers) => jsonRequest('GET',  url, { headers });
+const apiPost = (url, body, headers) => jsonRequest('POST', url, { body, headers });
+
+// ── Internxt auth flow ────────────────────────────────────────────────────────
+
+/**
+ * Full "Hydrated Login" matching internxt-cli auth.py do_login().
+ * Returns { token, newToken, user: { rootFolderUuid, ... } }
+ */
+async function internxtLogin(email, password, tfaCode) {
+  const cleanEmail = email.toLowerCase().trim();
+
+  // Step 1: security_details → sKey
+  console.log('[internxt] Step 1: security_details for', cleanEmail);
+  const secDetails = await apiPost(`${DRIVE_API_URL}/auth/login`, { email: cleanEmail });
+  const sKey = secDetails.sKey;
+  if (!sKey) throw new Error(`Login failed: sKey missing. Response: ${JSON.stringify(secDetails)}`);
+
+  // Step 2: client-side crypto
+  console.log('[internxt] Step 2: encrypting password hash');
+  const encPasswordHash = await encryptPasswordHash(password, sKey);
+  const keys = generateKeys(password);
+
+  // Step 3: login/access
+  const loginPayload = {
+    email:      cleanEmail,
+    password:   encPasswordHash,
+    tfa:        tfaCode?.trim() || undefined,
+    keys: {
+      ecc: { publicKey: keys.ecc.publicKey, privateKey: keys.ecc.privateKeyEncrypted },
+    },
+    privateKey: keys.privateKeyEncrypted,
+    publicKey:  keys.publicKey,
+  };
+  console.log('[internxt] Step 3: login/access');
+  const accessRes  = await apiPost(`${DRIVE_API_URL}/auth/login/access`, loginPayload);
+  const tempToken  = accessRes.newToken || accessRes.token;
+  if (!tempToken) throw new Error(`Auth access failed — no token. Response: ${JSON.stringify(accessRes)}`);
+
+  // Step 4: hydration via /users/refresh
+  console.log('[internxt] Step 4: hydrating session');
+  const hydrated = await apiGet(`${DRIVE_API_URL}/users/refresh`, { Authorization: `Bearer ${tempToken}` });
+
+  console.log('[internxt] Login successful, rootFolderUuid:', hydrated.user?.rootFolderUuid);
+  return {
+    token:    hydrated.token,
+    newToken: hydrated.newToken,
+    user:     hydrated.user,
+  };
+}
+
+/**
+ * List folders and (image) files in a folder by UUID.
+ * Matches internxt-cli api.py get_folder_folders() / get_folder_files().
+ */
+async function internxtListFolder(bearerToken, folderUuid) {
+  const auth = { Authorization: `Bearer ${bearerToken}` };
+  const foldersUrl = `${DRIVE_API_URL}/folders/content/${folderUuid}/folders?offset=0&limit=200&sort=plainName&direction=ASC`;
+  const filesUrl   = `${DRIVE_API_URL}/folders/content/${folderUuid}/files?offset=0&limit=200&sort=plainName&direction=ASC`;
+
+  const [foldersRes, filesRes] = await Promise.all([
+    apiGet(foldersUrl, auth).catch(() => ({})),
+    apiGet(filesUrl,   auth).catch(() => ({})),
+  ]);
+
+  const folders = Array.isArray(foldersRes?.result) ? foldersRes.result
+                : Array.isArray(foldersRes?.children) ? foldersRes.children
+                : Array.isArray(foldersRes) ? foldersRes : [];
+
+  const files   = Array.isArray(filesRes?.result) ? filesRes.result
+                : Array.isArray(filesRes?.files)   ? filesRes.files
+                : Array.isArray(filesRes)            ? filesRes : [];
+
+  return { folders, files };
+}
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -47,7 +260,7 @@ router.get('/', requireAuth, (req, res) => {
 router.post('/', requireAuth, (req, res) => {
   const db = getDb();
   ensureTable(db);
-  const { name, type, config = {}, mount_point, scope, allowed_roles, auto_mount } = req.body || {};
+  const { name, type, config = {} } = req.body || {};
   if (!name?.trim() || !type) return res.status(400).json({ detail: 'name and type required' });
   const r = db.prepare(
     'INSERT INTO cloud_drives (owner_id, name, type, config) VALUES (?,?,?,?)'
@@ -79,105 +292,6 @@ router.get('/:id/config', requireAuth, (req, res) => {
   if (!drive) return res.status(404).json({ detail: 'Not found' });
   res.json(cfgOf(drive));
 });
-
-// ── Internxt helpers ──────────────────────────────────────────────────────────
-
-const INTERNXT_API = 'https://api.internxt.com';
-
-function internxtDerivePassword(plainPassword, saltHex) {
-  // Internxt auth: SHA-256(password) → uppercase hex → PBKDF2(sha256, salt, 10000, 32)
-  const sha256hex = crypto.createHash('sha256').update(plainPassword, 'utf8').digest('hex').toUpperCase();
-  return crypto.pbkdf2Sync(Buffer.from(sha256hex, 'utf8'), Buffer.from(saltHex, 'hex'), 10000, 32, 'sha256').toString('hex');
-}
-
-function httpsGet(url, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https') ? https : http;
-    mod.get(url, { headers }, res => {
-      let body = '';
-      res.on('data', d => body += d);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, data: JSON.parse(body) }); }
-        catch { resolve({ status: res.statusCode, data: body }); }
-      });
-    }).on('error', reject);
-  });
-}
-
-function httpsPost(url, payload, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(payload);
-    const u = new URL(url);
-    const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request({
-      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + u.search, method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...headers },
-    }, res => {
-      let out = '';
-      res.on('data', d => out += d);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, data: JSON.parse(out) }); }
-        catch { resolve({ status: res.statusCode, data: out }); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-async function internxtLogin(email, password, tfaCode) {
-  // Step 1: get salt
-  const saltResp = await httpsGet(
-    `${INTERNXT_API}/api/auth/login/${encodeURIComponent(email)}`,
-    { 'internxt-client': 'node-v4', 'internxt-version': '1.0.0' }
-  );
-  if (saltResp.status !== 200 || !saltResp.data?.salt) {
-    throw new Error(saltResp.data?.message || saltResp.data?.error || `Auth step 1 failed (${saltResp.status})`);
-  }
-  const salt = saltResp.data.salt;
-
-  // Step 2: login with derived password
-  const derived = internxtDerivePassword(password, salt);
-  const loginPayload = { email, password: derived };
-  if (tfaCode?.trim()) loginPayload.tfa = tfaCode.trim();
-
-  const loginResp = await httpsPost(
-    `${INTERNXT_API}/api/auth/login`,
-    loginPayload,
-    { 'internxt-client': 'node-v4', 'internxt-version': '1.0.0' }
-  );
-  if (loginResp.status !== 200 || !loginResp.data?.token) {
-    throw new Error(loginResp.data?.message || loginResp.data?.error || `Auth step 2 failed (${loginResp.status})`);
-  }
-  return loginResp.data;  // { token, newToken, user: { rootFolderId, ... } }
-}
-
-async function internxtListFolder(token, folderId) {
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    'internxt-client': 'node-v4',
-    'internxt-version': '1.0.0',
-  };
-
-  // List subfolders
-  const foldersResp = await httpsGet(
-    `${INTERNXT_API}/api/storage/v2/folders/${folderId}?limit=200&offset=0`,
-    headers
-  );
-  const folders = Array.isArray(foldersResp.data?.children) ? foldersResp.data.children : [];
-
-  // List files
-  const filesResp = await httpsGet(
-    `${INTERNXT_API}/api/storage/v2/folders/${folderId}/files?limit=200&offset=0`,
-    headers
-  );
-  const files = Array.isArray(filesResp.data) ? filesResp.data
-              : Array.isArray(filesResp.data?.files) ? filesResp.data.files : [];
-
-  return { folders, files };
-}
 
 // ── Test connection ────────────────────────────────────────────────────────────
 
@@ -214,10 +328,13 @@ router.post('/:id/mount', requireAuth, async (req, res) => {
   try {
     if (drive.type === 'internxt') {
       const authData = await internxtLogin(cfg.email, cfg.password, cfg.tfa_code);
-      const token = authData.newToken || authData.token;
-      const rootFolderId = authData.user?.rootFolderId || authData.user?.root_folder_id;
+      // Store newToken as bearer + rootFolderUuid for browse
+      const tokenData = {
+        token:          authData.newToken || authData.token,
+        rootFolderUuid: authData.user?.rootFolderUuid || authData.user?.root_folder_id,
+      };
       db.prepare('UPDATE cloud_drives SET is_mounted=1, token=? WHERE id=?')
-        .run(JSON.stringify({ token, rootFolderId }), drive.id);
+        .run(JSON.stringify(tokenData), drive.id);
       return res.json({ ok: true, message: 'Connected to Internxt' });
     }
     return res.json({ ok: false, message: `${drive.type}: mount not implemented in v4` });
@@ -252,38 +369,43 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
       const tokenData = JSON.parse(drive.token || '{}');
       if (!tokenData.token) return res.status(400).json({ detail: 'Token missing — reconnect drive' });
 
-      // Determine folder ID from path
-      let folderId = tokenData.rootFolderId;
+      // Path format: '/' = root, '/{uuid}' = specific folder, '/{parentUuid}/{uuid}' for nested
+      let folderUuid = tokenData.rootFolderUuid;
+      let parentPath = null;
+
       if (browsePath !== '/' && browsePath !== '') {
-        // Path is stored as /<folderId> for Internxt
-        const match = browsePath.match(/^\/(\d+)(?:\/|$)/);
-        if (match) folderId = Number(match[1]);
+        // Extract the last UUID segment as current folder
+        const parts = browsePath.replace(/^\//, '').split('/').filter(Boolean);
+        if (parts.length > 0) {
+          folderUuid = parts[parts.length - 1];
+          // Parent = everything except last segment
+          parentPath = parts.length > 1 ? '/' + parts.slice(0, -1).join('/') : '/';
+        }
       }
 
-      const { folders, files } = await internxtListFolder(tokenData.token, folderId);
+      const { folders, files } = await internxtListFolder(tokenData.token, folderUuid);
 
       const entries = [
         ...folders.map(f => ({
-          name:   f.name,
-          path:   `/${folderId}/${f.id}`,
+          name:   f.plainName || f.name,
+          path:   `${browsePath === '/' ? '' : browsePath}/${f.uuid}`,
           is_dir: true,
         })),
         ...files
-          .filter(f => IMAGE_EXTS.has(('.' + (f.type || '')).toLowerCase()))
+          .filter(f => {
+            const ext = ('.' + (f.type || '')).toLowerCase();
+            return IMAGE_EXTS.has(ext);
+          })
           .map(f => ({
-            name:    f.name + (f.type ? '.' + f.type : ''),
-            path:    `/${folderId}/file/${f.fileId || f.id}`,
-            is_dir:  false,
+            name:     (f.plainName || f.name) + (f.type ? '.' + f.type : ''),
+            path:     `${browsePath === '/' ? '' : browsePath}/file/${f.uuid}`,
+            is_dir:   false,
             is_image: true,
-            size:    f.size,
+            size:     f.size,
           })),
       ].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
 
-      const parent = browsePath === '/' || browsePath === `/${folderId}`
-        ? null
-        : `/${folderId}`;
-
-      return res.json({ path: browsePath, parent, entries });
+      return res.json({ path: browsePath, parent: parentPath, entries });
     }
 
     return res.status(400).json({ detail: `Browse not implemented for type: ${drive.type}` });
