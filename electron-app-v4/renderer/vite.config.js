@@ -80,7 +80,10 @@ export default defineConfig({
         categories: ['photography', 'productivity', 'utilities'],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,mjs}'],
+        // Exclude JS/CSS from precache — they have no content hashes so revision=null
+        // means the SW won't refresh them on update. These are handled by NetworkFirst
+        // runtime caching below, which always fetches fresh from server.
+        globPatterns: ['**/*.{html,png,svg,ico,woff,woff2}'],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [
@@ -103,7 +106,9 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'crisplens-app-bundles',
-              networkTimeoutSeconds: 4,
+              // No timeout — local server always responds fast; timeout would cause
+              // stale fallback masking updates when server is briefly slow.
+              networkTimeoutSeconds: 0,
             },
           },
           // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
