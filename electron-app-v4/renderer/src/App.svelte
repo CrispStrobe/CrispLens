@@ -87,6 +87,12 @@
       if (!$backendReady) {
         backendReady.set(true);
         isOffline.set(false);
+        // If a valid CrispLens server responded but localStorage still says "local"
+        // (e.g. first-run default was set before the server was running), override it.
+        if (!inElectron && !inCapacitor && isLocalMode()) {
+          console.log('[App] Server health check passed in browser mode — overriding db_mode from "local" → "server"');
+          setLocalMode(false);
+        }
         loadAll();
         // Auto-push any items processed while offline
         const apiBase = localStorage.getItem('remote_url') || window.location.origin;
