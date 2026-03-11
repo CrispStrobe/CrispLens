@@ -92,21 +92,59 @@
         fsCurrentPath.set(currentPath);
       }
     } catch (e) {
-      error = e.message;
+      if (is401(e)) { needsServerAuth = true; }
+      else { error = e.message; }
       console.error('[FilesystemView] browse error for', browsePath, ':', e.message);
     } finally {
       loading = false;
     }
   }
 
+  // ── Server auth panel (shown in cloud/filesystem mode when session is missing) ──
+  // In standalone (local WASM) mode, the app never logs into the server.
+  // Cloud drives + filesystem browse always need server auth. If they get a 401,
+  // show an inline login form so the user can establish a server session without
+  // switching out of standalone mode.
+  let needsServerAuth = false;
+  let serverAuthUser = '';
+  let serverAuthPass = '';
+  let serverAuthBusy = false;
+  let serverAuthError = '';
+
+  async function doServerLogin() {
+    serverAuthBusy = true; serverAuthError = '';
+    try {
+      const apiBase = (localStorage.getItem('remote_url') || window.location.origin).replace(/\/$/, '');
+      const res = await fetch(`${apiBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username: serverAuthUser, password: serverAuthPass }),
+      });
+      if (!res.ok) { serverAuthError = 'Login failed — check username/password'; return; }
+      needsServerAuth = false;
+      // Retry whichever view triggered the auth
+      if (cloudMode) loadCloudDrives();
+      else browse(currentPath);
+    } catch (e) {
+      serverAuthError = e.message;
+    } finally {
+      serverAuthBusy = false;
+    }
+  }
+
+  function is401(e) { return e?.message?.includes('401'); }
+
   // ── Cloud drive management ─────────────────────────────────────────────────
   async function loadCloudDrives() {
     cloudLoading = true;
     error = '';
+    needsServerAuth = false;
     try {
       cloudDrives = await fetchCloudDrives();
     } catch (e) {
-      error = `Could not load cloud drives: ${e.message}`;
+      if (is401(e)) { needsServerAuth = true; }
+      else { error = `Could not load cloud drives: ${e.message}`; }
     } finally {
       cloudLoading = false;
     }
@@ -797,6 +835,26 @@
     <div class="error-bar">{error} <button class="btn-sm err-dismiss" on:click={() => error = ''}>✕</button></div>
   {/if}
 
+  <!-- Server auth panel — shown when standalone mode has no server session -->
+  {#if needsServerAuth}
+    <div class="server-auth-panel">
+      <div class="server-auth-title">🔐 Server login required</div>
+      <div class="server-auth-hint">
+        You are in standalone mode. Cloud drives and filesystem browse require a server session.
+      </div>
+      <div class="server-auth-fields">
+        <input type="text" bind:value={serverAuthUser} placeholder="Username"
+          on:keydown={e => e.key === 'Enter' && doServerLogin()} />
+        <input type="password" bind:value={serverAuthPass} placeholder="Password"
+          on:keydown={e => e.key === 'Enter' && doServerLogin()} />
+        <button class="primary" on:click={doServerLogin} disabled={serverAuthBusy || !serverAuthUser}>
+          {serverAuthBusy ? '…' : 'Log in to server'}
+        </button>
+      </div>
+      {#if serverAuthError}<div class="server-auth-err">{serverAuthError}</div>{/if}
+    </div>
+  {/if}
+
   <!-- ── Cloud drive picker ──────────────────────────────────────────────── -->
   {#if cloudMode && cloudDriveId === null}
     <div class="cloud-picker">
@@ -1353,6 +1411,37 @@
     color: #e06060;
     border-color: #6a2020;
   }
+
+  /* ── Server auth panel ── */
+  .server-auth-panel {
+    background: #1a1a30;
+    border: 1px solid #3a3a60;
+    border-radius: 8px;
+    margin: 12px 16px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .server-auth-title { font-size: 13px; font-weight: 600; color: #c0c8e0; }
+  .server-auth-hint { font-size: 11px; color: #6070a0; }
+  .server-auth-fields {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .server-auth-fields input {
+    background: #111120;
+    border: 1px solid #2a2a4a;
+    border-radius: 4px;
+    color: #c0c8e0;
+    font-size: 12px;
+    padding: 5px 8px;
+    width: 140px;
+  }
+  .server-auth-err { font-size: 11px; color: #e06060; }
 
   /* ── Cloud picker ── */
   .cloud-picker {

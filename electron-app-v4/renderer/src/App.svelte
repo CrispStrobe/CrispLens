@@ -270,9 +270,12 @@
       }
     } catch { /* ignore */ }
 
-    // ── Local (standalone) mode: native Capacitor with no server ──────────────
+    // ── Local (standalone) mode: browser WASM SQLite for image/face data ────────
+    // _localMode only controls WHERE image/face data comes from (local WASM vs server).
+    // Cloud drives + filesystem are always server-side — so we ALSO attempt server auth
+    // in the background. If server is reachable, the session cookie lets cloud drives work.
     if (isLocalMode()) {
-      console.log('[App] Standalone mode (Capacitor native, no server) — initializing local engine...');
+      console.log('[App] Standalone mode — initializing local WASM engine...');
       // Small delay to let jeep-sqlite component upgrade in DOM
       setTimeout(async () => {
         try {
@@ -287,7 +290,20 @@
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;
-      loadAll();
+      loadAll();  // uses _guard → local data, sets currentUser to { username:'local', role:'admin' }
+
+      // ALSO attempt server auth in background so cloud drives / filesystem work.
+      // Don't block the UI on this — it's best-effort.
+      const savedUrl = localStorage.getItem('remote_url') || '';
+      if (savedUrl || window.location.origin !== 'null') {
+        import('./api.js').then(({ fetchHealth, fetchMe }) => {
+          fetchHealth().then(() => fetchMe()).then(u => {
+            console.log('[App] Background server auth OK:', u?.username);
+          }).catch(e => {
+            console.log('[App] Background server auth unavailable (cloud drives will require server login):', e.message);
+          });
+        }).catch(() => {});
+      }
       return;
     }
 
