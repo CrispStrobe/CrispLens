@@ -996,9 +996,9 @@ export function browseCloudDrive(id, path = '/') {
   const q = new URLSearchParams({ path });
   return getD(`/cloud-drives/${id}/browse?${q}`);
 }
-export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
+export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent, detParams = {}) {
   // Ingest (SSE) is server-only — no LocalAdapter equivalent
-  return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
+  return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility, ...detParams }, onEvent);
 }
 export function downloadCloudFile(driveId, filePath) {
   // Returns the download URL — open in browser to trigger native download

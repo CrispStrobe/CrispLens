@@ -43,6 +43,24 @@
   let addErrorList = []; // [{name, error}] for upload failures
   let visibility = 'shared'; // 'shared' | 'private'
 
+  // ── Cloud ingest detection settings ───────────────────────────────────────
+  let showIngestSettings = false;
+  let ingestDetThresh   = 0.5;
+  let ingestMinFace     = 60;
+  let ingestRecThresh   = 0.4;
+  let ingestMaxSize     = 0;      // 0 = no limit
+  let ingestDetModel    = 'auto';
+  let ingestSkipVlm     = true;
+  let ingestDupMode     = 'skip';
+  $: ingestDetParams = {
+    det_thresh:    ingestDetThresh,
+    min_face_size: ingestMinFace,
+    rec_thresh:    ingestRecThresh,
+    max_size:      ingestMaxSize,
+    det_model:     ingestDetModel,
+    skip_vlm:      ingestSkipVlm,
+  };
+
   // ── View mode: 'grid' | 'list' ────────────────────────────────────────────
   let fsView = 'grid';
 
@@ -468,7 +486,7 @@
     if (selected.size === 0 || adding) return;
     adding = true;
     addDone = false;
-    addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '' };
+    addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
     backgroundTask.set({ label: 'Fetching from cloud', done: 0, total: 0 });
 
     const paths   = [...selected];
@@ -502,7 +520,7 @@
         };
         backgroundTask.set({ label: 'Fetching from cloud', done: event.index, total: addProgress.total });
       }
-    });
+    }, ingestDetParams);
   }
 
   // ── Browser WASM mode: download cloud blob → FaceEngineWeb → LocalAdapter ──
@@ -550,12 +568,17 @@
         // 2. Run ONNX face detection + embedding in browser
         const faceData = await engine.processFile(file, {
           visibility,
-          thumb_size: 200,
+          thumb_size:    200,
+          det_thresh:    ingestDetParams.det_thresh,
+          min_face_size: ingestDetParams.min_face_size,
+          det_model:     ingestDetParams.det_model,
+          max_size:      ingestDetParams.max_size || undefined,
+          vlm_enabled:   !ingestSkipVlm,
         });
 
         // 3. Store result in LocalAdapter (importProcessed routes via _guard)
         faceData.filename = name;
-        const r = await importProcessed({ ...faceData, duplicate_mode: 'skip' });
+        const r = await importProcessed({ ...faceData, duplicate_mode: ingestDupMode });
 
         done++;
         totalFaces += r.face_count ?? faceData.faces?.length ?? 0;
@@ -1236,6 +1259,10 @@
         <button class="primary" on:click={startAddToDb}>
           {cloudMode ? '⬇ ' + $t('fs_add_to_db_cloud') : localMode ? '⬆ ' + $t('fs_upload_to_db') : $t('fs_add_to_db')}
         </button>
+        {#if cloudMode}
+          <button class="btn-sm det-toggle-btn" on:click={() => showIngestSettings = !showIngestSettings}
+            title={$t('pv_det_settings')}>⚙{showIngestSettings ? '▲' : '▼'}</button>
+        {/if}
         {#if !cloudMode && !localMode && selectedInDbCount > 0}
           <button class="btn-sm" on:click={downloadSelected}>
             ⬇ {$t('download')} ({selectedInDbCount})
@@ -1255,6 +1282,43 @@
         <button class="btn-sm" on:click={clearSelection}>{$t('deselect')}</button>
       {/if}
     </div>
+    {#if cloudMode && showIngestSettings && !adding && !addDone}
+      <div class="ingest-settings">
+        <div class="det-param-row">
+          <label>{$t('pv_max_size_label')}: <span class="hint">{$t('pv_max_size_hint')}</span></label>
+          <input type="number" bind:value={ingestMaxSize} min="0" max="9999" step="100"
+                 placeholder="0 = no limit" class="num-input" />
+        </div>
+        <div class="det-param-row">
+          <label>{$t('detection_threshold')}: <strong>{ingestDetThresh}</strong></label>
+          <input type="range" min="0.1" max="0.9" step="0.05" bind:value={ingestDetThresh} />
+        </div>
+        <div class="det-param-row">
+          <label>{$t('min_face_size')}: <strong>{ingestMinFace}px</strong></label>
+          <input type="range" min="10" max="200" step="5" bind:value={ingestMinFace} />
+        </div>
+        <div class="det-param-row">
+          <label>{$t('detection_model')}</label>
+          <select bind:value={ingestDetModel}>
+            <option value="auto">{$t('det_model_auto')}</option>
+            <option value="yunet">{$t('det_model_yunet')}</option>
+            <option value="none">{$t('det_model_none')}</option>
+          </select>
+        </div>
+        <div class="det-param-row">
+          <label>{$t('pv_dup_mode_label')}</label>
+          <select bind:value={ingestDupMode}>
+            <option value="skip">{$t('pv_dup_mode_skip')}</option>
+            <option value="overwrite">{$t('pv_dup_mode_overwrite')}</option>
+            <option value="always_add">{$t('pv_dup_mode_add')}</option>
+          </select>
+        </div>
+        <label class="skip-check">
+          <input type="checkbox" bind:checked={ingestSkipVlm} />
+          {$t('pv_skip_vlm')}
+        </label>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -1641,7 +1705,31 @@
   .face-count  { color: #7eb8e8; margin-left: 4px; }
   .done-block { display: flex; flex-direction: column; gap: 6px; flex: 1; }
   .done-msg   { font-size: 12px; color: #50c878; }
-  .btn-sm     { font-size: 11px; padding: 4px 10px; align-self: flex-start; }
+  .btn-sm          { font-size: 11px; padding: 4px 10px; align-self: flex-start; }
+  .det-toggle-btn  { padding: 4px 7px; font-size: 11px; background: #1e1e2e; }
+  /* ── Cloud ingest settings panel ── */
+  .ingest-settings {
+    padding: 8px 14px 10px;
+    background: #12121c;
+    border-top: 1px solid #2a2a3a;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    align-items: center;
+  }
+  .det-param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #8090b0;
+  }
+  .det-param-row label { white-space: nowrap; }
+  .det-param-row input[type=range] { width: 90px; }
+  .det-param-row select { font-size: 11px; padding: 2px 4px; }
+  .num-input { width: 72px; font-size: 11px; padding: 3px 5px; text-align: right; }
+  .skip-check { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #8090b0; cursor: pointer; }
+  .hint { color: #505070; font-size: 10px; }
 
   .err-details {
     font-size: 11px;
