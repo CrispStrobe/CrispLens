@@ -1280,11 +1280,19 @@
   async function doHardReset() {
     const isLocal = isLocalMode();
     const msg = isLocal
-      ? 'This will purge all image/face data, settings, and cached data. The app will reload. Continue?'
+      ? 'This will reset all settings and switch to Server mode. Your image data is safe. Continue?'
       : 'This will reset app settings to defaults (watch folders, configuration). Your image data is safe. Continue?';
     if (!confirm(msg)) return;
     try {
-      await hardResetApp();
+      // Always switch to server mode on reset — clears any stale db_mode=local
+      setLocalMode(false);
+      // Clear other stale localStorage keys from old code iterations
+      localStorage.removeItem('db_mode_set');
+      localStorage.removeItem('db_mode_explicit');
+      if (!isLocal) {
+        // Only call server reset when we can reach the server
+        await hardResetApp();
+      }
       dbMsg = '✓ Settings reset. Reloading…';
       setTimeout(() => location.reload(), 1000);
     } catch (e) {
