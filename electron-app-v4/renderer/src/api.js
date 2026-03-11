@@ -179,34 +179,42 @@ const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?
   && (globalThis.Capacitor?.isNativePlatform?.() ?? false);
 
 let _localMode = localStorage.getItem('db_mode') === 'local';
+// db_mode_set=1 means the user explicitly chose a mode in Settings (vs an automatic default).
+const _dbModeUserSet = localStorage.getItem('db_mode_set') === '1';
 
 if (_inElectron) {
-  // Electron always has an embedded server — standalone SQLite never applies.
+  // Electron always has an embedded server.
   if (_localMode) console.log('[api] Electron: overriding db_mode "local" → "server"');
   _localMode = false;
   localStorage.setItem('db_mode', 'server');
-} else if (localStorage.getItem('db_mode') === null) {
-  // First run with no stored preference.
-  // Only native Capacitor defaults to standalone (no server needed on device).
-  // Browser/PWA always needs a server — default to server mode.
-  if (_inCapacitor) {
+} else if (_inCapacitor) {
+  // Native Capacitor: respect user choice; default to local on first run.
+  if (localStorage.getItem('db_mode') === null) {
     _localMode = true;
     localStorage.setItem('db_mode', 'local');
     console.log('[api] First run in Capacitor native — defaulting to standalone local mode');
-  } else {
+  }
+} else {
+  // Browser / PWA: local mode only makes sense when user explicitly chose it in Settings.
+  // An automatic db_mode=local (old first-run default) is stale — reset to server.
+  if (_localMode && !_dbModeUserSet) {
+    console.log('[api] Browser: resetting stale db_mode=local (never explicitly chosen) → server');
     _localMode = false;
     localStorage.setItem('db_mode', 'server');
-    console.log('[api] First run in browser/PWA — defaulting to server mode');
+  } else if (localStorage.getItem('db_mode') === null) {
+    _localMode = false;
+    localStorage.setItem('db_mode', 'server');
   }
 }
 
-console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} (db_mode=${localStorage.getItem('db_mode')})`);
+console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} userSet=${_dbModeUserSet}`);
 
-/** Switch to local SQLite mode (standalone Capacitor — no server needed). */
+/** Switch to local SQLite mode (standalone — no server needed). Called only from SettingsView. */
 export function setLocalMode(enabled) {
   console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
   localStorage.setItem('db_mode', enabled ? 'local' : 'server');
+  localStorage.setItem('db_mode_set', '1'); // mark as an intentional user choice
 }
 
 export function isLocalMode() { return _localMode; }
