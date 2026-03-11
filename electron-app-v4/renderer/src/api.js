@@ -178,36 +178,50 @@ const _inElectron = typeof window !== 'undefined' && typeof window.electronAPI !
 const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?? (globalThis.Capacitor)) !== 'undefined'
   && (globalThis.Capacitor?.isNativePlatform?.() ?? false);
 
-let _localMode = localStorage.getItem('db_mode') === 'local';
+// ── Mode detection ────────────────────────────────────────────────────────────
+// _localMode=true  →  use browser-side WASM SQLite (no server needed)
+// _localMode=false →  use HTTP API (v4 Node, v2 FastAPI, Electron embedded, remote)
+//
+// Native Capacitor (iOS/Android): mode stored in localStorage, persists across sessions.
+// Everything else (Electron, browser, PWA): always server mode — LocalAdapter needs
+// Capacitor native SQLite plugins that don't exist in a plain browser or Electron.
+// localStorage.db_mode may be stale from old first-run defaults; ignore it for non-Capacitor.
 
-if (_inElectron) {
-  // Electron always has an embedded server — standalone SQLite never makes sense here.
-  if (_localMode) console.log('[api] Electron: overriding db_mode "local" → "server"');
-  _localMode = false;
-  localStorage.setItem('db_mode', 'server');
-} else if (localStorage.getItem('db_mode') === null) {
-  // First run — no preference stored yet.
-  // Default: server for browser/PWA (needs a server), local for native Capacitor.
-  if (_inCapacitor) {
+let _localMode = false;
+
+if (_inCapacitor) {
+  // Native Capacitor: respect persisted preference; default to local on first run.
+  const stored = localStorage.getItem('db_mode');
+  if (stored === null) {
     _localMode = true;
     localStorage.setItem('db_mode', 'local');
-    console.log('[api] First run Capacitor native — defaulting to standalone local mode');
+    console.log('[api] Capacitor native first run — defaulting to standalone local mode');
   } else {
-    _localMode = false;
-    localStorage.setItem('db_mode', 'server');
-    console.log('[api] First run browser/PWA — defaulting to server mode');
+    _localMode = stored === 'local';
+    console.log(`[api] Capacitor native — restored db_mode=${stored}`);
   }
+} else {
+  // Electron or browser/PWA: always server mode.
+  // Clear any stale localStorage db_mode that might have been set by old first-run defaults.
+  if (localStorage.getItem('db_mode') === 'local') {
+    console.log('[api] Non-Capacitor context: clearing stale db_mode=local → server');
+    localStorage.setItem('db_mode', 'server');
+  }
+  _localMode = false;
 }
-// Any previously stored db_mode value (set by user in Settings) is always respected as-is.
 
-console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor} (stored db_mode=${localStorage.getItem('db_mode')})`);
+console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor}`);
 
-/** Switch to local SQLite mode (standalone — no server needed). Called only from SettingsView. */
+/** Switch to local SQLite mode. Only meaningful on native Capacitor. */
 export function setLocalMode(enabled) {
   console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
-  localStorage.setItem('db_mode', enabled ? 'local' : 'server');
-  localStorage.removeItem('db_mode_set'); // clean up legacy key from old code iterations
+  if (_inCapacitor) {
+    localStorage.setItem('db_mode', enabled ? 'local' : 'server');
+  }
+  // Clean up legacy keys from old code iterations
+  localStorage.removeItem('db_mode_set');
+  localStorage.removeItem('db_mode_explicit');
 }
 
 export function isLocalMode() { return _localMode; }
@@ -291,6 +305,34 @@ const post = (path, body)  => _fetch('POST',   path, body);
 const put  = (path, body)  => _fetch('PUT',    path, body);
 const patch = (path, body) => _fetch('PATCH',  path, body);
 const del  = (path)        => _fetch('DELETE', path);
+
+// Direct server fetch — bypasses the _localMode guard.
+// Use for features that are always server-side regardless of which data source
+// the user has chosen (cloud drives, filesystem browse, settings, etc.).
+async function _fetchDirect(method, path, body) {
+  const fullUrl = BASE + path;
+  console.log(`[api] fetchDirect: ${method} ${fullUrl}`, body ? '(with body)' : '');
+  const opts = { method, headers: body ? { 'Content-Type': 'application/json' } : {}, credentials: 'include' };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  try {
+    const res = await robustFetch(fullUrl, opts);
+    console.log(`[api] response: ${method} ${path} → ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+    }
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('application/json') ? res.json() : res.text();
+  } catch (err) {
+    const errMsg = err.message || JSON.stringify(err);
+    console.error(`[api] ${method} ${path} error:`, errMsg);
+    throw new Error(errMsg);
+  }
+}
+const getD  = (path)       => _fetchDirect('GET',    path);
+const postD = (path, body) => _fetchDirect('POST',   path, body);
+const putD  = (path, body) => _fetchDirect('PUT',    path, body);
+const delD  = (path)       => _fetchDirect('DELETE', path);
 
 // ── Image response normalizer (v2 ↔ v4 compat) ───────────────────────────────
 // Ensures field aliases are always present regardless of which server responded.
@@ -899,66 +941,51 @@ export function scanHashes(onEvent) {
 // ── Cloud drives ──────────────────────────────────────────────────────────────
 
 export function fetchCloudDrives() {
-  return get('/cloud-drives');
+  return getD('/cloud-drives');
 }
 export function createCloudDrive(body) {
-  return post('/cloud-drives', body);
+  return postD('/cloud-drives', body);
 }
 export function updateCloudDrive(id, body) {
-  return fetch(`${BASE}/cloud-drives/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body),
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+  return putD(`/cloud-drives/${id}`, body);
 }
 export function deleteCloudDrive(id) {
-  return fetch(`${BASE}/cloud-drives/${id}`, {
-    method: 'DELETE', credentials: 'include',
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+  return delD(`/cloud-drives/${id}`);
 }
 export function getCloudDriveConfig(id) {
-  return get(`/cloud-drives/${id}/config`);
+  return getD(`/cloud-drives/${id}/config`);
 }
 export function testCloudDrive(type, config) {
-  return post('/cloud-drives/test', { type, config });
+  return postD('/cloud-drives/test', { type, config });
 }
 export function mountCloudDrive(id) {
-  return post(`/cloud-drives/${id}/mount`, {});
+  return postD(`/cloud-drives/${id}/mount`, {});
 }
 export function unmountCloudDrive(id) {
-  return post(`/cloud-drives/${id}/unmount`, {});
+  return postD(`/cloud-drives/${id}/unmount`, {});
 }
 export function browseCloudDrive(id, path = '/') {
   const q = new URLSearchParams({ path });
-  return get(`/cloud-drives/${id}/browse?${q}`);
+  return getD(`/cloud-drives/${id}/browse?${q}`);
 }
 export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
 export function renameCloudDriveItem(driveId, path, newName) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
-  return post(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
+  return postD(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
 }
 export function trashCloudDriveItem(driveId, path) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
-  return post(`/cloud-drives/${driveId}/trash`, { path });
+  return postD(`/cloud-drives/${driveId}/trash`, { path });
 }
 export function deleteCloudDriveItem(driveId, path) {
-  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
-  return fetch(`${BASE}/cloud-drives/${driveId}/item`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ path }),
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+  return _fetchDirect('DELETE', `/cloud-drives/${driveId}/item`, { path });
 }
 
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
 export function browseFilesystem(path = '') {
   const q = new URLSearchParams({ path });
-  return get(`/filesystem/browse?${q}`);
+  return getD(`/filesystem/browse?${q}`);
 }
 export function addToDb(paths, recursive, onEvent, visibility = 'shared', detParams = {}) {
   const ctrl = new AbortController();
