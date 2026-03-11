@@ -212,28 +212,45 @@ async function internxtLogin(email, password, tfaCode) {
 }
 
 /**
- * List folders and (image) files in a folder by UUID.
- * Matches internxt-cli api.py get_folder_folders() / get_folder_files().
+ * List folders and (image) files in a folder by UUID, with pagination.
+ * Internxt API max limit=50 per page. Loops until all items fetched.
+ * Response shapes: { folders:[...] } for folders, { files:[...] } for files.
  */
 async function internxtListFolder(bearerToken, folderUuid) {
   const auth = { Authorization: `Bearer ${bearerToken}` };
-  const foldersUrl = `${DRIVE_API_URL}/folders/content/${folderUuid}/folders?offset=0&limit=200&sort=plainName&direction=ASC`;
-  const filesUrl   = `${DRIVE_API_URL}/folders/content/${folderUuid}/files?offset=0&limit=200&sort=plainName&direction=ASC`;
+  const MAX = 50;
 
-  const [foldersRes, filesRes] = await Promise.all([
-    apiGet(foldersUrl, auth).catch(() => ({})),
-    apiGet(filesUrl,   auth).catch(() => ({})),
+  async function fetchAllPages(kind) {
+    const all = [];
+    let offset = 0;
+    while (true) {
+      const url = `${DRIVE_API_URL}/folders/content/${folderUuid}/${kind}?offset=${offset}&limit=${MAX}&sort=plainName&direction=ASC`;
+      let res;
+      try {
+        res = await apiGet(url, auth);
+      } catch (e) {
+        console.error(`[internxt] listFolder ${kind} offset=${offset} ERROR:`, e.message);
+        break;
+      }
+      // API returns { folders:[...] } or { files:[...] } or legacy { result:[...] } or bare array
+      const page = Array.isArray(res?.[kind])   ? res[kind]
+                 : Array.isArray(res?.result)   ? res.result
+                 : Array.isArray(res?.children) ? res.children
+                 : Array.isArray(res)           ? res : [];
+      console.log(`[internxt] listFolder ${kind} offset=${offset} → ${page.length} items`);
+      if (page.length === 0) break;
+      all.push(...page);
+      if (page.length < MAX) break;
+      offset += MAX;
+    }
+    return all;
+  }
+
+  const [folders, files] = await Promise.all([
+    fetchAllPages('folders'),
+    fetchAllPages('files'),
   ]);
-
-  // API returns { result: [...] } for folders and flat array for files
-  const folders = Array.isArray(foldersRes?.result)   ? foldersRes.result
-                : Array.isArray(foldersRes?.children)  ? foldersRes.children
-                : Array.isArray(foldersRes)             ? foldersRes : [];
-
-  const files   = Array.isArray(filesRes?.result)     ? filesRes.result
-                : Array.isArray(filesRes?.files)       ? filesRes.files
-                : Array.isArray(filesRes)               ? filesRes : [];
-
+  console.log(`[internxt] listFolder ${folderUuid} total: ${folders.length} folders, ${files.length} files`);
   return { folders, files };
 }
 
@@ -571,6 +588,9 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
       }
 
       const { folders, files } = await internxtListFolder(tokenData.token, folderUuid);
+      console.log(`[internxt] browse "${browsePath}" folderUuid=${folderUuid}: raw ${folders.length} folders, ${files.length} files`);
+      if (folders[0]) console.log(`[internxt]   folder[0] keys:`, Object.keys(folders[0]), '  plainName:', folders[0].plainName, '  uuid:', folders[0].uuid);
+      if (files[0])   console.log(`[internxt]   file[0] keys:`,   Object.keys(files[0]),   '  plainName:', files[0].plainName,   '  type:', files[0].type, '  uuid:', files[0].uuid);
 
       const entries = [
         ...folders.map(f => ({
@@ -578,18 +598,17 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
           path:   `${browsePath === '/' ? '' : browsePath}/${f.uuid}`,
           is_dir: true,
         })),
-        ...files
-          .filter(f => {
-            const ext = ('.' + (f.type || '')).toLowerCase();
-            return IMAGE_EXTS.has(ext);
-          })
-          .map(f => ({
+        ...files.map(f => {
+          const ext = ('.' + (f.type || '')).toLowerCase();
+          const isImage = IMAGE_EXTS.has(ext);
+          return {
             name:     (f.plainName || f.plain_name || f.name) + (f.type ? '.' + f.type : ''),
             path:     `${browsePath === '/' ? '' : browsePath}/file/${f.uuid}`,
             is_dir:   false,
-            is_image: true,
+            is_image: isImage,
             size:     f.size,
-          })),
+          };
+        }),
       ].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
 
       return res.json({ path: browsePath, parent: parentPath, entries });
