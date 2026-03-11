@@ -4,7 +4,7 @@
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
-           downloadCloudFile,
+           downloadCloudFile, importProcessed, isLocalMode,
            downloadImage, openInOs, openFolderInOs } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -37,7 +37,7 @@
 
   // Add-to-DB / upload / ingest progress
   let adding = false;
-  let addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '' };
+  let addProgress = { total: 0, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
   let addDone = false;
   let addStream = null;
   let addErrorList = []; // [{name, error}] for upload failures
@@ -476,7 +476,7 @@
 
     addStream = ingestCloudDrive(cloudDriveId, paths, hasDirs, visibility, event => {
       if (event.started) {
-        addProgress = { ...addProgress, total: event.total };
+        addProgress = { ...addProgress, total: event.total, faces: 0 };
         backgroundTask.set({ label: 'Fetching from cloud', done: 0, total: event.total });
       } else if (event.done) {
         adding = false;
@@ -496,12 +496,86 @@
         addProgress = {
           ...addProgress,
           done:    event.index ?? addProgress.done,
-          current: event.path?.split('/').pop() || event.path || '',
+          current: event.name || event.path?.split('/').pop() || '',
           errors:  addProgress.errors + (event.error ? 1 : 0),
+          faces:   (addProgress.faces || 0) + (event.result?.faces_detected ?? 0),
         };
         backgroundTask.set({ label: 'Fetching from cloud', done: event.index, total: addProgress.total });
       }
     });
+  }
+
+  // ── Browser WASM mode: download cloud blob → FaceEngineWeb → LocalAdapter ──
+  let _webEngineModule = null;
+  async function _getWebEngine() {
+    if (!_webEngineModule) _webEngineModule = await import('./FaceEngineWeb.js');
+    return _webEngineModule.default || _webEngineModule.faceEngineWeb;
+  }
+
+  async function startCloudIngestLocal() {
+    if (selected.size === 0 || adding) return;
+    const filePaths = [...selected].filter(p => !entries.find(e => e.path === p)?.is_dir);
+    if (filePaths.length === 0) return;
+
+    adding = true;
+    addDone = false;
+    addProgress = { total: filePaths.length, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
+    backgroundTask.set({ label: 'Processing from cloud', done: 0, total: filePaths.length });
+
+    let engine;
+    try {
+      engine = await _getWebEngine();
+    } catch (e) {
+      adding = false;
+      error = `Failed to load face engine: ${e.message}`;
+      backgroundTask.set(null);
+      return;
+    }
+
+    let done = 0, errs = 0, totalFaces = 0;
+
+    for (const p of filePaths) {
+      const entry = entries.find(e => e.path === p);
+      const name  = entry?.name || p.split('/').pop();
+      addProgress = { ...addProgress, current: name };
+
+      try {
+        // 1. Download blob from server's cloud-drive download endpoint
+        const url  = downloadCloudFile(cloudDriveId, p);
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+        const blob = await resp.blob();
+        const file = new File([blob], name, { type: blob.type || 'image/jpeg' });
+
+        // 2. Run ONNX face detection + embedding in browser
+        const faceData = await engine.processFile(file, {
+          visibility,
+          thumb_size: 200,
+        });
+
+        // 3. Store result in LocalAdapter (importProcessed routes via _guard)
+        faceData.filename = name;
+        const r = await importProcessed({ ...faceData, duplicate_mode: 'skip' });
+
+        done++;
+        totalFaces += r.face_count ?? faceData.faces?.length ?? 0;
+        addProgress = { ...addProgress, done: done + errs, faces: totalFaces, errors: errs };
+        backgroundTask.set({ label: 'Processing from cloud', done: done + errs, total: filePaths.length });
+      } catch (e) {
+        errs++;
+        console.error('[cloud-ingest-local] error for', p, e);
+        addProgress = { ...addProgress, done: done + errs, errors: errs };
+        backgroundTask.set({ label: 'Processing from cloud', done: done + errs, total: filePaths.length });
+      }
+    }
+
+    // Release ONNX models (~200 MB)
+    try { if (engine?.releaseModels) await engine.releaseModels(); } catch {}
+
+    adding = false;
+    addDone = true;
+    backgroundTask.set(null);
+    galleryRefreshTick.update(n => n + 1);
   }
 
   // ── Local mode: upload selected images to server ──────────────────────────
@@ -541,7 +615,12 @@
   }
 
   function startAddToDb() {
-    if (cloudMode)  { startCloudIngest(); return; }
+    if (cloudMode) {
+      // In browser WASM mode: download blob → FaceEngineWeb → LocalAdapter
+      if (isLocalMode()) { startCloudIngestLocal(); return; }
+      startCloudIngest();
+      return;
+    }
     if (localMode && !hasElectron && hasFSA) startFSAUpload();
     else if (localMode) startLocalUpload();
     else startServerAddToDb();
@@ -1132,6 +1211,9 @@
           <span class="done-msg">
             ✅ {addProgress.done - addProgress.errors - addProgress.skipped}
             {cloudMode ? $t('fs_fetching') : localMode ? $t('fs_uploading') : $t('fs_adding')} OK.
+            {#if cloudMode && addProgress.faces > 0}
+              <span class="face-count">👤 {addProgress.faces} face{addProgress.faces === 1 ? '' : 's'} detected</span>
+            {/if}
             {#if addProgress.skipped > 0}<span class="skip-count">{addProgress.skipped} {$t('fs_already_in_db')}</span>{/if}
             {#if addProgress.errors > 0}<span class="err-count">{addProgress.errors} {$t('errors_label')}</span>{/if}
           </span>
@@ -1554,8 +1636,9 @@
     overflow: hidden;
   }
   .prog-bar { height: 100%; background: #4a6fa5; transition: width 0.2s; }
-  .err-count  { color: #e06060; margin-left: 4px; }
-  .skip-count { color: #8090b0; margin-left: 4px; }
+  .err-count   { color: #e06060; margin-left: 4px; }
+  .skip-count  { color: #8090b0; margin-left: 4px; }
+  .face-count  { color: #7eb8e8; margin-left: 4px; }
   .done-block { display: flex; flex-direction: column; gap: 6px; flex: 1; }
   .done-msg   { font-size: 12px; color: #50c878; }
   .btn-sm     { font-size: 11px; padding: 4px 10px; align-self: flex-start; }
