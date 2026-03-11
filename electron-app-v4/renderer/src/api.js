@@ -179,49 +179,41 @@ const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?
   && (globalThis.Capacitor?.isNativePlatform?.() ?? false);
 
 // ── Mode detection ────────────────────────────────────────────────────────────
-// _localMode=true  →  use browser-side WASM SQLite (no server needed)
+// _localMode=true  →  use browser-side WASM SQLite / LocalAdapter (no server needed)
 // _localMode=false →  use HTTP API (v4 Node, v2 FastAPI, Electron embedded, remote)
 //
-// Native Capacitor (iOS/Android): mode stored in localStorage, persists across sessions.
-// Everything else (Electron, browser, PWA): always server mode — LocalAdapter needs
-// Capacitor native SQLite plugins that don't exist in a plain browser or Electron.
-// localStorage.db_mode may be stale from old first-run defaults; ignore it for non-Capacitor.
+// Default: Capacitor native → local; everything else → server.
+// User can always switch via Settings and the choice is persisted in localStorage.
+// Cloud drives and filesystem browse are SERVER features — they ignore _localMode
+// and always use _fetchDirect, so they work regardless of which mode is chosen.
 
 let _localMode = false;
 
-if (_inCapacitor) {
-  // Native Capacitor: respect persisted preference; default to local on first run.
+{
   const stored = localStorage.getItem('db_mode');
-  if (stored === null) {
+  if (stored !== null) {
+    // Respect explicit user choice in all contexts.
+    _localMode = stored === 'local';
+    console.log(`[api] Restored db_mode=${stored} → localMode=${_localMode}`);
+  } else if (_inCapacitor) {
+    // Capacitor first run: default to local (no server needed on mobile).
     _localMode = true;
     localStorage.setItem('db_mode', 'local');
-    console.log('[api] Capacitor native first run — defaulting to standalone local mode');
+    console.log('[api] Capacitor first run — defaulting to standalone local mode');
   } else {
-    _localMode = stored === 'local';
-    console.log(`[api] Capacitor native — restored db_mode=${stored}`);
+    // Browser/Electron first run: default to server.
+    _localMode = false;
+    console.log('[api] Browser/Electron first run — defaulting to server mode');
   }
-} else {
-  // Electron or browser/PWA: always server mode.
-  // Clear any stale localStorage db_mode that might have been set by old first-run defaults.
-  if (localStorage.getItem('db_mode') === 'local') {
-    console.log('[api] Non-Capacitor context: clearing stale db_mode=local → server');
-    localStorage.setItem('db_mode', 'server');
-  }
-  _localMode = false;
 }
 
 console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectron} inCapacitor=${_inCapacitor}`);
 
-/** Switch to local SQLite mode. Only meaningful on native Capacitor. */
+/** Switch between local WASM SQLite and server mode. Persisted in localStorage. */
 export function setLocalMode(enabled) {
   console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
-  if (_inCapacitor) {
-    localStorage.setItem('db_mode', enabled ? 'local' : 'server');
-  }
-  // Clean up legacy keys from old code iterations
-  localStorage.removeItem('db_mode_set');
-  localStorage.removeItem('db_mode_explicit');
+  localStorage.setItem('db_mode', enabled ? 'local' : 'server');
 }
 
 export function isLocalMode() { return _localMode; }
