@@ -931,53 +931,67 @@ export function scanHashes(onEvent) {
 }
 
 // ── Cloud drives ──────────────────────────────────────────────────────────────
-// In server mode (_localMode=false): proxied through v4 Node server which holds
-// SMB/SFTP creds and auth tokens in its process memory.
-// In WASM/PWA mode (_localMode=true): LocalAdapter handles everything directly
-// from the browser using BrowserCloudDrives.js (SubtleCrypto + fetch).
+// Routing strategy:
+//   Native Capacitor (no server): LocalAdapter → BrowserCloudDrives.js (CapacitorHttp, no CORS)
+//   Browser (server running at localhost): always use server API via getD/postD.
+//     Even when _localMode=true, browser fetch to cloud APIs is blocked by CORS — only the
+//     server-side Node.js process can make those requests without restriction.
+
+function _cloudGuard(name, localFn) {
+  // Only route to LocalAdapter on native Capacitor where CapacitorHttp bypasses CORS.
+  // In the browser (PWA / dev), the server is always reachable and must proxy cloud calls.
+  if (_localMode && Capacitor.isNativePlatform()) {
+    console.log(`[api] NATIVE CAPACITOR INTERCEPT: ${name}`);
+    return (async () => {
+      try { return await localFn(); }
+      catch (err) { console.error(`[api] NATIVE ERROR for ${name}:`, err.message || err); throw err; }
+    })();
+  }
+  return null;
+}
 
 export function fetchCloudDrives() {
-  const g = _guard('fetchCloudDrives', () => localAdapter.cloudDrives());
+  const g = _cloudGuard('fetchCloudDrives', () => localAdapter.cloudDrives());
   if (g) return g;
   return getD('/cloud-drives');
 }
 export function createCloudDrive(body) {
-  const g = _guard('createCloudDrive', () => localAdapter.createCloudDrive(body));
+  const g = _cloudGuard('createCloudDrive', () => localAdapter.createCloudDrive(body));
   if (g) return g;
   return postD('/cloud-drives', body);
 }
 export function updateCloudDrive(id, body) {
-  const g = _guard('updateCloudDrive', () => localAdapter.updateCloudDrive(id, body));
+  const g = _cloudGuard('updateCloudDrive', () => localAdapter.updateCloudDrive(id, body));
   if (g) return g;
   return putD(`/cloud-drives/${id}`, body);
 }
 export function deleteCloudDrive(id) {
-  const g = _guard('deleteCloudDrive', () => localAdapter.deleteCloudDrive(id));
+  const g = _cloudGuard('deleteCloudDrive', () => localAdapter.deleteCloudDrive(id));
   if (g) return g;
   return delD(`/cloud-drives/${id}`);
 }
 export function getCloudDriveConfig(id) {
-  const g = _guard('getCloudDriveConfig', () => localAdapter.getCloudDriveConfig(id));
+  const g = _cloudGuard('getCloudDriveConfig', () => localAdapter.getCloudDriveConfig(id));
   if (g) return g;
   return getD(`/cloud-drives/${id}/config`);
 }
 export function testCloudDrive(type, config) {
-  const g = _guard('testCloudDrive', () => localAdapter.testCloudDrive(type, config));
+  const g = _cloudGuard('testCloudDrive', () => localAdapter.testCloudDrive(type, config));
   if (g) return g;
   return postD('/cloud-drives/test', { type, config });
 }
 export function mountCloudDrive(id) {
-  const g = _guard('mountCloudDrive', () => localAdapter.mountCloudDrive(id));
+  const g = _cloudGuard('mountCloudDrive', () => localAdapter.mountCloudDrive(id));
   if (g) return g;
   return postD(`/cloud-drives/${id}/mount`, {});
 }
 export function unmountCloudDrive(id) {
-  const g = _guard('unmountCloudDrive', () => localAdapter.unmountCloudDrive(id));
+  const g = _cloudGuard('unmountCloudDrive', () => localAdapter.unmountCloudDrive(id));
   if (g) return g;
   return postD(`/cloud-drives/${id}/unmount`, {});
 }
 export function browseCloudDrive(id, path = '/') {
-  const g = _guard('browseCloudDrive', () => localAdapter.browseCloudDrive(id, path));
+  const g = _cloudGuard('browseCloudDrive', () => localAdapter.browseCloudDrive(id, path));
   if (g) return g;
   const q = new URLSearchParams({ path });
   return getD(`/cloud-drives/${id}/browse?${q}`);
@@ -1000,6 +1014,10 @@ export function deleteCloudDriveItem(driveId, path) {
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
 export function browseFilesystem(path = '') {
+  // In local mode, filesystem browse requires a server session.
+  // Return empty so the view shows gracefully instead of 401.
+  const g = _guard('browseFilesystem', () => ({ path: path || '/', entries: [], parent: null }));
+  if (g) return g;
   const q = new URLSearchParams({ path });
   return getD(`/filesystem/browse?${q}`);
 }

@@ -102,15 +102,34 @@ function sessionMiddleware(req, _res, next) {
   next();
 }
 
-/** Require authentication; respond 401 if missing. */
+/** Returns true if the request originates from the local machine. */
+function isLocalhost(req) {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+/** Require authentication; respond 401 if missing.
+ *  Localhost requests are auto-authenticated as local admin (same-machine bypass). */
 function requireAuth(req, res, next) {
-  if (!req.user) return res.status(401).json({ detail: 'Not authenticated' });
+  if (!req.user) {
+    if (isLocalhost(req)) {
+      req.user = { username: 'local', role: 'admin', userId: null };
+      return next();
+    }
+    return res.status(401).json({ detail: 'Not authenticated' });
+  }
   next();
 }
 
 /** Require admin role; respond 403 if not admin. */
 function requireAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ detail: 'Not authenticated' });
+  if (!req.user) {
+    if (isLocalhost(req)) {
+      req.user = { username: 'local', role: 'admin', userId: null };
+      return next();
+    }
+    return res.status(401).json({ detail: 'Not authenticated' });
+  }
   if (req.user.role !== 'admin') return res.status(403).json({ detail: 'Admin only' });
   next();
 }
