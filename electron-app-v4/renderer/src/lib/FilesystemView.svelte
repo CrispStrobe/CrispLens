@@ -52,7 +52,13 @@
   let ingestDetModel    = 'auto';
   let ingestSkipVlm     = true;
   let ingestDupMode     = 'skip';
-  let ingestThumbSize   = 400;    // px, stored thumbnail max-dimension
+  // Initialize thumb size from sync settings (same as offline sync uses), fall back to 400
+  let ingestThumbSize = (() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('crisplens_sync_settings') || '{}');
+      return s.thumbSize || 400;
+    } catch { return 400; }
+  })();
   $: ingestDetParams = {
     det_thresh:    ingestDetThresh,
     min_face_size: ingestMinFace,
@@ -1320,8 +1326,10 @@
           </select>
         </div>
         <div class="det-param-row">
-          <label>Thumbnail: <strong>{ingestThumbSize}px</strong></label>
-          <input type="range" min="200" max="800" step="100" bind:value={ingestThumbSize} />
+          <label>Thumbnail px:</label>
+          <input type="number" bind:value={ingestThumbSize} min="100" max="4000" step="100"
+                 class="num-input" style="width:80px" />
+          <span class="hint">(max-dimension of stored thumbnail)</span>
         </div>
         <label class="skip-check">
           <input type="checkbox" bind:checked={ingestSkipVlm} />
