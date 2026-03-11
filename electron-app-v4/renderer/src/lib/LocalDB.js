@@ -104,6 +104,17 @@ const SCHEMA = `
     created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
   INSERT OR IGNORE INTO users (id, username, role) VALUES (1, 'Local Admin', 'admin');
+
+  CREATE TABLE IF NOT EXISTS cloud_drives (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    config     TEXT DEFAULT '{}',
+    token_data TEXT DEFAULT NULL,
+    is_mounted INTEGER DEFAULT 0,
+    owner_id   INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 // ── Public API ────────────────────────────────────────────────────────────────

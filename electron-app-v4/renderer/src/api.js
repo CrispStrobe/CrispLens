@@ -931,39 +931,63 @@ export function scanHashes(onEvent) {
 }
 
 // ── Cloud drives ──────────────────────────────────────────────────────────────
+// In server mode (_localMode=false): proxied through v4 Node server which holds
+// SMB/SFTP creds and auth tokens in its process memory.
+// In WASM/PWA mode (_localMode=true): LocalAdapter handles everything directly
+// from the browser using BrowserCloudDrives.js (SubtleCrypto + fetch).
 
 export function fetchCloudDrives() {
+  const g = _guard('fetchCloudDrives', () => localAdapter.cloudDrives());
+  if (g) return g;
   return getD('/cloud-drives');
 }
 export function createCloudDrive(body) {
+  const g = _guard('createCloudDrive', () => localAdapter.createCloudDrive(body));
+  if (g) return g;
   return postD('/cloud-drives', body);
 }
 export function updateCloudDrive(id, body) {
+  const g = _guard('updateCloudDrive', () => localAdapter.updateCloudDrive(id, body));
+  if (g) return g;
   return putD(`/cloud-drives/${id}`, body);
 }
 export function deleteCloudDrive(id) {
+  const g = _guard('deleteCloudDrive', () => localAdapter.deleteCloudDrive(id));
+  if (g) return g;
   return delD(`/cloud-drives/${id}`);
 }
 export function getCloudDriveConfig(id) {
+  const g = _guard('getCloudDriveConfig', () => localAdapter.getCloudDriveConfig(id));
+  if (g) return g;
   return getD(`/cloud-drives/${id}/config`);
 }
 export function testCloudDrive(type, config) {
+  const g = _guard('testCloudDrive', () => localAdapter.testCloudDrive(type, config));
+  if (g) return g;
   return postD('/cloud-drives/test', { type, config });
 }
 export function mountCloudDrive(id) {
+  const g = _guard('mountCloudDrive', () => localAdapter.mountCloudDrive(id));
+  if (g) return g;
   return postD(`/cloud-drives/${id}/mount`, {});
 }
 export function unmountCloudDrive(id) {
+  const g = _guard('unmountCloudDrive', () => localAdapter.unmountCloudDrive(id));
+  if (g) return g;
   return postD(`/cloud-drives/${id}/unmount`, {});
 }
 export function browseCloudDrive(id, path = '/') {
+  const g = _guard('browseCloudDrive', () => localAdapter.browseCloudDrive(id, path));
+  if (g) return g;
   const q = new URLSearchParams({ path });
   return getD(`/cloud-drives/${id}/browse?${q}`);
 }
 export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
+  // Ingest (SSE) is server-only — no LocalAdapter equivalent
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
 export function renameCloudDriveItem(driveId, path, newName) {
+  // rename/trash/delete item ops are server-only for now (rare in WASM mode)
   return postD(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
 }
 export function trashCloudDriveItem(driveId, path) {

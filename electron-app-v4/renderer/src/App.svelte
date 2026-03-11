@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages } from './stores.js';
+  import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages, serverLoginNeeded } from './stores.js';
   import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages, isLocalMode, setLocalMode } from './api.js';
   import { installConsoleCapture } from './lib/ConsoleCapture.js';
   installConsoleCapture(); // capture console output for in-app log viewer (standalone mode)
@@ -272,11 +272,9 @@
 
     // ── Local (standalone) mode: browser WASM SQLite for image/face data ────────
     // _localMode only controls WHERE image/face data comes from (local WASM vs server).
-    // Cloud drives + filesystem are always server-side — so we ALSO attempt server auth
-    // in the background. If server is reachable, the session cookie lets cloud drives work.
+    // Cloud drives + filesystem are always server-side and must work regardless.
     if (isLocalMode()) {
       console.log('[App] Standalone mode — initializing local WASM engine...');
-      // Small delay to let jeep-sqlite component upgrade in DOM
       setTimeout(async () => {
         try {
           const { getDB } = await import('./lib/LocalDB.js');
@@ -290,20 +288,27 @@
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;
-      loadAll();  // uses _guard → local data, sets currentUser to { username:'local', role:'admin' }
+      loadAll(); // _guard routes to local adapter; sets currentUser={username:'local',role:'admin'}
 
-      // ALSO attempt server auth in background so cloud drives / filesystem work.
-      // Don't block the UI on this — it's best-effort.
-      const savedUrl = localStorage.getItem('remote_url') || '';
-      if (savedUrl || window.location.origin !== 'null') {
-        import('./api.js').then(({ fetchHealth, fetchMe }) => {
-          fetchHealth().then(() => fetchMe()).then(u => {
-            console.log('[App] Background server auth OK:', u?.username);
-          }).catch(e => {
-            console.log('[App] Background server auth unavailable (cloud drives will require server login):', e.message);
-          });
-        }).catch(() => {});
-      }
+      // Probe server auth in background — cloud drives / filesystem need a session.
+      // Use raw fetch (not api.js) so _localMode doesn't intercept it.
+      setTimeout(async () => {
+        try {
+          const base = (localStorage.getItem('remote_url') || window.location.origin).replace(/\/$/, '');
+          const r = await fetch(`${base}/api/auth/me`, { credentials: 'include' });
+          if (r.status === 401) {
+            console.log('[App] Standalone: server reachable but no session → cloud drives need login');
+            serverLoginNeeded.set(true);
+          } else if (r.ok) {
+            console.log('[App] Standalone: server session valid → cloud drives will work');
+            serverLoginNeeded.set(false);
+          }
+        } catch {
+          // Server not reachable — pure offline local mode, cloud drives unavailable
+          console.log('[App] Standalone: server not reachable — cloud drives unavailable');
+        }
+      }, 800);
+
       return;
     }
 
@@ -502,6 +507,42 @@
   <SelectionToolbar />
   <KeyboardManager />
   <PwaInstallBanner />
+
+  <!-- Server login modal: shown in standalone mode when server session is missing -->
+  {#if $serverLoginNeeded}
+    {@const doLogin = async () => {
+      const u = document.getElementById('sli-user')?.value?.trim();
+      const p = document.getElementById('sli-pass')?.value;
+      if (!u) return;
+      const errEl = document.getElementById('sli-err');
+      try {
+        const base = (localStorage.getItem('remote_url') || window.location.origin).replace(/\/$/, '');
+        const r = await fetch(`${base}/api/auth/login`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p }),
+        });
+        if (r.ok) { serverLoginNeeded.set(false); }
+        else { if (errEl) errEl.textContent = 'Login failed'; }
+      } catch (e) { if (errEl) errEl.textContent = e.message; }
+    }}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div class="sli-backdrop" on:click|self={() => serverLoginNeeded.set(false)}>
+      <div class="sli-modal">
+        <div class="sli-title">🔐 Server login needed</div>
+        <div class="sli-hint">You are in standalone mode. Log in to the server to access cloud drives and filesystem browse.</div>
+        <input id="sli-user" type="text" placeholder="Username" class="sli-input"
+          on:keydown={e => e.key === 'Enter' && doLogin()} />
+        <input id="sli-pass" type="password" placeholder="Password" class="sli-input"
+          on:keydown={e => e.key === 'Enter' && doLogin()} />
+        <div id="sli-err" class="sli-err"></div>
+        <div class="sli-actions">
+          <button on:click={() => serverLoginNeeded.set(false)}>Cancel</button>
+          <button class="primary" on:click={doLogin}>Log in to server</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <datalist id="people-list">
@@ -511,6 +552,23 @@
 </datalist>
 
 <style>
+  .sli-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: flex; align-items: center; justify-content: center; z-index: 9000;
+  }
+  .sli-modal {
+    background: #1a1a2e; border: 1px solid #3a3a60; border-radius: 10px;
+    padding: 22px 24px; width: 340px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .sli-title { font-size: 14px; font-weight: 600; color: #c0c8e0; }
+  .sli-hint  { font-size: 11px; color: #6070a0; line-height: 1.5; }
+  .sli-input {
+    background: #111120; border: 1px solid #2a2a4a; border-radius: 4px;
+    color: #c0c8e0; font-size: 13px; padding: 6px 10px; width: 100%;
+  }
+  .sli-err { font-size: 11px; color: #e06060; min-height: 14px; }
+  .sli-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
   :global(*) { box-sizing: border-box; margin: 0; padding: 0; }
   :global(body) {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

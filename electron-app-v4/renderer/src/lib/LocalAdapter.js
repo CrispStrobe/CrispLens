@@ -23,6 +23,7 @@
 import { Capacitor } from '@capacitor/core';
 import { query, run, exportDatabase, importDatabase, getDatabaseSize, clearDatabase, hardResetApp } from './LocalDB.js';
 import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
+import { internxtLogin, internxtBrowse, filenLogin, filenBrowse } from './BrowserCloudDrives.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
 
@@ -1502,4 +1503,98 @@ export const localAdapter = {
 
     return { updated, total_checked: rows.length };
   },
+
+  // ── Cloud drives (browser-native via BrowserCloudDrives.js) ─────────────────
+
+  async cloudDrives() {
+    try {
+      return await query('SELECT id,name,type,is_mounted,owner_id FROM cloud_drives ORDER BY name');
+    } catch { return []; }
+  },
+
+  async createCloudDrive({ name, type, config = {} }) {
+    const result = await run(
+      'INSERT INTO cloud_drives (name,type,config) VALUES (?,?,?)',
+      [name, type, JSON.stringify(config)]
+    );
+    return { id: result.lastInsertRowid ?? result.lastID, name, type, is_mounted: false };
+  },
+
+  async updateCloudDrive(id, { name, config }) {
+    if (name !== undefined) await run('UPDATE cloud_drives SET name=? WHERE id=?', [name, id]);
+    if (config !== undefined) await run('UPDATE cloud_drives SET config=? WHERE id=?', [JSON.stringify(config), id]);
+    return { ok: true };
+  },
+
+  async deleteCloudDrive(id) {
+    await run('DELETE FROM cloud_drives WHERE id=?', [id]);
+    return { ok: true };
+  },
+
+  async getCloudDriveConfig(id) {
+    const rows = await query('SELECT config FROM cloud_drives WHERE id=?', [id]);
+    if (!rows.length) throw new Error('Drive not found');
+    try { return JSON.parse(rows[0].config || '{}'); } catch { return {}; }
+  },
+
+  async testCloudDrive(type, config) {
+    try {
+      if (type === 'internxt') {
+        await internxtLogin(config.email, config.password, config.tfa_code || '');
+      } else if (type === 'filen') {
+        await filenLogin(config.email, config.password, config.tfa_code || '');
+      } else {
+        return { ok: false, error: `Drive type '${type}' not supported in browser mode` };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  },
+
+  async mountCloudDrive(id) {
+    const rows = await query('SELECT type,config FROM cloud_drives WHERE id=?', [id]);
+    if (!rows.length) throw new Error('Drive not found');
+    const { type, config: configStr } = rows[0];
+    const config = JSON.parse(configStr || '{}');
+
+    let tokenData;
+    try {
+      if (type === 'internxt') {
+        tokenData = await internxtLogin(config.email, config.password, config.tfa_code || '');
+      } else if (type === 'filen') {
+        tokenData = await filenLogin(config.email, config.password, config.tfa_code || '');
+      } else {
+        throw new Error(`Drive type '${type}' not supported in browser mode`);
+      }
+    } catch (e) {
+      await run('UPDATE cloud_drives SET is_mounted=0 WHERE id=?', [id]);
+      throw e;
+    }
+
+    await run('UPDATE cloud_drives SET is_mounted=1, token_data=? WHERE id=?', [JSON.stringify(tokenData), id]);
+    return { ok: true, mounted: true };
+  },
+
+  async unmountCloudDrive(id) {
+    await run('UPDATE cloud_drives SET is_mounted=0, token_data=NULL WHERE id=?', [id]);
+    return { ok: true, mounted: false };
+  },
+
+  async browseCloudDrive(id, path = '/') {
+    const rows = await query('SELECT type,token_data FROM cloud_drives WHERE id=?', [id]);
+    if (!rows.length) throw new Error('Drive not found');
+    const { type, token_data } = rows[0];
+    if (!token_data) throw new Error('Drive not mounted — call mountCloudDrive first');
+    const tokenData = JSON.parse(token_data);
+
+    if (type === 'internxt') {
+      return internxtBrowse(tokenData, path);
+    } else if (type === 'filen') {
+      return filenBrowse(tokenData, path);
+    } else {
+      throw new Error(`Drive type '${type}' not supported in browser mode`);
+    }
+  },
+
 };

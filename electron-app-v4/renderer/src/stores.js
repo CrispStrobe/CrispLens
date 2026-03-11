@@ -1296,3 +1296,7 @@ export const processingBackend = writable('local');
 export const activeFilterCount = derived(filters, $f =>
   Object.values($f).filter(v => v && v.trim()).length
 );
+
+// True when the app is in standalone (local WASM) mode but the v4 server is
+// reachable yet has no valid session — cloud drives / filesystem need a login.
+export const serverLoginNeeded = writable(false);
