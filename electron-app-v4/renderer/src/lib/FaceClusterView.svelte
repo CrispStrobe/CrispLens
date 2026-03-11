@@ -15,7 +15,30 @@
   let skipped = new Set();     // cluster_ids hidden this session
   let assigning = new Set();   // cluster_ids currently being assigned
 
-  onMount(loadClusters);
+  let autoReIdDone = false;   // run once per mount, not on every threshold change
+  let reIdentifyMsg = '';
+  let reIdentifying = false;
+
+  onMount(async () => {
+    await loadClusters();
+    // Auto re-identify: silently match unidentified faces against named people on first open.
+    // Only runs if there are unidentified clusters and we haven't already run this session.
+    if (!autoReIdDone && clusters.length > 0) {
+      autoReIdDone = true;
+      try {
+        const r = await reIdentifyFaces(null, threshold);
+        if (r.updated > 0) {
+          console.log(`[FaceClusterView] auto re-identify: ${r.updated}/${r.total_checked} matched — reloading`);
+          reIdentifyMsg = `✓ ${r.updated} auto-matched`;
+          allPeople.set(await fetchPeople().catch(() => []));
+          await loadClusters();
+        }
+      } catch (e) {
+        // Non-fatal — index may be empty, silently ignore
+        console.warn('[FaceClusterView] auto re-identify skipped:', e.message);
+      }
+    }
+  });
 
   async function loadClusters() {
     loading = true;
@@ -89,9 +112,6 @@
   function skipCluster(clusterId) {
     skipped = new Set([...skipped, clusterId]);
   }
-
-  let reIdentifying = false;
-  let reIdentifyMsg = '';
 
   async function doReIdentifyAll() {
     if (!confirm('Run recognition on all unidentified faces against the trained person index?')) return;

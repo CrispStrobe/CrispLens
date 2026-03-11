@@ -384,7 +384,8 @@ router.get('/filesystem/browse', requireAuth, (req, res) => {
       return { name: e.name, path: entryPath, is_dir: isDir, ...extra };
     }).sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
 
-    res.json({ path: p, entries: result });
+    const parentDir = path.resolve(p, '..');
+    res.json({ path: p, parent: parentDir !== p ? parentDir : null, entries: result });
   } catch (err) {
     res.status(400).json({ detail: err.message });
   }
@@ -1162,7 +1163,7 @@ router.get('/admin/logs-json', requireAdmin, (req, res) => {
 // CLOUD DRIVES (stubs)
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/cloud-drives', requireAuth, (req, res) => res.json([]));
+// Cloud drives are handled by server/routes/cloud-drives.js (mounted at /api/cloud-drives)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EDITING

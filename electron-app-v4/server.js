@@ -145,9 +145,10 @@ const searchRouter  = require('./server/routes/search');
 const processRouter = require('./server/routes/process');
 const ingestRouter  = require('./server/routes/ingest');
 const settingsRouter = require('./server/routes/settings');
-const benchmarkRouter = require('./server/routes/benchmark');
-const bflRouter      = require('./server/routes/bfl');
-const editingRouter  = require('./server/routes/editing');
+const benchmarkRouter    = require('./server/routes/benchmark');
+const bflRouter          = require('./server/routes/bfl');
+const editingRouter      = require('./server/routes/editing');
+const cloudDrivesRouter  = require('./server/routes/cloud-drives');
 
 // Health (no auth required) — model_ready checked lazily
 app.get('/api/health', (req, res) => {
@@ -174,12 +175,13 @@ app.use('/api/search',     searchRouter);
 app.use('/api/process',    processRouter);
 app.use('/api/ingest',     ingestRouter);
 app.use('/api/settings',   settingsRouter);
-app.use('/api/benchmark',  benchmarkRouter);
-app.use('/api/bfl',        bflRouter);
-app.use('/api/edit',       editingRouter);
+app.use('/api/benchmark',     benchmarkRouter);
+app.use('/api/bfl',           bflRouter);
+app.use('/api/edit',          editingRouter);
+app.use('/api/cloud-drives',  cloudDrivesRouter);
 
 // Misc routes (tags, albums, events, watchfolders, filesystem, duplicates, batch-jobs, etc.)
-app.use('/api',            miscRouter);
+app.use('/api',               miscRouter);
 
 // ── Serve ONNX models for client-side inference (browser / mobile) ───────────
 // GET /models/det_10g.onnx  → SCRFD detector  (~16 MB)
