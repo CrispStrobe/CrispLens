@@ -416,7 +416,9 @@ function cfgOf(drive)   { try { return JSON.parse(drive.config || '{}'); } catch
 
 router.get('/', requireAuth, (req, res) => {
   const db = getDb();
-  res.json(getAll(db));
+  const drives = getAll(db);
+  console.log(`[cloud-drives] GET / — user=${req.user?.username} → ${drives.length} drives: ${drives.map(d => `${d.name}(${d.type},mounted=${d.is_mounted})`).join(', ') || 'none'}`);
+  res.json(drives);
 });
 
 router.post('/', requireAuth, (req, res) => {
@@ -424,9 +426,13 @@ router.post('/', requireAuth, (req, res) => {
   ensureTable(db);
   const { name, type, config = {} } = req.body || {};
   if (!name?.trim() || !type) return res.status(400).json({ detail: 'name and type required' });
+  // Strip plaintext password from log, keep email
+  const safeConfig = { ...config, password: config.password ? '***' : undefined };
+  console.log(`[cloud-drives] POST / — user=${req.user?.username} name="${name}" type=${type} config=${JSON.stringify(safeConfig)}`);
   const r = db.prepare(
     'INSERT INTO cloud_drives (owner_id, name, type, config) VALUES (?,?,?,?)'
   ).run(req.user?.userId || null, name.trim(), type, JSON.stringify(config));
+  console.log(`[cloud-drives] created id=${r.lastInsertRowid}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 
@@ -459,6 +465,7 @@ router.get('/:id/config', requireAuth, (req, res) => {
 
 router.post('/test', requireAuth, async (req, res) => {
   const { type, config = {} } = req.body || {};
+  console.log(`[cloud-drives] POST /test — user=${req.user?.username} type=${type} email=${config.email || '?'}`);
   try {
     if (type === 'internxt') {
       const { email, password, tfa_code } = config;
@@ -489,6 +496,7 @@ router.post('/:id/mount', requireAuth, async (req, res) => {
   const drive = getOne(db, req.params.id);
   if (!drive) return res.status(404).json({ detail: 'Not found' });
   const cfg = cfgOf(drive);
+  console.log(`[cloud-drives] POST /${req.params.id}/mount — user=${req.user?.username} type=${drive.type} name="${drive.name}" email=${cfg.email || '?'}`);
 
   try {
     if (drive.type === 'internxt') {
@@ -541,6 +549,7 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
   if (!drive.is_mounted) return res.status(400).json({ detail: 'Drive not connected — connect it first' });
 
   const browsePath = req.query.path || '/';
+  console.log(`[cloud-drives] GET /${req.params.id}/browse — user=${req.user?.username} type=${drive.type} name="${drive.name}" path="${browsePath}"`);
 
   try {
     if (drive.type === 'internxt') {

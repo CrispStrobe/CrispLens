@@ -891,23 +891,69 @@ export function scanHashes(onEvent) {
 }
 
 // ── Cloud drives ──────────────────────────────────────────────────────────────
+// Cloud drives require a server — return safe stubs in local/standalone mode.
 
-export function fetchCloudDrives() { return get('/cloud-drives'); }
-export function getCloudDriveConfig(id) { return get(`/cloud-drives/${id}/config`); }
+export function fetchCloudDrives() {
+  if (_localMode) {
+    console.log('[api] fetchCloudDrives: local mode — skipping server request, returning []');
+    return Promise.resolve([]);
+  }
+  return get('/cloud-drives');
+}
+export function createCloudDrive(body) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return post('/cloud-drives', body);
+}
+export function updateCloudDrive(id, body) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return fetch(`${BASE}/cloud-drives/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+}
+export function deleteCloudDrive(id) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return fetch(`${BASE}/cloud-drives/${id}`, {
+    method: 'DELETE', credentials: 'include',
+  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || JSON.stringify(e)))));
+}
+export function getCloudDriveConfig(id) {
+  if (_localMode) return Promise.resolve({});
+  return get(`/cloud-drives/${id}/config`);
+}
+export function testCloudDrive(type, config) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return post('/cloud-drives/test', { type, config });
+}
+export function mountCloudDrive(id) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return post(`/cloud-drives/${id}/mount`, {});
+}
+export function unmountCloudDrive(id) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
+  return post(`/cloud-drives/${id}/unmount`, {});
+}
 export function browseCloudDrive(id, path = '/') {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   const q = new URLSearchParams({ path });
   return get(`/cloud-drives/${id}/browse?${q}`);
 }
 export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
 export function renameCloudDriveItem(driveId, path, newName) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });
 }
 export function trashCloudDriveItem(driveId, path) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return post(`/cloud-drives/${driveId}/trash`, { path });
 }
 export function deleteCloudDriveItem(driveId, path) {
+  if (_localMode) return Promise.reject(new Error('Cloud drives require server mode'));
   return fetch(`${BASE}/cloud-drives/${driveId}/item`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },

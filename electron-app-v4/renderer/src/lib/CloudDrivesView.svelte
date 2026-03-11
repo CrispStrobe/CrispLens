@@ -1,10 +1,14 @@
 <script>
   import { onMount } from 'svelte';
   import { t } from '../stores.js';
-  import { getCloudDriveConfig } from '../api.js';
+  import {
+    fetchCloudDrives, createCloudDrive, updateCloudDrive, deleteCloudDrive,
+    getCloudDriveConfig, testCloudDrive, mountCloudDrive, unmountCloudDrive,
+    isLocalMode,
+  } from '../api.js';
 
-  const API = '/api/cloud-drives';
   const DRIVE_TYPES = ['smb', 'sftp', 'filen', 'internxt'];
+  const localMode = isLocalMode();
 
   let drives = [];
   let loading = false;
@@ -51,11 +55,10 @@
   }
 
   async function load() {
+    if (localMode) { drives = []; return; }
     loading = true; error = '';
     try {
-      const r = await fetch(API, { credentials: 'include' });
-      if (!r.ok) throw new Error(await r.text());
-      drives = await r.json();
+      drives = await fetchCloudDrives();
     } catch (e) {
       error = e.message;
     } finally {
@@ -125,15 +128,11 @@
         allowed_roles: form.allowed_roles,
         auto_mount: form.auto_mount,
       };
-      const url = editingId ? `${API}/${editingId}` : API;
-      const method = editingId ? 'PUT' : 'POST';
-      const r = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error((await r.json()).detail || await r.text());
+      if (editingId) {
+        await updateCloudDrive(editingId, body);
+      } else {
+        await createCloudDrive(body);
+      }
       showModal = false;
       await load();
     } catch (e) {
@@ -146,8 +145,7 @@
   async function deleteDrive(id) {
     if (!confirm($t('drive_delete_confirm'))) return;
     try {
-      const r = await fetch(`${API}/${id}`, { method: 'DELETE', credentials: 'include' });
-      if (!r.ok) throw new Error((await r.json()).detail || await r.text());
+      await deleteCloudDrive(id);
       await load();
     } catch (e) {
       alert(e.message);
@@ -156,13 +154,11 @@
 
   async function mountDrive(drive) {
     try {
-      const isNetworkDrive = drive.type === 'smb' || drive.type === 'sftp';
-      const endpoint = drive.is_mounted
-        ? `${API}/${drive.id}/unmount`
-        : `${API}/${drive.id}/mount`;
-      const r = await fetch(endpoint, { method: 'POST', credentials: 'include' });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+      if (drive.is_mounted) {
+        await unmountCloudDrive(drive.id);
+      } else {
+        await mountCloudDrive(drive.id);
+      }
       await load();
     } catch (e) {
       alert(e.message);
@@ -172,14 +168,8 @@
   async function testConnection() {
     testing = true; testResult = null;
     try {
-      const r = await fetch(`${API}/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ type: form.type, config: buildConfig(form) }),
-      });
-      const data = await r.json();
-      testResult = r.ok ? data : { ok: false, message: data.detail || JSON.stringify(data) };
+      const data = await testCloudDrive(form.type, buildConfig(form));
+      testResult = data;
     } catch (e) {
       testResult = { ok: false, message: e.message };
     } finally {
@@ -221,6 +211,10 @@
       <button class="primary" on:click={openCreate}>+ {$t('add_drive')}</button>
     </div>
   </div>
+
+  {#if localMode}
+    <div class="info-banner">☁️ Cloud drives require a server connection. Switch to server mode in Settings to use this feature.</div>
+  {/if}
 
   {#if error}
     <div class="err-banner">{error}</div>
@@ -446,6 +440,13 @@
   .header h2 { font-size: 15px; font-weight: 600; color: #c0c8e0; margin: 0; }
   .header-actions { display: flex; gap: 8px; }
 
+  .info-banner {
+    background: #1a1a2a;
+    color: #8090b8;
+    padding: 8px 16px;
+    font-size: 12px;
+    border-bottom: 1px solid #2a2a4a;
+  }
   .err-banner {
     background: #2a1a1a;
     color: #e08080;
