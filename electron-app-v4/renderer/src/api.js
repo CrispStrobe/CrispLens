@@ -1000,6 +1000,11 @@ export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent)
   // Ingest (SSE) is server-only — no LocalAdapter equivalent
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility }, onEvent);
 }
+export function downloadCloudFile(driveId, filePath) {
+  // Returns the download URL — open in browser to trigger native download
+  const q = new URLSearchParams({ path: filePath });
+  return `${BASE}/cloud-drives/${driveId}/download-file?${q}`;
+}
 export function renameCloudDriveItem(driveId, path, newName) {
   // rename/trash/delete item ops are server-only for now (rare in WASM mode)
   return postD(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });

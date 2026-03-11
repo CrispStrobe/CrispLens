@@ -4,6 +4,7 @@
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
+           downloadCloudFile,
            downloadImage, openInOs, openFolderInOs } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -164,6 +165,20 @@
     } catch (e) {
       cloudOpsMsg = `Rename failed: ${e.message}`;
       renameModal = null;
+    }
+  }
+
+  function doDownloadCloud() {
+    const paths = [...selected].filter(p => !entries.find(e => e.path === p)?.is_dir);
+    if (paths.length === 0 || cloudDriveId === null) return;
+    for (const p of paths) {
+      const url = downloadCloudFile(cloudDriveId, p);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     }
   }
 
@@ -367,6 +382,9 @@
     } else if (action === 'trash') {
       selected = new Set([entry.path]);
       doTrash();
+    } else if (action === 'cloud-download') {
+      selected = new Set([entry.path]);
+      doDownloadCloud();
     } else if (action === 'copy-path') {
       navigator.clipboard.writeText(entry.path).catch(() => {});
     }
@@ -466,17 +484,18 @@
         addStream = null;
         backgroundTask.set(null);
         galleryRefreshTick.update(n => n + 1);
-      } else if (event.error && event.done !== true) {
-        // stream-level error
+      } else if (event.error && event.index == null && event.done !== true) {
+        // stream-level fatal error (no index = not a per-file result)
         adding = false;
         addDone = false;
         addStream = null;
         backgroundTask.set(null);
         error = event.error;
       } else {
+        // per-file result (success or per-file error)
         addProgress = {
           ...addProgress,
-          done:    event.index,
+          done:    event.index ?? addProgress.done,
           current: event.path?.split('/').pop() || event.path || '',
           errors:  addProgress.errors + (event.error ? 1 : 0),
         };
@@ -1141,6 +1160,10 @@
           </button>
         {/if}
         {#if cloudMode && cloudDriveId !== null}
+          <button class="btn-sm" on:click={doDownloadCloud}
+            disabled={[...selected].every(p => entries.find(e => e.path === p)?.is_dir)}>
+            ⬇ {$t('download')}
+          </button>
           <button class="btn-sm" on:click={openRename}
             disabled={selected.size !== 1}>✏ {$t('fs_rename')}</button>
           <button class="btn-sm btn-trash" on:click={doTrash}>
@@ -1189,6 +1212,9 @@
       {/if}
       {#if cloudMode}
         <button on:click={() => handleCtxAction('add-to-db')}>⬇ {$t('fs_add_to_db_cloud')}</button>
+        {#if !ctxMenu.entry?.is_dir}
+          <button on:click={() => handleCtxAction('cloud-download')}>💾 {$t('download')}</button>
+        {/if}
         <div class="ctx-divider"></div>
         <button on:click={() => handleCtxAction('rename')}>✏ {$t('fs_rename')}</button>
         <button on:click={() => handleCtxAction('trash')}>🗑 {$t('fs_trash')}</button>

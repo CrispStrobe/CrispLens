@@ -953,4 +953,58 @@ router.post('/:id/ingest', requireAuth, async (req, res) => {
   res.end();
 });
 
+// ── GET /:id/download-file — stream a cloud file to the browser ───────────────
+
+router.get('/:id/download-file', requireAuth, async (req, res) => {
+  const { path: filePath } = req.query;
+  if (!filePath) return res.status(400).json({ error: 'path query param required' });
+
+  const db    = getDb();
+  const drive = getOne(db, req.params.id);
+  if (!drive)          return res.status(404).json({ error: 'Drive not found' });
+  if (!drive.is_mounted) return res.status(400).json({ error: 'Drive not connected' });
+
+  const tokenData = JSON.parse(drive.token || '{}');
+
+  // Extract file UUID from path (/folderUUID/file/fileUUID or just fileUUID)
+  const parts    = filePath.split('/').filter(Boolean);
+  const fileIdx  = parts.indexOf('file');
+  const fileUuid = fileIdx >= 0 && fileIdx + 1 < parts.length
+    ? parts[fileIdx + 1]
+    : parts[parts.length - 1];
+
+  if (!fileUuid) return res.status(400).json({ error: 'Cannot extract file UUID from path' });
+
+  // Download to a temp file, then stream it to the client
+  const os     = require('os');
+  const tmpPath = path.join(os.tmpdir(), `cloud_dl_${Date.now()}_${fileUuid}`);
+  let downloadedName = fileUuid;
+
+  try {
+    if (drive.type === 'internxt') {
+      const info = await internxtDownloadFile(tokenData, fileUuid, tmpPath);
+      downloadedName = info.name || fileUuid;
+    } else if (drive.type === 'filen') {
+      const info = await filenDownloadFile(tokenData, fileUuid, tmpPath);
+      downloadedName = info.name || fileUuid;
+    } else {
+      return res.status(400).json({ error: `Cloud type '${drive.type}' not supported for download` });
+    }
+
+    const stat = fs.statSync(tmpPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadedName)}"`);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Type', 'application/octet-stream');
+
+    const stream = fs.createReadStream(tmpPath);
+    stream.on('end', () => { try { fs.unlinkSync(tmpPath); } catch {} });
+    stream.on('error', () => { try { fs.unlinkSync(tmpPath); } catch {} });
+    stream.pipe(res);
+  } catch (err) {
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+    console.error(`[cloud-drives/download] error for ${filePath}:`, err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
