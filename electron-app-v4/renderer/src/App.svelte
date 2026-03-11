@@ -434,7 +434,10 @@
             }}>Reset App State (Hard Reset)</button>
           </div>
         </div>
-      {:else if sessionChecked && !$currentUser && !$isOffline}
+      {:else if !sessionChecked && !$isOffline}
+        <!-- Session check in progress — prevent content views from mounting unauthenticated -->
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;color:#505070;font-size:13px">Checking session…</div>
+      {:else if !$currentUser && !$isOffline}
         <!-- No active session — show full-page login -->
         <LoginScreen on:loggedin={loadAll} />
       {:else if view === 'all'}

@@ -3,16 +3,21 @@
 /**
  * cloud-drives.js — Cloud/network drive management for v4 Node server.
  *
- * Supported types: internxt, filen (cloud auth), smb, sftp (network mounts).
+ * Supported types: internxt, filen, smb, sftp.
  * SMB/SFTP: stub only — no native mount support in Node without OS tools.
- * Internxt: full auth + browse via their REST API (modern "Hydrated Login" flow).
- * Filen: stub — requires their custom E2E encrypted protocol.
  *
- * Internxt auth matches internxt-cli/services/auth.py + crypto.py exactly:
- *   1. POST /auth/login  {email}  → {sKey}  (encrypted salt)
- *   2. decrypt sKey → salt; PBKDF2(password, salt) → hash; encrypt(hash) → encryptedPasswordHash
- *   3. POST /auth/login/access  {email, password: encryptedPasswordHash, keys, ...}  → {newToken}
- *   4. GET  /users/refresh  Bearer: newToken  → {token, newToken, user: {rootFolderUuid, ...}}
+ * Internxt auth (matches internxt-cli/services/auth.py + crypto.py):
+ *   1. POST /auth/login {email} → {sKey}
+ *   2. decrypt(sKey) → salt → PBKDF2(pass,salt) → hash → encrypt(hash)
+ *   3. POST /auth/login/access {email, password, keys} → {newToken}
+ *   4. GET /users/refresh Bearer:newToken → {token, newToken, user:{rootFolderId}}
+ *
+ * Filen auth (matches filen-python/services/auth.py + crypto.py):
+ *   1. POST /v3/auth/info {email} → {authVersion, salt}
+ *   2. PBKDF2-SHA512(pass, salt, 200000, 64) → masterKey + passwordHash
+ *   3. POST /v3/login {email, password, authVersion, twoFactorCode} → {apiKey, masterKeys}
+ *   4. decrypt each masterKey via AES-256-GCM "002" format
+ *   5. GET /v3/user/baseFolder → {uuid}
  */
 
 const express = require('express');
@@ -232,6 +237,162 @@ async function internxtListFolder(bearerToken, folderUuid) {
   return { folders, files };
 }
 
+// ── Filen constants ───────────────────────────────────────────────────────────
+const FILEN_API = 'https://gateway.filen.io';
+const IMAGE_EXTS_SET = new Set(['.jpg','.jpeg','.png','.webp','.gif','.bmp','.tiff','.heic','.heif','.avif']);
+
+// ── Filen crypto (ported from filen-python/services/crypto.py) ────────────────
+
+function _pbkdf2(password, salt, iterations, len) {
+  return new Promise((resolve, reject) =>
+    crypto.pbkdf2(password, salt, iterations, len, 'sha512', (e, k) => e ? reject(e) : resolve(k))
+  );
+}
+
+/**
+ * Derive login keys from password + salt.
+ * Matches filen-python crypto.py derive_keys().
+ */
+async function filenDeriveKeys(password, authVersion, salt) {
+  const derived = await _pbkdf2(password, salt, 200000, 64);
+  const keyHex  = derived.toString('hex').toLowerCase();
+  if (authVersion === 2) {
+    const masterKey    = keyHex.slice(0, 64);
+    const passwordHash = crypto.createHash('sha512').update(keyHex.slice(64)).digest('hex').toLowerCase();
+    return { masterKey, passwordHash };
+  }
+  return { masterKey: keyHex, passwordHash: keyHex };
+}
+
+/**
+ * Decrypt Filen "002" metadata (AES-256-GCM).
+ * Format: "002" + 12-char ASCII IV + base64(ciphertext + 16-byte GCM tag)
+ * Key:    PBKDF2-SHA512(masterKey, masterKey, 1, 32)
+ * Matches filen-python crypto.py decrypt_metadata_002().
+ */
+async function filenDecryptMetadata(encrypted, masterKey) {
+  if (!encrypted?.startsWith('002')) throw new Error('Not "002" format: ' + String(encrypted).slice(0,15));
+  const iv        = Buffer.from(encrypted.slice(3, 15), 'utf8');
+  const cipherBuf = Buffer.from(encrypted.slice(15), 'base64');
+  const ciphertext = cipherBuf.slice(0, -16);
+  const tag        = cipherBuf.slice(-16);
+  const dk = await _pbkdf2(masterKey, masterKey, 1, 32);
+  const dec = crypto.createDecipheriv('aes-256-gcm', dk, iv);
+  dec.setAuthTag(tag);
+  return Buffer.concat([dec.update(ciphertext), dec.final()]).toString('utf8');
+}
+
+// ── Filen API helper ──────────────────────────────────────────────────────────
+
+function filenRequest(method, path, { body, apiKey } = {}) {
+  return new Promise((resolve, reject) => {
+    const bodyBuf = body ? Buffer.from(JSON.stringify(body), 'utf8') : null;
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    if (bodyBuf) headers['Content-Length'] = bodyBuf.length;
+    const req = https.request({
+      hostname: 'gateway.filen.io', port: 443, path, method, headers,
+    }, res => {
+      const chunks = [];
+      res.on('data', d => chunks.push(d));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = raw; }
+        if (res.statusCode >= 400) return reject(new Error(`Filen HTTP ${res.statusCode}: ${raw.slice(0,200)}`));
+        if (data?.status === false) return reject(new Error(data.message || 'Filen API error'));
+        resolve(data?.data ?? data);
+      });
+    });
+    req.on('error', reject);
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
+/**
+ * Full Filen login flow. Returns { email, apiKey, masterKeys:string[], baseFolderUuid, userId }.
+ */
+async function filenLogin(email, password, tfaCode) {
+  const cleanEmail = email.toLowerCase().trim();
+
+  console.log('[filen] Step 1: auth/info');
+  const authInfo    = await filenRequest('POST', '/v3/auth/info', { body: { email: cleanEmail } });
+  const authVersion = authInfo.authVersion ?? 2;
+  const salt        = authInfo.salt;
+  if (!salt) throw new Error('Filen: no salt in auth/info response');
+
+  console.log('[filen] Step 2: deriving keys (authVersion=' + authVersion + ')');
+  const { masterKey, passwordHash } = await filenDeriveKeys(password, authVersion, salt);
+
+  console.log('[filen] Step 3: login');
+  const loginData = await filenRequest('POST', '/v3/login', {
+    body: { email: cleanEmail, password: passwordHash, authVersion, twoFactorCode: tfaCode?.trim() || 'XXXXXX' },
+  });
+  const apiKey = loginData.apiKey;
+  if (!apiKey) throw new Error('Filen: no apiKey in login response');
+
+  console.log('[filen] Step 4: decrypting master keys');
+  const rawKeys       = Array.isArray(loginData.masterKeys) ? loginData.masterKeys
+                      : typeof loginData.masterKeys === 'string' ? [loginData.masterKeys] : [];
+  const decryptedKeys = [];
+  for (const enc of rawKeys) {
+    try {
+      decryptedKeys.push(await filenDecryptMetadata(enc, masterKey));
+    } catch (e) {
+      console.warn('[filen] master key decrypt failed:', e.message);
+    }
+  }
+  if (decryptedKeys.length === 0) decryptedKeys.push(masterKey); // fallback
+
+  console.log('[filen] Step 5: base folder');
+  const baseFolder = await filenRequest('GET', '/v3/user/baseFolder', { apiKey });
+  const baseFolderUuid = baseFolder.uuid;
+  if (!baseFolderUuid) throw new Error('Filen: no baseFolderUuid');
+
+  console.log('[filen] Login OK — baseFolderUuid:', baseFolderUuid);
+  return { email: cleanEmail, apiKey, masterKeys: decryptedKeys, baseFolderUuid, userId: String(loginData.id || '') };
+}
+
+/**
+ * List a Filen folder (POST /v3/dir/content), decrypting names.
+ * Returns { folders:[{name,uuid}], files:[{name,uuid,size}] }
+ */
+async function filenListFolder(apiKey, masterKeys, folderUuid) {
+  const data    = await filenRequest('POST', '/v3/dir/content', { body: { uuid: folderUuid, foldersOnly: false }, apiKey });
+  const rawFolders = Array.isArray(data.folders) ? data.folders : [];
+  const rawFiles   = Array.isArray(data.uploads)  ? data.uploads  : (Array.isArray(data.files) ? data.files : []);
+
+  // Decrypt with most recent master key first, fall back through all keys
+  async function tryDecrypt(enc) {
+    for (let i = masterKeys.length - 1; i >= 0; i--) {
+      try { return await filenDecryptMetadata(enc, masterKeys[i]); } catch {}
+    }
+    return null;
+  }
+
+  const folders = [];
+  for (const f of rawFolders) {
+    const name = await tryDecrypt(f.name);
+    if (name) folders.push({ name, uuid: f.uuid });
+  }
+
+  const files = [];
+  for (const f of rawFiles) {
+    const metaStr = await tryDecrypt(f.metadata);
+    if (!metaStr) continue;
+    try {
+      const meta = JSON.parse(metaStr);
+      const ext  = ('.' + (meta.name || '').split('.').pop()).toLowerCase();
+      if (IMAGE_EXTS_SET.has(ext)) {
+        files.push({ name: meta.name, uuid: f.uuid, size: f.size ?? meta.size });
+      }
+    } catch {}
+  }
+
+  return { folders, files };
+}
+
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 function ensureTable(db) {
@@ -306,7 +467,10 @@ router.post('/test', requireAuth, async (req, res) => {
       return res.json({ ok: true, message: 'Internxt login successful' });
     }
     if (type === 'filen') {
-      return res.json({ ok: false, message: 'Filen: not yet implemented in v4 server — use v2 backend' });
+      const { email, password, tfa_code } = config;
+      if (!email || !password) return res.status(400).json({ ok: false, message: 'Email and password required' });
+      await filenLogin(email, password, tfa_code);
+      return res.json({ ok: true, message: 'Filen login successful' });
     }
     if (type === 'smb' || type === 'sftp') {
       return res.json({ ok: false, message: `${type.toUpperCase()}: network mount not supported in v4 — use v2 backend with OS-level mount support` });
@@ -339,6 +503,18 @@ router.post('/:id/mount', requireAuth, async (req, res) => {
         .run(JSON.stringify(tokenData), drive.id);
       return res.json({ ok: true, message: 'Connected to Internxt' });
     }
+    if (drive.type === 'filen') {
+      const authData = await filenLogin(cfg.email, cfg.password, cfg.tfa_code);
+      const tokenData = {
+        apiKey:          authData.apiKey,
+        masterKeys:      authData.masterKeys,
+        baseFolderUuid:  authData.baseFolderUuid,
+        userId:          authData.userId,
+      };
+      db.prepare('UPDATE cloud_drives SET is_mounted=1, token=? WHERE id=?')
+        .run(JSON.stringify(tokenData), drive.id);
+      return res.json({ ok: true, message: 'Connected to Filen' });
+    }
     return res.json({ ok: false, message: `${drive.type}: mount not implemented in v4` });
   } catch (e) {
     console.error('[cloud-drives/mount]', drive.type, e.message);
@@ -356,7 +532,7 @@ router.post('/:id/unmount', requireAuth, (req, res) => {
 
 // ── Browse ────────────────────────────────────────────────────────────────────
 
-const IMAGE_EXTS = new Set(['.jpg','.jpeg','.png','.webp','.gif','.bmp','.tiff','.heic','.heif','.avif']);
+const IMAGE_EXTS = IMAGE_EXTS_SET; // alias
 
 router.get('/:id/browse', requireAuth, async (req, res) => {
   const db = getDb();
@@ -405,6 +581,41 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
             is_image: true,
             size:     f.size,
           })),
+      ].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
+
+      return res.json({ path: browsePath, parent: parentPath, entries });
+    }
+
+    if (drive.type === 'filen') {
+      const tokenData = JSON.parse(drive.token || '{}');
+      if (!tokenData.apiKey) return res.status(400).json({ detail: 'Token missing — reconnect drive' });
+
+      // Path format: '/' = root, '/{uuid}' = subfolder
+      let folderUuid = tokenData.baseFolderUuid;
+      let parentPath = null;
+      if (browsePath !== '/' && browsePath !== '') {
+        const parts = browsePath.replace(/^\//, '').split('/').filter(Boolean);
+        if (parts.length > 0) {
+          folderUuid = parts[parts.length - 1];
+          parentPath = parts.length > 1 ? '/' + parts.slice(0, -1).join('/') : '/';
+        }
+      }
+
+      const { folders, files } = await filenListFolder(tokenData.apiKey, tokenData.masterKeys, folderUuid);
+
+      const entries = [
+        ...folders.map(f => ({
+          name:   f.name,
+          path:   `${browsePath === '/' ? '' : browsePath}/${f.uuid}`,
+          is_dir: true,
+        })),
+        ...files.map(f => ({
+          name:     f.name,
+          path:     `${browsePath === '/' ? '' : browsePath}/file/${f.uuid}`,
+          is_dir:   false,
+          is_image: true,
+          size:     f.size,
+        })),
       ].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
 
       return res.json({ path: browsePath, parent: parentPath, entries });
