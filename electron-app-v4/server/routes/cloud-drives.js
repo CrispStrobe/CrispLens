@@ -220,13 +220,14 @@ async function internxtListFolder(bearerToken, folderUuid) {
     apiGet(filesUrl,   auth).catch(() => ({})),
   ]);
 
-  const folders = Array.isArray(foldersRes?.result) ? foldersRes.result
-                : Array.isArray(foldersRes?.children) ? foldersRes.children
-                : Array.isArray(foldersRes) ? foldersRes : [];
+  // API returns { result: [...] } for folders and flat array for files
+  const folders = Array.isArray(foldersRes?.result)   ? foldersRes.result
+                : Array.isArray(foldersRes?.children)  ? foldersRes.children
+                : Array.isArray(foldersRes)             ? foldersRes : [];
 
-  const files   = Array.isArray(filesRes?.result) ? filesRes.result
-                : Array.isArray(filesRes?.files)   ? filesRes.files
-                : Array.isArray(filesRes)            ? filesRes : [];
+  const files   = Array.isArray(filesRes?.result)     ? filesRes.result
+                : Array.isArray(filesRes?.files)       ? filesRes.files
+                : Array.isArray(filesRes)               ? filesRes : [];
 
   return { folders, files };
 }
@@ -329,9 +330,10 @@ router.post('/:id/mount', requireAuth, async (req, res) => {
     if (drive.type === 'internxt') {
       const authData = await internxtLogin(cfg.email, cfg.password, cfg.tfa_code);
       // Store newToken as bearer + rootFolderUuid for browse
+      // rootFolderId is already a UUID; root_folder_id is the legacy numeric ID
       const tokenData = {
         token:          authData.newToken || authData.token,
-        rootFolderUuid: authData.user?.rootFolderUuid || authData.user?.root_folder_id,
+        rootFolderUuid: authData.user?.rootFolderId || authData.user?.rootFolderUuid,
       };
       db.prepare('UPDATE cloud_drives SET is_mounted=1, token=? WHERE id=?')
         .run(JSON.stringify(tokenData), drive.id);
@@ -387,7 +389,7 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
 
       const entries = [
         ...folders.map(f => ({
-          name:   f.plainName || f.name,
+          name:   f.plainName || f.plain_name || f.name,
           path:   `${browsePath === '/' ? '' : browsePath}/${f.uuid}`,
           is_dir: true,
         })),
@@ -397,7 +399,7 @@ router.get('/:id/browse', requireAuth, async (req, res) => {
             return IMAGE_EXTS.has(ext);
           })
           .map(f => ({
-            name:     (f.plainName || f.name) + (f.type ? '.' + f.type : ''),
+            name:     (f.plainName || f.plain_name || f.name) + (f.type ? '.' + f.type : ''),
             path:     `${browsePath === '/' ? '' : browsePath}/file/${f.uuid}`,
             is_dir:   false,
             is_image: true,
