@@ -16,6 +16,7 @@ export function base64ToBlob(base64, contentType = '', sliceSize = 512) {
 /**
  * Robust fetch that bypasses CORS in Electron (via main process proxy)
  * and on Mobile (via Capacitor native HTTP).
+ * Also falls back to server-side proxy if running in a browser.
  */
 export async function robustFetch(url, options = {}) {
   // 1. Electron Proxy (highest priority for Desktop)
@@ -90,6 +91,30 @@ export async function robustFetch(url, options = {}) {
     }
   }
 
-  // 3. Standard fetch (subject to CORS)
+  // 3. Server-side Proxy (for standard browser pointing to a running server)
+  // Check if we are in a browser and NOT on the same domain as the target
+  const isTargetCrossDomain = !url.startsWith('/') && !url.startsWith(window.location.origin);
+  if (typeof window !== 'undefined' && isTargetCrossDomain) {
+    const remoteUrl = localStorage.getItem('remote_url') || '';
+    const base = remoteUrl ? remoteUrl.replace(/\/$/, '') : window.location.origin;
+    const proxyUrl = `${base}/api/proxy-fetch`;
+    
+    console.log(`[RobustFetch] Browser: using server proxy ${proxyUrl} for ${url}`);
+    try {
+      const res = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, options })
+      });
+      
+      if (res.ok || res.status < 500) { // If server responded, use it
+        return res;
+      }
+    } catch (e) {
+      console.warn('[RobustFetch] Server proxy failed, falling back to direct fetch:', e.message);
+    }
+  }
+
+  // 4. Standard fetch (subject to CORS)
   return fetch(url, options);
 }

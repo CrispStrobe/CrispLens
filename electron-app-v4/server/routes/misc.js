@@ -16,6 +16,48 @@ const { requireAuth, requireAdmin } = require('../auth');
 const router = express.Router();
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NETWORK PROXY (Bypass CORS for browsers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/proxy-fetch', requireAuth, async (req, res) => {
+  const { url, options = {} } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url required' });
+
+  console.log(`[server] proxy-fetch: ${options.method || 'GET'} ${url}`);
+
+  try {
+    const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+    const response = await fetch(url, options);
+
+    const headers = {};
+    response.headers.forEach((v, k) => { headers[k] = v; });
+
+    // Remove headers that might cause issues with the client-side response
+    delete headers['content-encoding'];
+    delete headers['transfer-encoding'];
+    delete headers['content-length']; // let express set it
+
+    res.status(response.status);
+    Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
+
+    const contentType = (headers['content-type'] || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      res.json(data);
+    } else if (contentType.includes('text/') || contentType.includes('xml') || contentType.includes('javascript')) {
+      const data = await response.text();
+      res.send(data);
+    } else {
+      const buffer = await response.buffer();
+      res.send(buffer);
+    }
+  } catch (err) {
+    console.error(`[server] proxy-fetch error for ${url}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────────────────────────────────────
 
