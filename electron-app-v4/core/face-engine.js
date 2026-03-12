@@ -64,6 +64,12 @@ function findModelDir() {
     dirs.push(ENV_MODEL_DIR);
     if (!ENV_MODEL_DIR.endsWith('buffalo_l')) dirs.push(path.join(ENV_MODEL_DIR, 'buffalo_l'));
   }
+  // In production Electron builds, also check USER_DATA_PATH (set by electron-main.js)
+  // so models downloaded to the writable userData dir are found even if LOCAL_MODEL_DIR
+  // points inside the read-only app bundle.
+  if (process.env.USER_DATA_PATH) {
+    dirs.push(path.join(process.env.USER_DATA_PATH, 'models', 'buffalo_l'));
+  }
   dirs.push(INSIGHTFACE_MODEL_DIR, LOCAL_MODEL_DIR);
 
   for (const d of dirs) {

@@ -19,8 +19,13 @@ export function base64ToBlob(base64, contentType = '', sliceSize = 512) {
  * Also falls back to server-side proxy if running in a browser.
  */
 export async function robustFetch(url, options = {}) {
-  // 1. Electron Proxy (highest priority for Desktop)
-  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
+  // 1. Electron Proxy (highest priority for Desktop — CORS bypass for cross-origin requests only)
+  // Skip for same-origin requests (no CORS bypass needed) and FormData bodies
+  // (IPC structured clone cannot serialize Blob entries in FormData → multer gets empty body).
+  const _isSameOrigin = typeof window !== 'undefined' &&
+    (url.startsWith('/') || url.startsWith(window.location.origin));
+  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch &&
+      !_isSameOrigin && !(options.body instanceof FormData)) {
     try {
       const res = await window.electronAPI.proxyFetch(url, options);
       if (!res.ok && res.error) throw new Error(res.error);

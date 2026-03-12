@@ -136,9 +136,10 @@ function resolveDbPath() {
 
 function startServer(dbPath) {
   return new Promise((resolve, reject) => {
-    process.env.DB_PATH    = dbPath;
-    process.env.PORT       = String(PORT);
-    process.env.UPLOAD_DIR = path.join(path.dirname(dbPath), 'uploads');
+    process.env.DB_PATH        = dbPath;
+    process.env.PORT           = String(PORT);
+    process.env.UPLOAD_DIR     = path.join(path.dirname(dbPath), 'uploads');
+    process.env.USER_DATA_PATH = app.getPath('userData');
 
     // Load the Express app
     let serverModule;

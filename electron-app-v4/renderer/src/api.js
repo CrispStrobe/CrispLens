@@ -1112,9 +1112,13 @@ export async function generateImage(params) {
   return res.json();
 }
 
-/** Internal helper to attach BFL key from WASM DB to server requests in standalone mode. */
+/** Internal helper to attach BFL key from WASM DB to server requests.
+ *  In server mode the server reads the key from its own api_keys table,
+ *  but if the key was saved while in standalone mode it only exists in
+ *  LocalAdapter — so always check LocalAdapter as a fallback. */
 async function _bflHeaders() {
-  if (!isLocalMode()) return {};
+  // In server mode the server handles the key itself; only send the header
+  // if LocalAdapter actually has one (covers the "saved-in-standalone" scenario).
   try {
     const keys = await localAdapter.getKeyStatus();
     if (keys.bfl?.has_user_key || keys.bfl?.has_system_key) {

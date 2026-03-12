@@ -278,7 +278,10 @@
     } catch { /* ignore */ }
 
     // ── Local (standalone) mode: browser WASM SQLite for image/face data ────────
-    if (isLocalMode()) {
+    // In Electron, always proceed to server mode first — the embedded Node.js server
+    // is always running. Stale 'local' data_source from a previous standalone session
+    // must not block server-mode startup; setLocalMode(false) is called after getPort().
+    if (isLocalMode() && !inElectron) {
       console.log('[App] Standalone mode — initializing local WASM engine...');
       backendReady.set(true);
       modelReady.set(true);
@@ -316,6 +319,10 @@
           try {
             const port = await window.electronAPI.getPort();
             console.log(`[App] Local server port: ${port}`);
+            if (port) {
+              // Override any stale 'local' data_source from a previous standalone session
+              setLocalMode(false);
+            }
             applyServerUrl(port ? `http://127.0.0.1:${port}` : '');
           } catch { 
             console.warn('[App] Failed to get port via IPC');

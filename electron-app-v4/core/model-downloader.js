@@ -14,7 +14,15 @@ const path  = require('path');
 const https = require('https');
 const AdmZip = require('adm-zip');
 
-const MODELS_DIR   = path.join(__dirname, '..', 'models');
+// In production Electron builds __dirname is inside the non-writable app bundle.
+// Prefer USER_DATA_PATH (set by electron-main.js) or fall back to ~/.crisplens.
+const os = require('os');
+const _dataDir = process.env.USER_DATA_PATH || path.join(os.homedir(), '.crisplens');
+const MODELS_DIR   = process.env.FACE_REC_MODELS_DIR
+  ? path.dirname(process.env.FACE_REC_MODELS_DIR)
+  : (fs.existsSync(path.join(__dirname, '..', 'models', 'buffalo_l', 'det_10g.onnx'))
+      ? path.join(__dirname, '..', 'models')   // dev: models already next to package
+      : path.join(_dataDir, 'models'));
 const BUFFALO_DIR  = path.join(MODELS_DIR, 'buffalo_l');
 const REQUIRED     = ['det_10g.onnx', 'w600k_r50.onnx'];
 const BUFFALO_URL  = 'https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip';
@@ -58,7 +66,7 @@ function download(url, dest) {
 
 async function ensureModels() {
   // Try the InsightFace Python cache first (no download needed)
-  const insightDir = path.join(require('os').homedir(), '.insightface', 'models', 'buffalo_l');
+  const insightDir = path.join(os.homedir(), '.insightface', 'models', 'buffalo_l');
   if (REQUIRED.every(f => fs.existsSync(path.join(insightDir, f)))) {
     console.log(`[models] Using existing InsightFace models from: ${insightDir}`);
     return insightDir;

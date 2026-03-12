@@ -810,7 +810,7 @@
         const { localAdapter } = await import('./LocalAdapter.js');
         vlmKeys = await localAdapter.getVlmKeys();
         
-        const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/ort-wasm';
+        const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
         engine.setModelBaseUrl(modelBase);
       } catch (err) {
         console.error('[FSView] Failed to init engine:', err);
