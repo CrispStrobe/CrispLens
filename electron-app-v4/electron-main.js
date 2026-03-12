@@ -323,19 +323,29 @@ function registerIpc() {
   ipcMain.handle('read-local-file', async (_e, filePath) => {
     try {
       const buf = fs.readFileSync(filePath);
-      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      // Return as Uint8Array; Electron IPC handles this efficiently
+      return new Uint8Array(buf);
     } catch { return null; }
   });
 
   ipcMain.handle('read-local-dir', async (_e, dirPath) => {
     try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-      return entries.map(e => ({
+      const entries = fs.readdirSync(dirPath || os.homedir(), { withFileTypes: true });
+      const results = entries.map(e => ({
         name:   e.name,
-        path:   path.join(dirPath, e.name),
+        path:   path.join(dirPath || os.homedir(), e.name),
         is_dir: e.isDirectory(),
+        is_image: !e.isDirectory() && /\.(jpg|jpeg|png|gif|webp|bmp|tiff)$/i.test(e.name)
       }));
-    } catch { return []; }
+      return {
+        path: dirPath || os.homedir(),
+        parent: path.dirname(dirPath || os.homedir()),
+        entries: results
+      };
+    } catch (err) {
+      console.error('[main] read-local-dir error:', err.message);
+      return { path: dirPath, parent: null, entries: [] };
+    }
   });
 
   ipcMain.handle('get-log-file', () => process.env.LOG_FILE || null);

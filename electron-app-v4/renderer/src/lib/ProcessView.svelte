@@ -526,9 +526,13 @@
       // Electron fallback: read local file from path
       if (!fileObj && inElectron && item.path) {
         try {
-          const buffer = await window.electronAPI.readLocalFile(item.path);
-          if (buffer) {
-            fileObj = new File([buffer], item.name || 'photo.jpg', { type: 'image/jpeg' });
+          console.log(`[ProcessView] Electron: Reading local file: ${item.path}`);
+          const uint8 = await window.electronAPI.readLocalFile(item.path);
+          if (uint8) {
+            console.log(`[ProcessView] Electron: File read OK (${uint8.length} bytes)`);
+            fileObj = new File([uint8], item.name || 'photo.jpg', { type: 'image/jpeg' });
+          } else {
+            console.error(`[ProcessView] Electron: Failed to read file data for ${item.path}`);
           }
         } catch (readErr) {
           console.error(`[ProcessView] Could not read local file ${item.path}:`, readErr);
