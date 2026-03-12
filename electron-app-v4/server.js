@@ -109,6 +109,67 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
 }));
 app.use(cookieParser());
+
+// ── Internxt / Filen CORS Proxy (for standard browser) ────────────────────────
+// These MUST be registered BEFORE express.json() / urlencoded middlewares.
+// Otherwise, the request body is consumed and the proxy will hang (504).
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+const onProxyError = (err, req, res) => {
+  console.error(`[server] Proxy error for ${req.url}:`, err.message);
+  if (!res.headersSent) {
+    res.status(504).json({ error: 'Proxy timeout or gateway error', detail: err.message });
+  }
+};
+
+app.use('/api/internxt-drive', createProxyMiddleware({
+  target: 'https://gateway.internxt.com/drive',
+  changeOrigin: true,
+  pathRewrite: { '^/api/internxt-drive': '' },
+  proxyTimeout: 600000,
+  timeout: 600000,
+  on: {
+    proxyRes: (pRes) => { pRes.headers['Access-Control-Allow-Origin'] = '*'; },
+    error: onProxyError
+  }
+}));
+
+app.use('/api/internxt-network', createProxyMiddleware({
+  target: 'https://gateway.internxt.com/network',
+  changeOrigin: true,
+  pathRewrite: { '^/api/internxt-network': '' },
+  proxyTimeout: 600000,
+  timeout: 600000,
+  on: {
+    proxyRes: (pRes) => { pRes.headers['Access-Control-Allow-Origin'] = '*'; },
+    error: onProxyError
+  }
+}));
+
+app.use('/api/filen-gateway', createProxyMiddleware({
+  target: 'https://gateway.filen.io',
+  changeOrigin: true,
+  pathRewrite: { '^/api/filen-gateway': '' },
+  proxyTimeout: 600000,
+  timeout: 600000,
+  on: {
+    proxyRes: (pRes) => { pRes.headers['Access-Control-Allow-Origin'] = '*'; },
+    error: onProxyError
+  }
+}));
+
+app.use('/api/filen-egest', createProxyMiddleware({
+  target: 'https://egest.filen.io',
+  changeOrigin: true,
+  pathRewrite: { '^/api/filen-egest': '' },
+  proxyTimeout: 600000,
+  timeout: 600000,
+  on: {
+    proxyRes: (pRes) => { pRes.headers['Access-Control-Allow-Origin'] = '*'; },
+    error: onProxyError
+  }
+}));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

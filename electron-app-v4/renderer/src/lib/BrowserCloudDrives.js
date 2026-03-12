@@ -122,8 +122,8 @@ async function encryptPasswordHash(password, sKey) {
   return encryptText(hashObj.hash);
 }
 
-function generateKeys(password) {
-  const encPk = encryptTextWithKey('placeholder-private-key-for-login', password);
+async function generateKeys(password) {
+  const encPk = await encryptTextWithKey('placeholder-private-key-for-login', password);
   return {
     privateKeyEncrypted: encPk,
     publicKey: 'placeholder-public-key-for-login',
@@ -135,8 +135,14 @@ function generateKeys(password) {
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP helpers (browser fetch, matching server jsonRequest)
 // ─────────────────────────────────────────────────────────────────────────────
-const INTERNXT_API = 'https://gateway.internxt.com/drive';
-const INTERNXT_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json', 'internxt-client': 'internxt-cli' };
+const isWeb = typeof window !== 'undefined' && !window.electronAPI && !(window.Capacitor?.isNativePlatform?.());
+
+const INTERNXT_API     = isWeb ? '/api/internxt-drive'   : 'https://gateway.internxt.com/drive';
+const INTERNXT_NETWORK = isWeb ? '/api/internxt-network' : 'https://gateway.internxt.com/network';
+const FILEN_API        = isWeb ? '/api/filen-gateway'    : 'https://gateway.filen.io';
+const FILEN_EGEST      = isWeb ? '/api/filen-egest'      : 'https://egest.filen.io';
+
+const INTERNXT_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json', 'internxt-client': 'internxt-cli', 'x-api-version': '2' };
 
 async function apiGet(url, extraHeaders = {}) {
   const r = await robustFetch(url, { method: 'GET', headers: { ...INTERNXT_HEADERS, ...extraHeaders } });
@@ -178,8 +184,8 @@ export async function internxtLogin(email, password, tfaCode) {
   const rootFolderUuid = user.rootFolderUuid || user.rootFolderId;
   // bridgeUser = email used as Basic-auth username for the network API
   // userId = user UUID used as Basic-auth password for the network API
-  const bridgeUser = user.bridgeUser || user.email || cleanEmail;
-  const userId     = user.userId || user.uuid || user.id;
+  const bridgeUser = user.bridgeUser || cleanEmail;
+  const userId     = String(user.userId || user.id || '');
   // Mnemonic is returned AES-256-CBC encrypted with the user's password — decrypt it now.
   // This is the same flow as server/routes/cloud-drives.js internxtLogin().
   let mnemonic = null;
@@ -289,7 +295,6 @@ async function filenDecryptMetadata(encrypted, masterKey) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Filen: login + browse
 // ─────────────────────────────────────────────────────────────────────────────
-const FILEN_API = 'https://gateway.filen.io';
 
 async function filenFetch(method, path, { body, apiKey } = {}) {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -377,7 +382,6 @@ export async function filenBrowse(tokenData, path) {
 // Internxt: file download (browser SubtleCrypto AES-256-CTR)
 // Mirrors server/routes/cloud-drives.js internxtDownloadFile() for Node.js
 // ─────────────────────────────────────────────────────────────────────────────
-const INTERNXT_NETWORK = 'https://gateway.internxt.com/network';
 
 async function _bip39ToSeed(mnemonic) {
   const km   = await crypto.subtle.importKey('raw', enc.encode(mnemonic), { name: 'PBKDF2' }, false, ['deriveBits']);
@@ -413,16 +417,25 @@ export async function internxtDownloadFile(tokenData, fileUuid) {
 
   // Step 1: file meta → bucket + fileId + size + name
   const metaRes  = await apiGet(`${INTERNXT_API}/files/${fileUuid}/meta`, { Authorization: `Bearer ${bearer}` });
-  const bucketId = metaRes.item?.bucket;
-  const fileId   = metaRes.item?.id;
-  const fileSize = parseInt(metaRes.item?.size || 0, 10);
-  const name     = (metaRes.item?.plainName || '') + (metaRes.item?.type ? '.' + metaRes.item.type : fileUuid);
-  if (!bucketId || !fileId) throw new Error('Internxt: missing bucket/fileId in meta response');
+  const meta     = metaRes.item || metaRes;
+  const bucketId = meta.bucket;
+  const fileId   = meta.fileId || meta.id;
+  const fileSize = parseInt(meta.size || 0, 10);
+  const name     = (meta.plainName || meta.name || '') + (meta.type ? '.' + meta.type : fileUuid);
+  if (!bucketId || !fileId) {
+    console.error('[BrowserCloud/internxt] Metadata missing fields:', meta);
+    throw new Error('Internxt: missing bucket/fileId in meta response');
+  }
 
-  // Step 2: network shard info (Basic auth: bridgeUser:userId)
-  const basic    = btoa(`${bridgeUser}:${userId}`);
+  // Step 2: network shard info (Basic auth: bridgeUser:bridgePass)
+  const userIdStr = String(userId);
+  const msgUint8  = enc.encode(userIdStr);
+  const hashBuf   = await crypto.subtle.digest('SHA-256', msgUint8);
+  const bridgePass = bytesToHex(new Uint8Array(hashBuf));
+
+  const basic    = btoa(`${bridgeUser}:${bridgePass}`);
   const linkRes  = await robustFetch(`${INTERNXT_NETWORK}/buckets/${bucketId}/files/${fileId}/info`, {
-    headers: { 'x-api-version': '2', Authorization: `Basic ${basic}` },
+    headers: { ...INTERNXT_HEADERS, Authorization: `Basic ${basic}` },
   });
   if (!linkRes.ok) throw new Error(`Internxt network info HTTP ${linkRes.status}`);
   const linkInfo   = await linkRes.json();
@@ -448,7 +461,6 @@ export async function internxtDownloadFile(tokenData, fileUuid) {
 // Filen: file download (browser SubtleCrypto AES-256-GCM)
 // Mirrors server/routes/cloud-drives.js filenDownloadFile() for Node.js
 // ─────────────────────────────────────────────────────────────────────────────
-const FILEN_EGEST = 'https://egest.filen.io';
 
 /**
  * Download + decrypt a Filen file in the browser.
