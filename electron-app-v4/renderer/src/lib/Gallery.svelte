@@ -1,6 +1,6 @@
 <script>
-  import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags, galleryRefreshTick } from '../stores.js';
-  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, localThumb, fetchImageAsUrl } from '../api.js';
+  import { galleryImages, selectedId, thumbSize, galleryLoading, t, selectedItems, lastClickedId, filters, sidebarView, allAlbums, starRatings, colorFlags, galleryRefreshTick, clipboard } from '../stores.js';
+  import { thumbnailUrl, previewUrl, openInOs, openFolderInOs, deleteImage, downloadImage, addToAlbum, createAlbum, fetchAlbums, isLocalMode, localThumb, fetchImageAsUrl, copyFilesystem, moveFilesystem } from '../api.js';
 
   const localMode = isLocalMode();
   import { onMount, onDestroy, tick } from 'svelte';
@@ -194,6 +194,15 @@
       sidebarView.set('all');
     } else if (action === 'copy-path') {
       navigator.clipboard.writeText(item.filepath).catch(() => {});
+    } else if (action === 'copy-to-clipboard' || action === 'move-to-clipboard') {
+      const mode = action === 'copy-to-clipboard' ? 'copy' : 'move';
+      let itemsToCopy = [];
+      if ($selectedItems.has(item.id)) {
+        itemsToCopy = $galleryImages.filter(i => $selectedItems.has(i.id));
+      } else {
+        itemsToCopy = [item];
+      }
+      clipboard.set({ mode, items: itemsToCopy.map(it => ({ id: it.id, path: it.filepath, filename: it.filename })) });
     } else if (action === 'crop') {
       cropItem = item;
     } else if (action === 'adjust') {
@@ -202,6 +211,38 @@
       aiEditItem = item;
     } else if (action === 'convert') {
       convertIds = [item.id];
+    } else if (action === 'paste') {
+      handlePaste();
+    }
+  }
+
+  async function handlePaste() {
+    if (!$clipboard) return;
+    const { mode, items } = $clipboard;
+    // Default to currently browsed folder if available
+    let destDir = $filters.folder;
+    if (!destDir) {
+      destDir = prompt('Paste to directory (server path):');
+    }
+    if (!destDir) return;
+
+    try {
+      const paths = items.map(it => it.path || it.server_path);
+      let res;
+      if (mode === 'copy') {
+        res = await copyFilesystem(paths, destDir);
+      } else {
+        res = await moveFilesystem(paths, destDir);
+      }
+      
+      const successCount = res.results.filter(r => r.ok).length;
+      alert(`${mode === 'copy' ? 'Copied' : 'Moved'} ${successCount} of ${paths.length} items.`);
+      if (mode === 'move') {
+        clipboard.set(null);
+      }
+      galleryRefreshTick.update(n => n + 1);
+    } catch (e) {
+      alert('Paste failed: ' + e.message);
     }
   }
 

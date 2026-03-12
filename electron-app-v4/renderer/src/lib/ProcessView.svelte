@@ -951,56 +951,34 @@
            on:change={e => { addFiles(e.target.files); e.target.value = ''; }} />
   {/if}
 
-  <!-- Local base path (browser mode only — Electron has real paths) -->
-  {#if !inElectron}
-    <div class="base-path-row">
-      <label class="base-path-label" for="pv-base-path">{$t('pv_local_base_label')}</label>
-      <input id="pv-base-path" class="base-path-input" type="text" placeholder={$t('pv_local_base_placeholder')}
-             bind:value={localBasePath}
-             title={$t('pv_local_base_hint')} />
+  <!-- Top ingest bar: compact replacement for drop-zone and server-path-input -->
+  <div class="ingest-top-bar">
+    <div class="ingest-col main-actions">
+      <div class="action-buttons">
+        <button class="btn-sm" on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
+        <button class="btn-sm" on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
+        <span class="sep">//</span>
+        <button class="btn-sm" on:click={() => serverPickerOpen = true}>📡 {$t('pv_browse')}</button>
+        <input type="text" bind:value={batchFolder} placeholder={$t('pv_server_folder_ph')} class="batch-folder-input" />
+        {#if batchFolder.trim()}
+          <button class="primary btn-sm" on:click={createBatchJobAndNavigate} disabled={batchJobCreating}>
+            {batchJobCreating ? '…' : $t('pv_go')}
+          </button>
+        {/if}
+      </div>
     </div>
-  {/if}
-
-  <!-- Drop zone: local files (always visible) -->
-  <div
-    class="drop-zone"
-    class:drag-over={dragOver}
-    on:dragover={onDragOver}
-    on:dragleave={onDragLeave}
-    on:drop={onDrop}
-    role="region"
-    aria-label="Drop images here"
-  >
-    {#if localMode && isMobile}
-      <!-- Standalone Capacitor mode: photo library picker -->
-      <div class="drop-icon">📷</div>
-      <div class="drop-label">{$t('pv_local_pick_title')}</div>
-      <div class="drop-sub">{$t('pv_local_pick_sub')}</div>
-      <div class="drop-buttons">
-        <button class="primary" on:click={pickPhotosFromLibrary}>📷 {$t('pv_local_pick_btn')}</button>
-      </div>
-    {:else}
-      <div class="drop-icon">📂</div>
-      <div class="drop-label">
-        {dragOver ? $t('pv_drop_active') : $t('pv_drop_idle')}
-      </div>
-      <div class="drop-sub">{$t('pv_drop_sub')}</div>
-      <div class="drop-buttons">
-        <button on:click={pickFiles}>💻 {$t('pv_select_files')}</button>
-        <button on:click={pickFolder}>💻 {$t('pv_select_folder_btn')}</button>
-      </div>
-      {#if !inElectron}
-      <!-- Web / mobile local inference toggle -->
-      <div class="web-infer-row">
-        <label class="web-infer-label">
-          <input type="checkbox" bind:checked={webLocalInfer} />
-          🔬 {$t('pv_web_local_infer')}
-        </label>
-        <span class="hint" style="font-size:11px;margin:0;">{$t('pv_web_local_infer_hint')}</span>
-      </div>
-      {/if}
-    {/if}
+    <div class="ingest-col">
+      <label class="checkbox-row compact">
+        <input type="checkbox" bind:checked={batchRecursive} /> {$t('pv_subfolders')}
+      </label>
+    </div>
+    <div class="ingest-col">
+      <label class="checkbox-row compact">
+        <input type="checkbox" bind:checked={batchFollowSymlinks} /> {$t('pv_follow_symlinks')}
+      </label>
+    </div>
   </div>
+
   {#if webInferMsg}
     <div class="web-infer-progress">{webInferMsg}</div>
   {/if}
@@ -1030,7 +1008,7 @@
             disabled={pendingItems.length === 0 || running}
             title={$t('pv_process_direct_hint')}
           >
-            {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')} ({$t('pv_process_direct')})
+            {$t('pv_process_btn')} {pendingItems.length} {pendingItems.length !== 1 ? $t('pv_images') : $t('pv_image')}
           </button>
           <button
             class="act-btn start"
@@ -1056,36 +1034,74 @@
     </div>
   {/if}
 
-  <!-- Tag + Album pickers (file mode + folder mode) -->
-  <div class="meta-pickers">
-    <!-- Tag picker -->
-    <div class="picker-group">
-      <label class="picker-label">{$t('pv_tags_label')}</label>
-      <div class="picker-chips">
-        {#each selectedTags as tag}
-          <span class="chip">{tag.name}{#if tag.id === null} <em>+</em>{/if}
-            <button class="chip-remove" on:click={() => removeTag(tag.name)}>✕</button>
-          </span>
-        {/each}
-        <div class="picker-input-wrap" style="position:relative">
-          <input
-            type="text"
-            class="picker-input"
-            placeholder={$t('pv_tags_placeholder')}
-            bind:value={tagInput}
-            on:focus={() => tagDropdownOpen = true}
-            on:blur={() => setTimeout(() => tagDropdownOpen = false, 150)}
-            on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredTags.length ? addTag(filteredTags[0]) : addNewTag(); } }}
-          />
-          {#if tagDropdownOpen && tagInput.trim()}
-            <div class="picker-dropdown">
-              {#each filteredTags as tag}
-                <button class="picker-option" on:mousedown|preventDefault={() => addTag(tag)}>{tag.name}</button>
-              {/each}
-              {#if !filteredTags.find(tag => tag.name.toLowerCase() === tagInput.trim().toLowerCase())}
-                <button class="picker-option new-item" on:mousedown|preventDefault={addNewTag}>
-                  {$t('pv_album_new_prefix')} <strong>{tagInput.trim()}</strong>
-                </button>
+  <!-- Tag + Album + Creator + Copyright grid -->
+  <div class="meta-pickers-grid">
+    <div class="meta-col">
+      <!-- Tag picker -->
+      <div class="picker-group">
+        <label class="picker-label">{$t('pv_tags_label')}</label>
+        <div class="picker-chips">
+          {#each selectedTags as tag}
+            <span class="chip">{tag.name}{#if tag.id === null} <em>+</em>{/if}
+              <button class="chip-remove" on:click={() => removeTag(tag.name)}>✕</button>
+            </span>
+          {/each}
+          <div class="picker-input-wrap" style="position:relative">
+            <input
+              type="text"
+              class="picker-input"
+              placeholder={$t('pv_tags_placeholder')}
+              bind:value={tagInput}
+              on:focus={() => tagDropdownOpen = true}
+              on:blur={() => setTimeout(() => tagDropdownOpen = false, 150)}
+              on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredTags.length ? addTag(filteredTags[0]) : addNewTag(); } }}
+            />
+            {#if tagDropdownOpen && tagInput.trim()}
+              <div class="picker-dropdown">
+                {#each filteredTags as tag}
+                  <button class="picker-option" on:mousedown|preventDefault={() => addTag(tag)}>{tag.name}</button>
+                {/each}
+                {#if !filteredTags.find(tag => tag.name.toLowerCase() === tagInput.trim().toLowerCase())}
+                  <button class="picker-option new-item" on:mousedown|preventDefault={addNewTag}>
+                    {$t('pv_album_new_prefix')} <strong>{tagInput.trim()}</strong>
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      <!-- Album picker (single selection) -->
+      <div class="picker-group">
+        <label class="picker-label">{$t('pv_album_label')}</label>
+        <div class="picker-chips">
+          {#if selectedAlbum}
+            <span class="chip">{selectedAlbum.name}{#if selectedAlbum.id === null} <em>+</em>{/if}
+              <button class="chip-remove" on:click={clearAlbum}>✕</button>
+            </span>
+          {:else}
+            <div class="picker-input-wrap" style="position:relative">
+              <input
+                type="text"
+                class="picker-input"
+                placeholder={$t('pv_album_placeholder')}
+                bind:value={albumInput}
+                on:focus={() => albumDropdownOpen = true}
+                on:blur={() => setTimeout(() => albumDropdownOpen = false, 150)}
+                on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredAlbums.length ? selectAlbum(filteredAlbums[0]) : setNewAlbum(); } }}
+              />
+              {#if albumDropdownOpen && albumInput.trim()}
+                <div class="picker-dropdown">
+                  {#each filteredAlbums as album}
+                    <button class="picker-option" on:mousedown|preventDefault={() => selectAlbum(album)}>{album.name}</button>
+                  {/each}
+                  {#if !filteredAlbums.find(a => a.name.toLowerCase() === albumInput.trim().toLowerCase())}
+                    <button class="picker-option new-item" on:mousedown|preventDefault={setNewAlbum}>
+                      {$t('pv_album_new_prefix')} <strong>{albumInput.trim()}</strong>
+                    </button>
+                  {/if}
+                </div>
               {/if}
             </div>
           {/if}
@@ -1093,110 +1109,51 @@
       </div>
     </div>
 
-    <!-- Album picker (single selection) -->
-    <div class="picker-group">
-      <label class="picker-label">{$t('pv_album_label')}</label>
-      <div class="picker-chips">
-        {#if selectedAlbum}
-          <span class="chip">{selectedAlbum.name}{#if selectedAlbum.id === null} <em>+</em>{/if}
-            <button class="chip-remove" on:click={clearAlbum}>✕</button>
-          </span>
-        {:else}
-          <div class="picker-input-wrap" style="position:relative">
-            <input
-              type="text"
-              class="picker-input"
-              placeholder={$t('pv_album_placeholder')}
-              bind:value={albumInput}
-              on:focus={() => albumDropdownOpen = true}
-              on:blur={() => setTimeout(() => albumDropdownOpen = false, 150)}
-              on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); filteredAlbums.length ? selectAlbum(filteredAlbums[0]) : setNewAlbum(); } }}
-            />
-            {#if albumDropdownOpen && albumInput.trim()}
-              <div class="picker-dropdown">
-                {#each filteredAlbums as album}
-                  <button class="picker-option" on:mousedown|preventDefault={() => selectAlbum(album)}>{album.name}</button>
-                {/each}
-                {#if !filteredAlbums.find(a => a.name.toLowerCase() === albumInput.trim().toLowerCase())}
-                  <button class="picker-option new-item" on:mousedown|preventDefault={setNewAlbum}>
-                    {$t('pv_album_new_prefix')} <strong>{albumInput.trim()}</strong>
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
+    <div class="meta-col">
+      <!-- Creator picker -->
+      <div class="picker-group">
+        <label class="picker-label">{$t('pv_creator_label')}</label>
+        <div class="picker-input-wrap" style="position:relative;flex:1">
+          <input
+            type="text"
+            class="picker-input"
+            placeholder={$t('pv_creator_placeholder')}
+            bind:value={creatorInput}
+            on:focus={() => creatorDropdownOpen = true}
+            on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
+          />
+          {#if creatorDropdownOpen && filteredCreators.length}
+            <div class="picker-dropdown">
+              {#each filteredCreators as c}
+                <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Copyright picker -->
+      <div class="picker-group">
+        <label class="picker-label">{$t('pv_copyright_label')}</label>
+        <div class="picker-input-wrap" style="position:relative;flex:1">
+          <input
+            type="text"
+            class="picker-input"
+            placeholder={$t('pv_copyright_placeholder')}
+            bind:value={copyrightInput}
+            on:focus={() => copyrightDropdownOpen = true}
+            on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}
+          />
+          {#if copyrightDropdownOpen && filteredCopyrights.length}
+            <div class="picker-dropdown">
+              {#each filteredCopyrights as c}
+                <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
-
-    <!-- Creator picker (always-visible input with autocomplete) -->
-    <div class="picker-group">
-      <label class="picker-label">{$t('pv_creator_label')}</label>
-      <div class="picker-input-wrap" style="position:relative;flex:1">
-        <input
-          type="text"
-          class="picker-input"
-          placeholder={$t('pv_creator_placeholder')}
-          bind:value={creatorInput}
-          on:focus={() => creatorDropdownOpen = true}
-          on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
-        />
-        {#if creatorDropdownOpen && filteredCreators.length}
-          <div class="picker-dropdown">
-            {#each filteredCreators as c}
-              <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </div>
-
-    <!-- Copyright picker (always-visible input with autocomplete) -->
-    <div class="picker-group">
-      <label class="picker-label">{$t('pv_copyright_label')}</label>
-      <div class="picker-input-wrap" style="position:relative;flex:1">
-        <input
-          type="text"
-          class="picker-input"
-          placeholder={$t('pv_copyright_placeholder')}
-          bind:value={copyrightInput}
-          on:focus={() => copyrightDropdownOpen = true}
-          on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}
-        />
-        {#if copyrightDropdownOpen && filteredCopyrights.length}
-          <div class="picker-dropdown">
-            {#each filteredCopyrights as c}
-              <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </div>
-  </div>
-
-  <!-- Server folder section: creates persistent batch job -->
-  <div class="server-path-input">
-    <span class="server-path-label">📡 {$t('pv_server_folder_label')}</span>
-    <div class="server-path-row">
-      <input type="text" bind:value={batchFolder} placeholder={$t('pv_server_folder_ph')} class="flex1" />
-      <button on:click={() => serverPickerOpen = true} title="Browse server filesystem">{$t('pv_browse')}</button>
-    </div>
-    <div class="server-folder-row2">
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={batchRecursive} /> {$t('pv_subfolders')}
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={batchFollowSymlinks} /> {$t('pv_follow_symlinks')}
-      </label>
-      {#if batchFolder.trim()}
-        <button class="primary" on:click={createBatchJobAndNavigate} disabled={batchJobCreating}>
-          {batchJobCreating ? $t('bj_enum_started') : $t('pv_submit_batch_job')}
-        </button>
-      {/if}
-    </div>
-    {#if batchJobError}
-      <div class="batch-job-error">{batchJobError}</div>
-    {/if}
   </div>
 
   <!-- Detection settings (collapsible) -->
@@ -1211,6 +1168,16 @@
     </div>
     {#if showDetParams}
       <div class="det-params-box">
+        <!-- Local base path (moved here) -->
+        {#if !inElectron}
+          <div class="det-param-row">
+            <label>{$t('pv_local_base_label')}:</label>
+            <input class="picker-input" type="text" placeholder={$t('pv_local_base_placeholder')}
+                   bind:value={localBasePath}
+                   title={$t('pv_local_base_hint')} />
+          </div>
+        {/if}
+
         <!-- Skip toggles at the top — affect which pipelines run -->
         <div class="det-skip-row">
           <label class="skip-check">
@@ -1385,20 +1352,96 @@
   .mode-badge.upload { background: #2a2010; color: #c09040; }
   .mode-badge.local  { background: #1a2a1a; color: #60c060; }
   .mode-badge.mobile { background: #1a1a3a; color: #8080e0; }
-  .web-infer-row { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; align-items: flex-start; }
-  .web-infer-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; color: #a0b0d0; }
-  .web-infer-label input[type=checkbox] { cursor: pointer; }
-  .web-infer-progress { font-size: 12px; color: #8080c0; padding: 4px 8px; background: #12122a; border-radius: 4px; margin-top: 4px; }
-  .server-path-input {
-    display: flex; flex-direction: column; gap: 8px;
-    background: #141422; border: 1px solid #2a2a3a; border-radius: 8px;
-    padding: 10px 14px; flex-shrink: 0;
+
+  /* ── Ingest top bar ── */
+  .ingest-top-bar {
+    display: flex;
+    gap: 12px;
+    background: #1a1a2e;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+    flex-shrink: 0;
   }
-  .server-path-label { font-size: 12px; color: #6080a0; white-space: nowrap; }
-  .server-path-row { display: flex; gap: 6px; align-items: center; }
-  .server-path-row .flex1 { flex: 1; }
-  .server-path-input input { flex: 1; }
-  .server-folder-row2 { display: flex; gap: 10px; align-items: center; }
+  .ingest-col {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ingest-col.main-actions { flex: 1; min-width: 300px; }
+  .action-buttons { display: flex; align-items: center; gap: 6px; width: 100%; }
+  .sep { color: #404060; font-size: 11px; margin: 0 2px; }
+  .batch-folder-input {
+    flex: 1;
+    font-size: 11px;
+    padding: 3px 8px;
+    background: #0e0e1e;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    color: #c0c8e0;
+  }
+  .checkbox-row.compact { font-size: 11px; margin: 0; color: #8090b8; white-space: nowrap; }
+
+  /* ── Meta pickers grid ── */
+  .meta-pickers-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    background: #141422;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  .meta-col { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── Progress ── */
+  .progress-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .progress-bar-wrap {
+    height: 6px;
+    background: #2a2a42;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: #5080c0;
+    border-radius: 3px;
+    transition: width 0.25s;
+  }
+  .progress-label {
+    font-size: 11px;
+    color: #6080a0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .progress-label .pct { margin-left: auto; color: #5070a0; }
+  .err-count    { color: #d07070; }
+  .queued-count { color: #d0a030; }
+  .skip-count   { color: #8090b0; }
+  .shared-count { color: #b09040; }
+
+  /* ── Controls bar ── */
+  .controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #1a1a28;
+    border: 1px solid #2a2a3a;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .queue-count { font-size: 12px; color: #8090a8; flex: 1; }
 
   /* ── Detection settings ── */
   .det-settings {
@@ -1436,38 +1479,6 @@
   }
   .det-param-row .hint { font-size: 10px; color: #505070; margin-left: 4px; }
 
-  /* ── Local base path (browser mode) ── */
-  .base-path-row {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 8px; padding: 6px 10px;
-    background: #1a1a2e; border-radius: 6px; border: 1px solid #2a2a42;
-  }
-  .base-path-label { font-size: 11px; color: #7080a0; white-space: nowrap; }
-  .base-path-input {
-    flex: 1; font-size: 11px; padding: 3px 8px;
-    background: #12121e; border: 1px solid #3a3a5a; border-radius: 4px; color: #c0c8e0;
-  }
-  .base-path-input::placeholder { color: #3a3a58; }
-
-  /* ── Drop zone ── */
-  .drop-zone {
-    border: 2px dashed #3a3a5a;
-    border-radius: 8px;
-    padding: 24px 16px;
-    text-align: center;
-    transition: border-color 0.15s, background 0.15s;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-  }
-  .drop-zone.drag-over { border-color: #6080c0; background: #1a2040; }
-  .drop-icon { font-size: 28px; line-height: 1; }
-  .drop-label { font-size: 13px; color: #8090b0; font-weight: 500; }
-  .drop-sub   { font-size: 11px; color: #505070; }
-  .drop-buttons { display: flex; gap: 8px; margin-top: 4px; }
-
   .vis-select { font-size: 11px; padding: 3px 6px; width: 90px; }
 
   .proc-btn-group {
@@ -1483,51 +1494,86 @@
     white-space: nowrap;
   }
 
-  /* ── Controls bar ── */
-  .controls-bar {
+  /* ── Picker elements ── */
+  .picker-group {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: #1a1a28;
-    border: 1px solid #2a2a3a;
-    border-radius: 6px;
-    flex-shrink: 0;
+    align-items: flex-start;
+    gap: 8px;
   }
-  .queue-count { font-size: 12px; color: #8090a8; flex: 1; }
-.checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8090a8; cursor: pointer; }
-
-  /* ── Progress ── */
-  .progress-section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-  .progress-bar-wrap {
-    height: 6px;
-    background: #2a2a42;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .progress-bar {
-    height: 100%;
-    background: #5080c0;
-    border-radius: 3px;
-    transition: width 0.25s;
-  }
-  .progress-label {
+  .picker-label {
     font-size: 11px;
     color: #6080a0;
+    white-space: nowrap;
+    padding-top: 4px;
+    min-width: 50px;
+  }
+  .picker-chips {
     display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    flex: 1;
+    align-items: center;
+  }
+  .chip {
+    display: inline-flex;
     align-items: center;
     gap: 4px;
+    background: #1e2e50;
+    color: #7090d0;
+    border-radius: 12px;
+    padding: 2px 8px 2px 10px;
+    font-size: 11px;
+    white-space: nowrap;
   }
-  .progress-label .pct { margin-left: auto; color: #5070a0; }
-  .err-count    { color: #d07070; }
-  .queued-count { color: #d0a030; }
-  .skip-count   { color: #8090b0; }
-  .shared-count { color: #b09040; }
+  .chip em { color: #50a050; font-style: normal; font-size: 10px; }
+  .chip-remove {
+    background: none;
+    border: none;
+    color: #507090;
+    font-size: 9px;
+    padding: 0 2px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .chip-remove:hover { color: #c05050; }
+  .picker-input-wrap { flex: 1; min-width: 130px; }
+  .picker-input {
+    width: 100%;
+    font-size: 11px;
+    padding: 3px 8px;
+    background: #0e0e1e;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    color: #c0c8e0;
+    box-sizing: border-box;
+  }
+  .picker-input::placeholder { color: #3a3a58; }
+  .picker-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    z-index: 50;
+    max-height: 160px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .picker-option {
+    background: none;
+    border: none;
+    text-align: left;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: #b0b8d0;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  .picker-option:hover { background: #252540; }
+  .picker-option.new-item { color: #50a050; border-top: 1px solid #2a2a42; }
 
   /* ── Results list ── */
   .results-list {
@@ -1682,97 +1728,6 @@
     border: 1px solid;
   }
   .act-btn.start  { background: #1e3a1e; border-color: #3a6a3a; color: #70c070; }
-
-  /* ── Tag + Album pickers ── */
-  .meta-pickers {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    background: #141422;
-    border: 1px solid #2a2a3a;
-    border-radius: 8px;
-    padding: 10px 14px;
-    flex-shrink: 0;
-  }
-  .picker-group {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .picker-label {
-    font-size: 11px;
-    color: #6080a0;
-    white-space: nowrap;
-    padding-top: 4px;
-    min-width: 50px;
-  }
-  .picker-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    flex: 1;
-    align-items: center;
-  }
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: #1e2e50;
-    color: #7090d0;
-    border-radius: 12px;
-    padding: 2px 8px 2px 10px;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .chip em { color: #50a050; font-style: normal; font-size: 10px; }
-  .chip-remove {
-    background: none;
-    border: none;
-    color: #507090;
-    font-size: 9px;
-    padding: 0 2px;
-    cursor: pointer;
-    line-height: 1;
-  }
-  .chip-remove:hover { color: #c05050; }
-  .picker-input-wrap { flex: 1; min-width: 130px; }
-  .picker-input {
-    width: 100%;
-    font-size: 11px;
-    padding: 3px 8px;
-    background: #0e0e1e;
-    border: 1px solid #3a3a5a;
-    border-radius: 4px;
-    color: #c0c8e0;
-    box-sizing: border-box;
-  }
-  .picker-input::placeholder { color: #3a3a58; }
-  .picker-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: #1a1a2e;
-    border: 1px solid #3a3a5a;
-    border-radius: 4px;
-    z-index: 50;
-    max-height: 160px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-  }
-  .picker-option {
-    background: none;
-    border: none;
-    text-align: left;
-    padding: 5px 10px;
-    font-size: 11px;
-    color: #b0b8d0;
-    cursor: pointer;
-    border-radius: 0;
-  }
-  .picker-option:hover { background: #252540; }
-  .picker-option.new-item { color: #50a050; border-top: 1px solid #2a2a42; }
 
   .det-skip-row {
     display: flex;

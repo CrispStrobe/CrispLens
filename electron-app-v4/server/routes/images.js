@@ -80,6 +80,7 @@ router.get('/', requireAuth, (req, res) => {
     person = '', tag = '', scene = '', folder = '', path: pathQ = '',
     date_from = '', date_to = '', sort = 'newest',
     limit = 200, offset = 0, unidentified = 'false', album = 0,
+    creator = '', search_fields = '',
   } = req.query;
 
   let where = [];
@@ -110,9 +111,29 @@ router.get('/', requireAuth, (req, res) => {
     where.push('(LOWER(i.filepath) LIKE LOWER(?) OR LOWER(i.local_path) LIKE LOWER(?))');
     params.push(`%${folder}%`, `%${folder}%`);
   }
+  if (creator) {
+    where.push('LOWER(i.creator) LIKE LOWER(?)');
+    params.push(`%${creator}%`);
+  }
   if (pathQ) {
-    where.push('(LOWER(i.filepath) LIKE LOWER(?) OR LOWER(i.filename) LIKE LOWER(?))');
-    params.push(`%${pathQ}%`, `%${pathQ}%`);
+    const fields = (search_fields || 'filename,path,description').split(',');
+    const fieldWhere = [];
+    const fieldParams = [];
+    for (const f of fields) {
+      if (f === 'filename')    { fieldWhere.push('LOWER(i.filename) LIKE LOWER(?)'); fieldParams.push(`%${pathQ}%`); }
+      else if (f === 'path')   { fieldWhere.push('(LOWER(i.filepath) LIKE LOWER(?) OR LOWER(i.local_path) LIKE LOWER(?))'); fieldParams.push(`%${pathQ}%`, `%${pathQ}%`); }
+      else if (f === 'description') { fieldWhere.push('LOWER(i.ai_description) LIKE LOWER(?)'); fieldParams.push(`%${pathQ}%`); }
+      else if (f === 'creator')     { fieldWhere.push('LOWER(i.creator) LIKE LOWER(?)'); fieldParams.push(`%${pathQ}%`); }
+      else if (f === 'copyright')   { fieldWhere.push('LOWER(i.copyright) LIKE LOWER(?)'); fieldParams.push(`%${pathQ}%`); }
+    }
+    
+    if (fieldWhere.length) {
+      where.push(`(${fieldWhere.join(' OR ')})`);
+      params.push(...fieldParams);
+    } else {
+      where.push('(LOWER(i.filepath) LIKE LOWER(?) OR LOWER(i.filename) LIKE LOWER(?))');
+      params.push(`%${pathQ}%`, `%${pathQ}%`);
+    }
   }
   if (date_from) { where.push('i.taken_at >= ?'); params.push(date_from); }
   if (date_to)   { where.push('i.taken_at <= ?'); params.push(date_to); }

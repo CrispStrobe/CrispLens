@@ -1,10 +1,22 @@
 <script>
-  import { filters, sortBy, thumbSize, galleryImages, galleryLoading, activeFilterCount, sidebarView, galleryMode, t, currentUser, galleryRefreshTick } from '../stores.js';
-  import { fetchImages } from '../api.js';
+  import { filters, sortBy, thumbSize, galleryImages, galleryLoading, activeFilterCount, sidebarView, galleryMode, t, currentUser, galleryRefreshTick, clipboard } from '../stores.js';
+  import { fetchImages, copyFilesystem, moveFilesystem } from '../api.js';
   import { onMount, onDestroy } from 'svelte';
 
   let searchQuery = '';
   let pathQuery = '';
+  let creatorQuery = '';
+  let showSearchOpts = false;
+
+  $: searchFieldsArr = ($filters.searchFields || 'filename,path,description').split(',');
+  function toggleSearchField(f) {
+    filters.update(cur => {
+      let arr = (cur.searchFields || '').split(',').filter(Boolean);
+      if (arr.includes(f)) arr = arr.filter(x => x !== f);
+      else arr.push(f);
+      return { ...cur, searchFields: arr.join(',') };
+    });
+  }
 
   $: sortOptions = [
     { value: 'newest',          label: $t('sort_newest') },
@@ -28,6 +40,8 @@
         path:     f.path,
         dateFrom: f.dateFrom,
         dateTo:   f.dateTo,
+        creator:  f.creator,
+        search_fields: f.searchFields,
         sort:     s,
         limit:    500,
       });
@@ -49,11 +63,39 @@
   // Update filter stores; subscriptions below handle the reload
   function onSearch()     { filters.update(f => ({ ...f, person: searchQuery })); }
   function onPathSearch() { filters.update(f => ({ ...f, path:   pathQuery   })); }
+  function onCreatorSearch() { filters.update(f => ({ ...f, creator: creatorQuery })); }
 
   function clearFilters() {
     searchQuery = '';
     pathQuery   = '';
-    filters.set({ person: '', tag: '', scene: '', folder: '', path: '', dateFrom: '', dateTo: '' });
+    creatorQuery = '';
+    filters.set({ person: '', tag: '', scene: '', folder: '', path: '', dateFrom: '', dateTo: '', creator: '', searchFields: 'filename,path,description' });
+  }
+
+  async function handlePaste() {
+    if (!$clipboard) return;
+    const { mode, items } = $clipboard;
+    const destDir = prompt('Paste to directory (server path):');
+    if (!destDir) return;
+
+    try {
+      const paths = items.map(it => it.path || it.server_path);
+      let res;
+      if (mode === 'copy') {
+        res = await copyFilesystem(paths, destDir);
+      } else {
+        res = await moveFilesystem(paths, destDir);
+      }
+      
+      const successCount = res.results.filter(r => r.ok).length;
+      alert(`${mode === 'copy' ? 'Copied' : 'Moved'} ${successCount} of ${paths.length} items.`);
+      if (mode === 'move') {
+        clipboard.set(null);
+        galleryRefreshTick.update(n => n + 1);
+      }
+    } catch (e) {
+      alert('Paste failed: ' + e.message);
+    }
   }
 
   let unsubFilters, unsubSort, unsubUser, unsubTick;
@@ -62,9 +104,6 @@
     // Single authoritative initial load (may fail with 401 if not yet logged in — that's fine)
     loadGallery();
 
-    // Subscribe AFTER the initial load to avoid a duplicate immediate call.
-    // Svelte store.subscribe fires synchronously with the current value —
-    // skip that first emission with the `first` flag.
     let fFirst = true;
     unsubFilters = filters.subscribe(() => {
       if (fFirst) { fFirst = false; return; }
@@ -77,7 +116,6 @@
       scheduleLoad(0);     // sort change is immediate
     });
 
-    // Reload gallery when the user logs in (currentUser goes from null → object)
     let uFirst = true;
     unsubUser = currentUser.subscribe(u => {
       if (uFirst) { uFirst = false; return; }
@@ -85,7 +123,6 @@
       else galleryImages.set([]);  // logged out → clear
     });
 
-    // Reload gallery when an upload/ingest completes
     let tFirst = true;
     unsubTick = galleryRefreshTick.subscribe(() => {
       if (tFirst) { tFirst = false; return; }
@@ -107,28 +144,57 @@
 
   <button on:click={loadGallery} title={$t('refresh')}>🔄</button>
 
-  <!-- Search -->
+  <!-- Person Search -->
   <input
     class="search"
     type="search"
-    placeholder="{$t('search_name')}"
+    placeholder="{$t('tab_people')}…"
     bind:value={searchQuery}
     on:input={onSearch}
     list="people-list"
   />
 
+  <!-- Creator Search -->
   <input
-    class="search path-filter"
+    class="search creator-filter"
     type="search"
-    placeholder="Filename / Path / Description…"
-    bind:value={pathQuery}
-    on:input={onPathSearch}
+    placeholder="{$t('tab_creators')}…"
+    bind:value={creatorQuery}
+    on:input={onCreatorSearch}
   />
+
+  <!-- Path / Text Search -->
+  <div class="search-wrap">
+    <input
+      class="search path-filter"
+      type="search"
+      placeholder="{$t('tab_search')}…"
+      bind:value={pathQuery}
+      on:input={onPathSearch}
+    />
+    <button class="search-opts-btn" on:click={() => showSearchOpts = !showSearchOpts} title="Search Options">
+      {showSearchOpts ? '▴' : '▾'}
+    </button>
+    {#if showSearchOpts}
+      <div class="search-opts-dropdown">
+        <div class="opt-label">Search in:</div>
+        <label><input type="checkbox" checked={searchFieldsArr.includes('filename')} on:change={() => toggleSearchField('filename')} /> Filename</label>
+        <label><input type="checkbox" checked={searchFieldsArr.includes('path')} on:change={() => toggleSearchField('path')} /> Path</label>
+        <label><input type="checkbox" checked={searchFieldsArr.includes('description')} on:change={() => toggleSearchField('description')} /> AI Description</label>
+        <label><input type="checkbox" checked={searchFieldsArr.includes('creator')} on:change={() => toggleSearchField('creator')} /> Creator</label>
+        <label><input type="checkbox" checked={searchFieldsArr.includes('copyright')} on:change={() => toggleSearchField('copyright')} /> Copyright</label>
+      </div>
+    {/if}
+  </div>
 
   <div class="mode-switch" title="View mode">
     <button class:active={$galleryMode === 'grid'} on:click={() => galleryMode.set('grid')} title="Grid view">⊞</button>
     <button class:active={$galleryMode === 'table'} on:click={() => galleryMode.set('table')} title="List view">☰</button>
   </div>
+
+  {#if $clipboard}
+    <button class="primary" on:click={handlePaste}>📋 Paste ({$clipboard.items.length})</button>
+  {/if}
 
   <!-- Sort -->
   <select bind:value={$sortBy}>
@@ -171,15 +237,60 @@
   .brand { font-size: 18px; flex-shrink: 0; }
   .search {
     flex: 1;
-    max-width: 240px;
+    max-width: 160px;
     padding: 5px 10px;
     border-radius: 16px;
+  }
+  .creator-filter {
+    max-width: 120px;
+    background: #1a2a1a;
+    border-color: #2a4a2a;
   }
   .path-filter {
     max-width: 180px;
     background: #1a1a2a;
     border-color: #2a2a4a;
+    border-radius: 16px 0 0 16px;
   }
+  .search-wrap { display: flex; align-items: center; position: relative; }
+  .search-opts-btn {
+    background: #1a1a2a;
+    border: 1px solid #2a2a4a;
+    border-left: none;
+    border-radius: 0 16px 16px 0;
+    padding: 4px 8px;
+    color: #6080a0;
+    font-size: 10px;
+    height: 27px;
+    cursor: pointer;
+  }
+  .search-opts-btn:hover { background: #2a2a42; color: #a0c4ff; }
+  .search-opts-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    border-radius: 8px;
+    padding: 10px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 140px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    margin-top: 4px;
+  }
+  .search-opts-dropdown label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #b0b8d0;
+    cursor: pointer;
+  }
+  .search-opts-dropdown .opt-label { font-size: 10px; color: #506080; text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
+
   .mode-switch {
     display: flex;
     background: #2a2a42;

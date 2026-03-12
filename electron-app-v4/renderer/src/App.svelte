@@ -15,6 +15,7 @@
   import Lightbox    from './lib/Lightbox.svelte';
   import PeopleView  from './lib/PeopleView.svelte';
   import TagsView    from './lib/TagsView.svelte';
+  import CreatorsView from './lib/CreatorsView.svelte';
   import DatesView   from './lib/DatesView.svelte';
   import FoldersView from './lib/FoldersView.svelte';
   import ProcessView from './lib/ProcessView.svelte';
@@ -452,6 +453,8 @@
         <PeopleView />
       {:else if view === 'tags'}
         <TagsView />
+      {:else if view === 'creators'}
+        <CreatorsView />
       {:else if view === 'dates'}
         <DatesView />
       {:else if view === 'folders'}

@@ -101,6 +101,17 @@ router.get('/tags/stats', requireAuth, (req, res) => {
   `).all());
 });
 
+router.get('/creators/stats', requireAuth, (req, res) => {
+  const db = getDb();
+  res.json(db.prepare(`
+    SELECT creator AS name, COUNT(*) AS count
+    FROM images
+    WHERE creator IS NOT NULL AND creator != ''
+    GROUP BY creator
+    ORDER BY count DESC
+  `).all());
+});
+
 router.post('/tags', requireAuth, (req, res) => {
   const db = getDb();
   const { name, color } = req.body || {};
@@ -476,11 +487,23 @@ router.post('/filesystem/copy', requireAuth, (req, res) => {
       return res.status(400).json({ detail: `Cannot create dest_dir: ${e.message}` });
     }
   }
+  
+  // Basic write permission check
+  try {
+    fs.accessSync(dest_dir, fs.constants.W_OK);
+  } catch (e) {
+    return res.status(403).json({ detail: `No write permission for ${dest_dir}` });
+  }
+
   const results = [];
   for (const src of paths) {
     if (!fs.existsSync(src)) { results.push({ src, ok: false, error: 'not found' }); continue; }
     try {
       const dest = path.join(dest_dir, path.basename(src));
+      if (fs.existsSync(dest)) {
+        results.push({ src, ok: false, error: 'file already exists at destination (overwrite blocked)' });
+        continue;
+      }
       fs.copyFileSync(src, dest);
       results.push({ src, dest, ok: true });
     } catch (e) {
@@ -500,12 +523,24 @@ router.post('/filesystem/move', requireAuth, (req, res) => {
       return res.status(400).json({ detail: `Cannot create dest_dir: ${e.message}` });
     }
   }
+
+  // Basic write permission check
+  try {
+    fs.accessSync(dest_dir, fs.constants.W_OK);
+  } catch (e) {
+    return res.status(403).json({ detail: `No write permission for ${dest_dir}` });
+  }
+
   const db = require('../db').getDb();
   const results = [];
   for (const src of paths) {
     if (!fs.existsSync(src)) { results.push({ src, ok: false, error: 'not found' }); continue; }
     try {
       const dest = path.join(dest_dir, path.basename(src));
+      if (fs.existsSync(dest)) {
+        results.push({ src, ok: false, error: 'file already exists at destination (overwrite blocked)' });
+        continue;
+      }
       fs.renameSync(src, dest);
       // Update DB if this file is tracked
       db.prepare('UPDATE images SET filepath=?, local_path=? WHERE filepath=?').run(dest, dest, src);

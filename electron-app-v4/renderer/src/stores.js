@@ -20,6 +20,8 @@ export const filters = writable({
   path:     '',
   dateFrom: '',
   dateTo:   '',
+  creator:  '',
+  searchFields: 'filename,path,description', // default fields to include in text search
 });
 export const sortBy   = writable('newest');  // newest | oldest | date_taken_desc | ...
 export const thumbSize = writable(200);       // px; drives CSS var + API size param
@@ -28,6 +30,11 @@ export const thumbSize = writable(200);       // px; drives CSS var + API size p
 // 'all' | 'people' | 'tags' | 'dates' | 'process' | 'train' | 'settings'
 export const sidebarView = writable('all');
 export const sidebarCollapsed = writable(false);  // icon-only mode for small screens
+export const importCollapsed  = writable(false);  // collapsable IMPORT section
+
+// ── Clipboard ───────────────────────────────────────────────────────────────
+// { mode: 'copy' | 'move', items: [ { id, path, filename } ] }
+export const clipboard = writable(null);
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const currentUser = writable(null);   // { username, role } | null
@@ -58,7 +65,8 @@ const EN = {
   tab_recognize: 'Recognize', tab_train: 'Train', tab_people: 'People',
   tab_tags: 'Tags', tab_search: 'Search', tab_browse: 'Browse',
   tab_batch: 'Batch Process', tab_stats: 'Statistics', tab_settings: 'Settings',
-  tab_admin: 'Admin', tab_benchmark: 'Benchmark', tab_benchmark: 'Benchmark', tab_export: 'Export', tab_timeline: 'Timeline', tab_folders: 'Folders',
+  tab_admin: 'Admin', tab_benchmark: 'Benchmark', tab_export: 'Export', tab_timeline: 'Timeline', tab_folders: 'Folders',
+  tab_creators: 'Creators', more_details: 'More details', fields: 'Fields',
   upload_image: 'Upload Image', upload_multiple: 'Upload Multiple Images',
   process_image: 'Process Image', processing: 'Processing...', detection_results: 'Detection Results',
   total_faces: 'Total Faces', known_people: 'Known People', unknown_people: 'Unknown People',
@@ -649,7 +657,8 @@ export const TRANSLATIONS = {
     tab_recognize: 'Erkennen', tab_train: 'Trainieren', tab_people: 'Personen',
     tab_tags: 'Tags', tab_search: 'Suchen', tab_browse: 'Durchsuchen',
     tab_batch: 'Stapelverarbeitung', tab_stats: 'Statistiken', tab_settings: 'Einstellungen',
-    tab_admin: 'Admin', tab_benchmark: 'Benchmark', tab_benchmark: 'Benchmark', tab_export: 'Export', tab_timeline: 'Zeitleiste', tab_folders: 'Ordner',
+    tab_admin: 'Admin', tab_benchmark: 'Benchmark', tab_export: 'Export', tab_timeline: 'Zeitleiste', tab_folders: 'Ordner',
+    tab_creators: 'Urheber', more_details: 'Mehr Details', fields: 'FELDER',
     upload_image: 'Bild hochladen', upload_multiple: 'Mehrere Bilder hochladen',
     process_image: 'Bild verarbeiten', processing: 'Verarbeitung...', detection_results: 'Erkennungsergebnisse',
     total_faces: 'Gesichter gesamt', known_people: 'Bekannte Personen', unknown_people: 'Unbekannte Personen',

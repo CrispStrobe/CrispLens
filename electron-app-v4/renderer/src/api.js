@@ -320,9 +320,11 @@ export async function fetchImages(params = {}) {
   if (g) return g;
 
   const { person='', tag='', scene='', folder='', path='', dateFrom='', dateTo='',
-          sort='newest', limit=200, offset=0, unidentified=false, album=0 } = params;
+          sort='newest', limit=200, offset=0, unidentified=false, album=0,
+          creator='', search_fields='' } = params;
   const q = new URLSearchParams({ person, tag, scene, folder, path, date_from: dateFrom,
-                                   date_to: dateTo, sort, limit, offset, unidentified, album });
+                                   date_to: dateTo, sort, limit, offset, unidentified, album,
+                                   creator, search_fields });
   try {
     const data = await get(`/images?${q}`);
     const images = Array.isArray(data) ? data : (data.images ?? []);
@@ -753,11 +755,17 @@ export function fetchTags() {
   if (g) return g;
   return get('/tags');
 }
-export function fetchTagsStats()  {
-  const g = _guard('fetchTagsStats', () => localAdapter.getTags());
+export function fetchTagsStats() {
+  const g = _guard('fetchTagsStats', () => localAdapter.getTagsStats());
   if (g) return g;
   return get('/tags/stats');
 }
+export function fetchCreatorsStats() {
+  const g = _guard('fetchCreatorsStats', () => []); // not implemented locally yet
+  if (g) return g;
+  return get('/creators/stats');
+}
+
 export function fetchDatesStats() {
   const g = _guard('fetchDatesStats', () => []);
   if (g) return g;

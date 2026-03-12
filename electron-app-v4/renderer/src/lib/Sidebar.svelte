@@ -1,5 +1,5 @@
 <script>
-  import { sidebarView, sidebarCollapsed, allPeople, allTags, allAlbums, stats, t, filters } from '../stores.js';
+  import { sidebarView, sidebarCollapsed, importCollapsed, allPeople, allTags, allAlbums, stats, t, filters } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags } from '../api.js';
 
   $: navItems = [
@@ -8,6 +8,7 @@
     { id: 'events',   icon: '🗓', label: $t('tab_events') },
     { id: 'people',   icon: '👤', label: $t('tab_people') },
     { id: 'tags',     icon: '🏷', label: $t('tab_tags') },
+    { id: 'creators', icon: '✍️', label: $t('tab_creators') },
     { id: 'dates',    icon: '📅', label: $t('tab_timeline') },
     { id: 'folders',  icon: '📁', label: $t('tab_folders') },
   ];
@@ -19,11 +20,11 @@
     { id: 'watchfolders',  icon: '📡', label: $t('tab_watchfolders') },
     { id: 'duplicates',    icon: '🔁', label: $t('tab_duplicates') },
     { id: 'clouddrives',   icon: '☁️', label: $t('cloud_drives') },
-  ];
-  $: toolItems = [
     { id: 'process',    icon: '⚙', label: $t('tab_batch') },
     { id: 'batchjobs',  icon: '📋', label: $t('tab_batchjobs') },
     { id: 'train',      icon: '🎓', label: $t('tab_train') },
+  ];
+  $: toolItems = [
     { id: 'settings',   icon: '⚙', label: $t('tab_settings') },
   ];
 
@@ -68,19 +69,26 @@
   {/each}
 
   <div class="divider"></div>
-  {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_ingest')}</div>{/if}
+  {#if !$sidebarCollapsed}
+    <div class="section-label-collapsable" on:click={() => importCollapsed.update(v => !v)}>
+      <span>{$t('tab_ingest')}</span>
+      <span class="chevron">{$importCollapsed ? '▸' : '▾'}</span>
+    </div>
+  {/if}
 
-  {#each workItems as item}
-    <button
-      class="nav-item"
-      class:active={$sidebarView === item.id}
-      on:click={() => sidebarView.set(item.id)}
-      title={$sidebarCollapsed ? item.label : ''}
-    >
-      <span class="icon">{item.icon}</span>
-      {#if !$sidebarCollapsed}<span class="label">{item.label}</span>{/if}
-    </button>
-  {/each}
+  {#if !$importCollapsed || $sidebarCollapsed}
+    {#each workItems as item}
+      <button
+        class="nav-item"
+        class:active={$sidebarView === item.id}
+        on:click={() => sidebarView.set(item.id)}
+        title={$sidebarCollapsed ? item.label : ''}
+      >
+        <span class="icon">{item.icon}</span>
+        {#if !$sidebarCollapsed}<span class="label">{item.label}</span>{/if}
+      </button>
+    {/each}
+  {/if}
 
   <div class="divider"></div>
   {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_settings')}</div>{/if}
@@ -148,6 +156,22 @@
     white-space: nowrap;
     overflow: hidden;
   }
+  .section-label-collapsable {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #505070;
+    padding: 8px 12px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+  .section-label-collapsable:hover { color: #8080a0; }
+  .chevron { font-size: 8px; opacity: 0.6; }
+
   .nav-item {
     display: flex;
     align-items: center;

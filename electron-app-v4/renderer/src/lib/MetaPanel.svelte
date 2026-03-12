@@ -165,9 +165,6 @@
   {#if image.taken_at}
     <div class="exif-line">📅 <b>{$t('exif_date') || 'EXIF'}:</b> {image.taken_at}</div>
   {/if}
-  {#if image.created_at}
-    <div class="exif-line">📥 <b>{$t('date_imported') || 'Imported'}:</b> {image.created_at}</div>
-  {/if}
   {#if image.creator}
     <div class="exif-line">✍️ <b>{$t('pv_creator_label') || 'Creator'}:</b> {image.creator}</div>
   {/if}
@@ -177,7 +174,10 @@
 
   <!-- Collapsible extended details -->
   <details class="exif-details">
-    <summary class="exif-summary">More details…</summary>
+    <summary class="exif-summary">{$t('more_details') || 'More details…'}</summary>
+    {#if image.created_at}
+      <div class="exif-line">📥 <b>{$t('date_imported') || 'Imported'}:</b> {image.created_at}</div>
+    {/if}
     {#if image.updated_at}
       <div class="exif-line">✏️ <b>{$t('date_modified')}:</b> {image.updated_at}</div>
     {/if}
@@ -234,43 +234,48 @@
   </button>
   <div class="divider"></div>
 
-  <!-- Tags -->
-  <div class="section-label">🏷 {$t('tags')}</div>
-  <input
-    type="text"
-    bind:value={tags_csv}
-    placeholder="tag1, tag2, …"
-    class="full"
-    list="people-list"
-  />
+  <!-- Collapsible FIELDS section -->
+  <details class="fields-details" open>
+    <summary class="fields-summary">{$t('fields') || 'FIELDS'}</summary>
+    
+    <!-- Tags -->
+    <div class="section-label">🏷 {$t('tags')}</div>
+    <input
+      type="text"
+      bind:value={tags_csv}
+      placeholder="tag1, tag2, …"
+      class="full"
+      list="people-list"
+    />
 
-  <!-- Scene type -->
-  <div class="section-label">🎬 {$t('scene_type')}</div>
-  <input type="text" bind:value={scene_type} class="full" placeholder="indoor, portrait, conference…"
-         list="scene-type-suggestions" />
-  <datalist id="scene-type-suggestions">
-    {#each SCENE_TYPES.filter(Boolean) as st}
-      <option value={st}></option>
-    {/each}
-  </datalist>
+    <!-- Scene type -->
+    <div class="section-label">🎬 {$t('scene_type')}</div>
+    <input type="text" bind:value={scene_type} class="full" placeholder="indoor, portrait, conference…"
+           list="scene-type-suggestions" />
+    <datalist id="scene-type-suggestions">
+      {#each SCENE_TYPES.filter(Boolean) as st}
+        <option value={st}></option>
+      {/each}
+    </datalist>
 
-  <!-- Description -->
-  <div class="section-label">📝 {$t('description')}</div>
-  <textarea bind:value={description} rows="3" class="full" placeholder="{$t('description')}…"></textarea>
+    <!-- Description -->
+    <div class="section-label">📝 {$t('description')}</div>
+    <textarea bind:value={description} rows="3" class="full" placeholder="{$t('description')}…"></textarea>
 
-  <!-- Creator / Copyright -->
-  <div class="section-label">✍️ {$t('pv_creator_label') || 'Creator'}</div>
-  <input type="text" bind:value={creator} class="full" placeholder="{$t('pv_creator_placeholder') || 'Creator name…'}" />
-  <div class="section-label">© {$t('pv_copyright_label') || 'Copyright'}</div>
-  <input type="text" bind:value={copyright} class="full" placeholder="{$t('pv_copyright_placeholder') || '© 2025 Name…'}" />
+    <!-- Creator / Copyright -->
+    <div class="section-label">✍️ {$t('pv_creator_label') || 'Creator'}</div>
+    <input type="text" bind:value={creator} class="full" placeholder="{$t('pv_creator_placeholder') || 'Creator name…'}" />
+    <div class="section-label">© {$t('pv_copyright_label') || 'Copyright'}</div>
+    <input type="text" bind:value={copyright} class="full" placeholder="{$t('pv_copyright_placeholder') || '© 2025 Name…'}" />
 
-  <!-- Save -->
-  <button class="primary full" on:click={save} disabled={saving}>
-    {saving ? $t('loading') : '💾 ' + $t('save')}
-  </button>
-  {#if statusMsg}
-    <div class="status-msg">{statusMsg}</div>
-  {/if}
+    <!-- Save -->
+    <button class="primary full mt-4" on:click={save} disabled={saving}>
+      {saving ? $t('loading') : '💾 ' + $t('save')}
+    </button>
+    {#if statusMsg}
+      <div class="status-msg">{statusMsg}</div>
+    {/if}
+  </details>
 
   <div class="divider"></div>
 
@@ -323,13 +328,15 @@
   .exif-line.cam { color: #a0b0c8; font-weight: 600; }
   .exif-line.dim { color: #606080; }
   .exif-details { margin: 2px 0; }
-  .exif-summary {
+  .exif-summary, .fields-summary {
     font-size: 10px; color: #505070; cursor: pointer;
     user-select: none; list-style: none; padding: 2px 0;
   }
-  .exif-summary::-webkit-details-marker { display: none; }
-  .exif-summary::before { content: '▶ '; font-size: 8px; }
-  details[open] > .exif-summary::before { content: '▼ '; }
+  .exif-summary::-webkit-details-marker, .fields-summary::-webkit-details-marker { display: none; }
+  .exif-summary::before, .fields-summary::before { content: '▶ '; font-size: 8px; }
+  details[open] > .exif-summary::before, details[open] > .fields-summary::before { content: '▼ '; }
+  .fields-details { margin-top: 4px; }
+  .fields-summary { font-weight: bold; color: #6080a0; text-transform: uppercase; letter-spacing: 0.1em; }
   .divider { border-top: 1px solid #2a2a3a; margin: 6px 0; }
   .section-label {
     font-size: 10px;

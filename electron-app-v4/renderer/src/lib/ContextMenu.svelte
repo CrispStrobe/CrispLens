@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { t, allAlbums, currentUser } from '../stores.js';
+  import { t, allAlbums, currentUser, clipboard } from '../stores.js';
 
   export let x = 0;
   export let y = 0;
@@ -115,6 +115,12 @@
   <div class="divider"></div>
   <button on:click={() => handleAction('download')}>⬇ {$t('ctx_download_file')}</button>
   <button on:click={() => handleAction('copy-path')}>📋 {$t('ctx_copy_path')}</button>
+  <div class="divider"></div>
+  <button on:click={() => handleAction('copy-to-clipboard')}>✂️ {$t('copy_to_clipboard') || 'Copy to clipboard'}</button>
+  <button on:click={() => handleAction('move-to-clipboard')}>📦 {$t('move_to_clipboard') || 'Move to clipboard'}</button>
+  {#if $clipboard}
+    <button on:click={() => handleAction('paste')}>📋 {$t('paste') || 'Paste'}</button>
+  {/if}
   <div class="divider"></div>
   {#if canDelete}
     <button class="danger" on:click={() => handleAction('delete')}>🗑 {$t('delete')}</button>

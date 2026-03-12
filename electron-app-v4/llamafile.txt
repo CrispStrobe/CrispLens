@@ -1,0 +1,1 @@
+llamafile (providing a local AI, e.g. Mistral or Mixtral, multi-platform) is quite awesome, both in speed as already in capability. For example, I can, with simple shell scripts, quite easily have it identify publication data from PDFs (invoking OCR on the way, if needed), and rename and sort files accordingly (which works more often than not).
