@@ -83,6 +83,8 @@ function upsertImage(db, filepath, meta, opts = {}) {
   const local_path = opts.local_path || null;
   const owner_id   = opts.owner_id   || null;
   const visibility = opts.visibility || 'shared';
+  const creator    = opts.creator    || null;
+  const copyright  = opts.copyright  || null;
 
   let hash = null;
   try { hash = fileHash(filepath); } catch {}
@@ -100,10 +102,10 @@ function upsertImage(db, filepath, meta, opts = {}) {
   try {
     result = db.prepare(`
       INSERT INTO images (filepath, filename, file_hash, file_size, width, height, format,
-        local_path, owner_id, visibility)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
+        local_path, owner_id, visibility, creator, copyright)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(filepath, filename, hash, file_size, width, height, format,
-           local_path, owner_id, visibility);
+           local_path, owner_id, visibility, creator, copyright);
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE constraint failed: images.file_hash')) {
       // Duplicate file content — return existing image id

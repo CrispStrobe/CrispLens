@@ -64,6 +64,8 @@ function rowToApi(row) {
     flag:         row.flag ?? row.color_flag ?? null,
     color_flag:   row.flag ?? row.color_flag ?? null,   // v2 compat alias
     description:  row.description,
+    creator:      row.creator    || null,
+    copyright:    row.copyright  || null,
     visibility:   row.visibility || 'shared',
     faces,
     people: [],
@@ -292,13 +294,13 @@ router.get('/:id/exif', requireAuth, (req, res) => {
 
 router.patch('/:id/metadata', requireAuth, (req, res) => {
   const db = getDb();
-  const { description = '', scene_type = '', tags_csv = '' } = req.body || {};
+  const { description = '', scene_type = '', tags_csv = '', creator = '', copyright = '' } = req.body || {};
   const id = Number(req.params.id);
 
   const tagNames = tags_csv ? tags_csv.split(',').map(t => t.trim()).filter(Boolean) : [];
   db.prepare(`
-    UPDATE images SET ai_description=?, ai_scene_type=?, ai_tags=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-  `).run(description || null, scene_type || null, tagNames.length ? tagNames.join(',') : null, id);
+    UPDATE images SET ai_description=?, ai_scene_type=?, ai_tags=?, creator=?, copyright=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+  `).run(description || null, scene_type || null, tagNames.length ? tagNames.join(',') : null, creator || null, copyright || null, id);
 
   // Sync tags junction table
   db.prepare('DELETE FROM image_tags WHERE image_id=?').run(id);
@@ -309,6 +311,72 @@ router.patch('/:id/metadata', requireAuth, (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+// ── GET /images/creators ──────────────────────────────────────────────────────
+
+router.get('/creators', requireAuth, (req, res) => {
+  const db = getDb();
+  const rows = db.prepare(`SELECT DISTINCT creator FROM images WHERE creator IS NOT NULL AND creator != '' ORDER BY creator ASC`).all();
+  res.json(rows.map(r => r.creator));
+});
+
+// ── GET /images/copyrights ────────────────────────────────────────────────────
+
+router.get('/copyrights', requireAuth, (req, res) => {
+  const db = getDb();
+  const rows = db.prepare(`SELECT DISTINCT copyright FROM images WHERE copyright IS NOT NULL AND copyright != '' ORDER BY copyright ASC`).all();
+  res.json(rows.map(r => r.copyright));
+});
+
+// ── POST /images/batch-edit ───────────────────────────────────────────────────
+// Body: { ids: number[], changes: { tags_add?, tags_replace?, tags_csv?, creator?, copyright? } }
+
+router.post('/batch-edit', requireAuth, (req, res) => {
+  const db  = getDb();
+  const { ids = [], changes = {} } = req.body || {};
+  if (!ids.length) return res.json({ ok: true, updated: 0 });
+
+  const sets = [];
+  const vals = [];
+
+  if (changes.creator   !== undefined) { sets.push('creator=?');   vals.push(changes.creator   || null); }
+  if (changes.copyright !== undefined) { sets.push('copyright=?'); vals.push(changes.copyright || null); }
+
+  let tagNames = null;
+  if (changes.tags_csv !== undefined) {
+    tagNames = changes.tags_csv ? changes.tags_csv.split(',').map(t => t.trim()).filter(Boolean) : [];
+    sets.push('ai_tags=?');
+    vals.push(tagNames.length ? tagNames.join(',') : null);
+  }
+
+  const updateMany = db.transaction(() => {
+    for (const id of ids) {
+      if (sets.length) {
+        db.prepare(`UPDATE images SET ${sets.join(', ')}, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+          .run(...vals, id);
+      }
+      // Tags: replace mode
+      if (tagNames !== null) {
+        db.prepare('DELETE FROM image_tags WHERE image_id=?').run(id);
+        for (const name of tagNames) {
+          db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+          const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+          db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(id, tag.id);
+        }
+      }
+      // Tags: add mode (no replacement)
+      if (changes.tags_add && changes.tags_add.length) {
+        for (const name of changes.tags_add) {
+          db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(name);
+          const tag = db.prepare('SELECT id FROM tags WHERE name=?').get(name);
+          db.prepare('INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?,?)').run(id, tag.id);
+        }
+      }
+    }
+  });
+  updateMany();
+  res.json({ ok: true, updated: ids.length });
 });
 
 // ── DELETE /images/:id ────────────────────────────────────────────────────────

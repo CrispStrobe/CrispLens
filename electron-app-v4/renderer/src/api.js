@@ -385,8 +385,26 @@ export function downloadImage(id, filename) {
 export function patchMetadata(id, params) {
   const g = _guard('patchMetadata', () => localAdapter.patchMetadata(id, params));
   if (g) return g;
-  const { description='', scene_type='', tags_csv='' } = params;
-  return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv });
+  const { description='', scene_type='', tags_csv='', creator='', copyright='' } = params;
+  return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv, creator, copyright });
+}
+
+export function batchEditImages(ids, changes) {
+  const g = _guard('batchEditImages', () => localAdapter.batchEditImages(ids, changes));
+  if (g) return g;
+  return post(`/images/batch-edit`, { ids, changes });
+}
+
+export function fetchCreators() {
+  const g = _guard('fetchCreators', () => localAdapter.fetchCreators());
+  if (g) return g;
+  return get(`/images/creators`);
+}
+
+export function fetchCopyrights() {
+  const g = _guard('fetchCopyrights', () => localAdapter.fetchCopyrights());
+  if (g) return g;
+  return get(`/images/copyrights`);
 }
 
 export function renameImage(id, new_filename) {
@@ -510,7 +528,7 @@ export function importProcessed(data) {
   return post('/ingest/import-processed', data);
 }
 
-export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}, { tagIds = [], newTagNames = [], albumId = null, newAlbumName = null } = {}) {
+export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}, { tagIds = [], newTagNames = [], albumId = null, newAlbumName = null, creator = null, copyright = null } = {}) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
   form.append('local_path', localPath);
@@ -526,6 +544,8 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (newTagNames.length)              form.append('new_tag_names', JSON.stringify(newTagNames));
   if (albumId != null)                 form.append('album_id',      String(albumId));
   if (newAlbumName)                    form.append('new_album_name', newAlbumName);
+  if (creator)                         form.append('creator',        creator);
+  if (copyright)                       form.append('copyright',      copyright);
   
   try {
     const res = await robustUpload(`${BASE}/ingest/upload-local`, form, {

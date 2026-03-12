@@ -117,6 +117,8 @@ function getDb() {
       ['file_hash',       'ALTER TABLE images ADD COLUMN file_hash TEXT'],
       ['local_path',      'ALTER TABLE images ADD COLUMN local_path TEXT'],
       ['phash',           'ALTER TABLE images ADD COLUMN phash TEXT'],
+      ['creator',         'ALTER TABLE images ADD COLUMN creator TEXT'],
+      ['copyright',       'ALTER TABLE images ADD COLUMN copyright TEXT'],
     ];
     for (const [col, sql] of imgMigrations) {
       if (!imgCols.has(col)) {

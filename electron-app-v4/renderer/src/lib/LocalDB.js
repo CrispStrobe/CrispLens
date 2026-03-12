@@ -26,7 +26,9 @@ const SCHEMA = `
     owner_id        INTEGER,
     visibility      TEXT DEFAULT 'shared',
     rating          INTEGER DEFAULT 0,
-    flag            TEXT
+    flag            TEXT,
+    creator         TEXT,
+    copyright       TEXT
   );
   CREATE TABLE IF NOT EXISTS people (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -351,6 +353,8 @@ export async function getDB() {
         if (await safeAddColumn('face_embeddings', 'embedding_model', 'TEXT')) changed = true;
         if (await safeAddColumn('face_embeddings', 'recognition_confidence', 'REAL')) changed = true;
         if (await safeAddColumn('faces', 'face_thumbnail', 'BLOB')) changed = true;
+        if (await safeAddColumn('images', 'creator',   'TEXT')) changed = true;
+        if (await safeAddColumn('images', 'copyright', 'TEXT')) changed = true;
 
         // Ensure new default settings rows exist in existing DBs
         // (INSERT OR IGNORE is in schema but only runs for fresh DBs)

@@ -5,7 +5,8 @@
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
            downloadCloudFile, downloadCloudFileBlob, importProcessed, isLocalMode,
-           downloadImage, openInOs, openFolderInOs } from '../api.js';
+           downloadImage, openInOs, openFolderInOs,
+           batchEditImages, fetchCreators, fetchCopyrights, fetchTags, deleteImage } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const hasFSA      = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -441,6 +442,106 @@
   $: selectedInDbCount = [...selected]
     .map(p => entries.find(e => e.path === p))
     .filter(e => e && !e.is_dir && e?.in_db && e?.image_id).length;
+
+  $: selectedInDbIds = [...selected]
+    .map(p => entries.find(e => e.path === p))
+    .filter(e => e && !e.is_dir && e?.in_db && e?.image_id)
+    .map(e => e.image_id);
+
+  // ── Batch edit panel ───────────────────────────────────────────────────────
+  let showBatchEdit = false;
+  let batchEditStatus = '';
+  let batchEditBusy   = false;
+
+  // batch fields
+  let beTagsCsv   = '';
+  let beTagsMode  = 'add';   // 'add' | 'replace'
+  let beCreator   = '';
+  let beCopyright = '';
+
+  // autocomplete lists loaded once on first open
+  let beAllTags      = [];
+  let beAllCreators  = [];
+  let beAllCopyrights = [];
+  let beTagInput = '';
+  let beTagDropOpen = false;
+  $: beSelectedTags = beTagsCsv ? beTagsCsv.split(',').map(t => t.trim()).filter(Boolean) : [];
+  $: beFilteredTags = beAllTags.filter(t =>
+    beTagInput.trim() && t.name.toLowerCase().includes(beTagInput.trim().toLowerCase()) &&
+    !beSelectedTags.includes(t.name)
+  );
+  $: beFilteredCreators  = beAllCreators.filter(c =>
+    beCreator.trim() && c.toLowerCase().includes(beCreator.trim().toLowerCase())
+  );
+  $: beFilteredCopyrights = beAllCopyrights.filter(c =>
+    beCopyright.trim() && c.toLowerCase().includes(beCopyright.trim().toLowerCase())
+  );
+
+  async function openBatchEdit() {
+    showBatchEdit = true;
+    batchEditStatus = '';
+    if (!beAllTags.length)      try { beAllTags      = await fetchTags(); }      catch {}
+    if (!beAllCreators.length)  try { beAllCreators  = await fetchCreators(); }  catch {}
+    if (!beAllCopyrights.length)try { beAllCopyrights= await fetchCopyrights();}  catch {}
+  }
+
+  function beAddTag(tag) {
+    const names = beSelectedTags;
+    if (!names.includes(tag.name)) {
+      beTagsCsv = [...names, tag.name].join(',');
+    }
+    beTagInput = ''; beTagDropOpen = false;
+  }
+  function beAddNewTag() {
+    const name = beTagInput.trim();
+    if (!name) return;
+    if (!beSelectedTags.includes(name)) beTagsCsv = [...beSelectedTags, name].join(',');
+    beTagInput = ''; beTagDropOpen = false;
+  }
+  function beRemoveTag(name) {
+    beTagsCsv = beSelectedTags.filter(t => t !== name).join(',');
+  }
+
+  async function applyBatchEdit() {
+    if (!selectedInDbIds.length) return;
+    batchEditBusy = true;
+    batchEditStatus = '';
+    try {
+      const changes = {};
+      if (beTagsCsv !== '' || beTagsMode === 'replace') {
+        if (beTagsMode === 'replace') {
+          changes.tags_csv = beTagsCsv;
+        } else {
+          changes.tags_add = beSelectedTags;
+        }
+      }
+      if (beCreator.trim())   changes.creator   = beCreator.trim();
+      if (beCopyright.trim()) changes.copyright = beCopyright.trim();
+      if (!Object.keys(changes).length) {
+        batchEditStatus = 'Nothing to change.';
+        batchEditBusy = false;
+        return;
+      }
+      const r = await batchEditImages(selectedInDbIds, changes);
+      batchEditStatus = `Updated ${r.updated} image${r.updated !== 1 ? 's' : ''}.`;
+      beTagsCsv = ''; beCreator = ''; beCopyright = '';
+    } catch (e) {
+      batchEditStatus = `Error: ${e.message}`;
+    }
+    batchEditBusy = false;
+  }
+
+  async function deleteSelected() {
+    if (!selectedInDbIds.length) return;
+    if (!confirm(`Delete ${selectedInDbIds.length} image${selectedInDbIds.length !== 1 ? 's' : ''} from DB?`)) return;
+    let ok = 0;
+    for (const id of selectedInDbIds) {
+      try { await deleteImage(id); ok++; } catch {}
+    }
+    clearSelection();
+    refresh();
+    batchEditStatus = `Deleted ${ok} image${ok !== 1 ? 's' : ''}.`;
+  }
 
   // ── Server mode helpers ────────────────────────────────────────────────────
   function dbStatusClass(entry) {
@@ -1292,6 +1393,12 @@
           <button class="btn-sm" on:click={downloadSelected}>
             ⬇ {$t('download')} ({selectedInDbCount})
           </button>
+          <button class="btn-sm" on:click={openBatchEdit}>
+            ✏ Edit ({selectedInDbCount})
+          </button>
+          <button class="btn-sm btn-trash" on:click={deleteSelected}>
+            🗑 Delete ({selectedInDbCount})
+          </button>
         {/if}
         {#if cloudMode && cloudDriveId !== null}
           <button class="btn-sm" on:click={doDownloadCloud}
@@ -1350,6 +1457,93 @@
         </label>
       </div>
     {/if}
+  {/if}
+
+  <!-- Batch edit panel -->
+  {#if showBatchEdit && selectedInDbCount > 0}
+    <div class="batch-edit-panel">
+      <div class="batch-edit-header">
+        <strong>Batch Edit — {selectedInDbCount} image{selectedInDbCount !== 1 ? 's' : ''}</strong>
+        <button class="btn-sm" on:click={() => { showBatchEdit = false; batchEditStatus = ''; }}>✕</button>
+      </div>
+
+      <!-- Tags -->
+      <div class="be-row">
+        <label class="be-label">Tags</label>
+        <select bind:value={beTagsMode} class="be-mode-sel">
+          <option value="add">Add</option>
+          <option value="replace">Replace all</option>
+        </select>
+        <div class="picker-chips" style="flex:1">
+          {#each beSelectedTags as tag}
+            <span class="chip">{tag}
+              <button class="chip-remove" on:click={() => beRemoveTag(tag)}>✕</button>
+            </span>
+          {/each}
+          <div class="picker-input-wrap" style="position:relative">
+            <input type="text" class="picker-input" placeholder="add tag…"
+              bind:value={beTagInput}
+              on:focus={() => beTagDropOpen = true}
+              on:blur={() => setTimeout(() => beTagDropOpen = false, 150)}
+              on:keydown={e => { if (e.key === 'Enter') { e.preventDefault(); beFilteredTags.length ? beAddTag(beFilteredTags[0]) : beAddNewTag(); }}}
+            />
+            {#if beTagDropOpen && beTagInput.trim()}
+              <div class="picker-dropdown">
+                {#each beFilteredTags as t}
+                  <button class="picker-option" on:mousedown|preventDefault={() => beAddTag(t)}>{t.name}</button>
+                {/each}
+                {#if !beFilteredTags.find(t => t.name.toLowerCase() === beTagInput.trim().toLowerCase())}
+                  <button class="picker-option new-item" on:mousedown|preventDefault={beAddNewTag}>
+                    + <strong>{beTagInput.trim()}</strong>
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      <!-- Creator -->
+      <div class="be-row">
+        <label class="be-label">Creator</label>
+        <div style="position:relative;flex:1">
+          <input type="text" class="picker-input" style="width:100%" placeholder="Creator name…"
+            bind:value={beCreator}
+          />
+          {#if beCreator.trim() && beFilteredCreators.length}
+            <div class="picker-dropdown">
+              {#each beFilteredCreators as c}
+                <button class="picker-option" on:mousedown|preventDefault={() => beCreator = c}>{c}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Copyright -->
+      <div class="be-row">
+        <label class="be-label">Copyright</label>
+        <div style="position:relative;flex:1">
+          <input type="text" class="picker-input" style="width:100%" placeholder="© 2025 Name…"
+            bind:value={beCopyright}
+          />
+          {#if beCopyright.trim() && beFilteredCopyrights.length}
+            <div class="picker-dropdown">
+              {#each beFilteredCopyrights as c}
+                <button class="picker-option" on:mousedown|preventDefault={() => beCopyright = c}>{c}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="be-footer">
+        {#if batchEditStatus}<span class="be-status">{batchEditStatus}</span>{/if}
+        <button class="primary" on:click={applyBatchEdit} disabled={batchEditBusy}>
+          {batchEditBusy ? 'Saving…' : 'Apply'}
+        </button>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -1874,6 +2068,83 @@
   }
   .btn-trash { color: #c07070; }
   .btn-trash:hover { background: #2a1a1a; color: #e08080; }
+
+  /* ── Picker shared (batch edit) ── */
+  .picker-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .picker-input-wrap { display: inline-block; }
+  .picker-input {
+    background: #1e1e2e; color: #ccc; border: 1px solid #333;
+    border-radius: 4px; padding: 3px 6px; font-size: 12px; min-width: 120px;
+  }
+  .picker-dropdown {
+    position: absolute; top: 100%; left: 0; min-width: 180px; z-index: 200;
+    background: #1e1e2e; border: 1px solid #444; border-radius: 4px;
+    max-height: 200px; overflow-y: auto;
+  }
+  .picker-option {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    color: #ccc; padding: 5px 10px; cursor: pointer; font-size: 13px;
+  }
+  .picker-option:hover { background: #2a2a3e; }
+  .picker-option.new-item { color: #8888ff; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #2a2a4a; color: #aac; border-radius: 12px;
+    padding: 2px 8px; font-size: 12px;
+  }
+  .chip-remove {
+    background: none; border: none; color: #888; cursor: pointer;
+    font-size: 11px; padding: 0; line-height: 1;
+  }
+  .chip-remove:hover { color: #e08080; }
+
+  /* ── Batch edit panel ── */
+  .batch-edit-panel {
+    background: #1a1a2e;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 6px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .batch-edit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+  }
+  .be-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .be-label {
+    min-width: 80px;
+    font-size: 12px;
+    color: #8888a0;
+    padding-top: 4px;
+  }
+  .be-mode-sel {
+    font-size: 12px;
+    background: #1e1e2e;
+    color: #ccc;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .be-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .be-status {
+    font-size: 12px;
+    color: #8888ff;
+    flex: 1;
+  }
 
   /* ── Rename modal ── */
   .modal-backdrop {

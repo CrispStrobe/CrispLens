@@ -1,5 +1,5 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob, isLocalMode, fetchSettings } from '../api.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob, isLocalMode, fetchSettings, fetchCreators, fetchCopyrights } from '../api.js';
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView, processingBackend } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
@@ -226,7 +226,7 @@
     }
   }
 
-  // ── Tag + Album pickers ────────────────────────────────────────────────────
+  // ── Tag + Album + Creator + Copyright pickers ─────────────────────────────
   // selectedTags: Array<{id: number|null, name: string}>
   //   id=null means "create new tag"; id=<number> means existing tag
   let selectedTags = [];
@@ -237,6 +237,22 @@
   let selectedAlbum = null;
   let albumInput = '';
   let albumDropdownOpen = false;
+
+  // Creator / Copyright — single free-text with autocomplete from existing DB values
+  let creatorInput = '';
+  let creatorDropdownOpen = false;
+  let allCreators = [];
+
+  let copyrightInput = '';
+  let copyrightDropdownOpen = false;
+  let allCopyrights = [];
+
+  $: filteredCreators = allCreators.filter(c =>
+    creatorInput.trim() && c.toLowerCase().includes(creatorInput.trim().toLowerCase())
+  );
+  $: filteredCopyrights = allCopyrights.filter(c =>
+    copyrightInput.trim() && c.toLowerCase().includes(copyrightInput.trim().toLowerCase())
+  );
 
   $: filteredTags = $allTags.filter(tag =>
     tagInput.trim() &&
@@ -322,9 +338,11 @@
       } catch { /* ignore */ }
     }
 
-    // Load tags + albums for pickers
+    // Load tags + albums + creators + copyrights for pickers
     try { allTags.set(await fetchTags()); } catch {}
     try { allAlbums.set(await fetchAlbums()); } catch {}
+    try { allCreators   = await fetchCreators(); }   catch {}
+    try { allCopyrights = await fetchCopyrights(); } catch {}
 
     // Initialize VLM toggle from global settings
     try {
@@ -570,7 +588,8 @@
               }
               console.log(`[ProcessView] Importing: filename=${faceData.filename} filepath=${faceData.filepath} local_path=${faceData.local_path || '—'} hash=${faceData.file_hash ? faceData.file_hash.slice(0,12)+'…' : '—'} dup_mode=${duplicateMode}`);
 
-              const resp = await importProcessed({ ...faceData, duplicate_mode: duplicateMode });
+              const resp = await importProcessed({ ...faceData, duplicate_mode: duplicateMode,
+                creator: creatorInput.trim() || null, copyright: copyrightInput.trim() || null });
 
               if (resp.skipped) {
                 console.log(`[ProcessView] Import skipped (duplicate) for ${item.name}`);
@@ -659,7 +678,8 @@
         console.log('[ProcessView] upload-local | item.path=%s | localBasePath=%s | pathForServer=%s',
           item.path ?? '(none)', base || '(none)', pathForServer);
         const resp   = await uploadLocal(buffer, pathForServer, visibility, detParams,
-          { tagIds: existingTagIds, newTagNames, albumId: selectedAlbum?.id ?? null, newAlbumName: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null });
+          { tagIds: existingTagIds, newTagNames, albumId: selectedAlbum?.id ?? null, newAlbumName: selectedAlbum?.id == null ? selectedAlbum?.name ?? null : null,
+            creator: creatorInput.trim() || null, copyright: copyrightInput.trim() || null });
         console.log('[ProcessView] upload-local response | image_id=%s | skipped=%s | shared_duplicate=%s',
           resp.image_id, resp.skipped, resp.shared_duplicate ?? false);
         if (resp.skipped) {
@@ -1102,6 +1122,66 @@
                     {$t('pv_album_new_prefix')} <strong>{albumInput.trim()}</strong>
                   </button>
                 {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Creator picker (single free-text with autocomplete) -->
+    <div class="picker-group">
+      <label class="picker-label">{$t('pv_creator_label') || 'Creator'}</label>
+      <div class="picker-chips">
+        {#if creatorInput}
+          <span class="chip">{creatorInput}
+            <button class="chip-remove" on:click={() => creatorInput = ''}>✕</button>
+          </span>
+        {:else}
+          <div class="picker-input-wrap" style="position:relative">
+            <input
+              type="text"
+              class="picker-input"
+              placeholder={$t('pv_creator_placeholder') || 'Creator name…'}
+              bind:value={creatorInput}
+              on:focus={() => creatorDropdownOpen = true}
+              on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
+            />
+            {#if creatorDropdownOpen && filteredCreators.length}
+              <div class="picker-dropdown">
+                {#each filteredCreators as c}
+                  <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Copyright picker (single free-text with autocomplete) -->
+    <div class="picker-group">
+      <label class="picker-label">{$t('pv_copyright_label') || 'Copyright'}</label>
+      <div class="picker-chips">
+        {#if copyrightInput}
+          <span class="chip">{copyrightInput}
+            <button class="chip-remove" on:click={() => copyrightInput = ''}>✕</button>
+          </span>
+        {:else}
+          <div class="picker-input-wrap" style="position:relative">
+            <input
+              type="text"
+              class="picker-input"
+              placeholder={$t('pv_copyright_placeholder') || '© 2025 Name…'}
+              bind:value={copyrightInput}
+              on:focus={() => copyrightDropdownOpen = true}
+              on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}
+            />
+            {#if copyrightDropdownOpen && filteredCopyrights.length}
+              <div class="picker-dropdown">
+                {#each filteredCopyrights as c}
+                  <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
+                {/each}
               </div>
             {/if}
           </div>

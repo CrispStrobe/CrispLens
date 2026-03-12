@@ -802,6 +802,7 @@ export const localAdapter = {
     const sql = `
       SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
              i.date_taken, i.date_processed, i.description, i.scene_type, i.visibility,
+             i.creator, i.copyright,
              i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
              (SELECT COUNT(*) FROM faces WHERE image_id = i.id) as face_count,
@@ -846,6 +847,7 @@ export const localAdapter = {
       SELECT i.id, i.filename, i.filepath, i.local_path, i.width, i.height,
              i.date_taken, i.date_processed, i.file_size,
              i.description, i.scene_type, i.visibility,
+             i.creator, i.copyright,
              i.thumbnail_blob,
              (SELECT GROUP_CONCAT(tag) FROM image_tags WHERE image_id = i.id) as ai_tags_csv,
              (SELECT GROUP_CONCAT(DISTINCT p.name) FROM faces f
@@ -1187,14 +1189,51 @@ export const localAdapter = {
     return { ok: true, faces_copied: faces.length };
   },
 
-  async patchMetadata(id, { description='', scene_type='', tags_csv='' }) {
-    await run(`UPDATE images SET description=?, scene_type=? WHERE id=?`,
-              [description || null, scene_type || null, id]);
+  async patchMetadata(id, { description='', scene_type='', tags_csv='', creator='', copyright='' }) {
+    await run(`UPDATE images SET description=?, scene_type=?, creator=?, copyright=? WHERE id=?`,
+              [description || null, scene_type || null, creator || null, copyright || null, id]);
     // Replace tags
     await run('DELETE FROM image_tags WHERE image_id=?', [id]);
     for (const tag of (tags_csv || '').split(',').map(t => t.trim()).filter(Boolean))
       await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [id, tag]);
     return { ok: true };
+  },
+
+  async batchEditImages(ids, changes = {}) {
+    if (!ids || !ids.length) return { ok: true, updated: 0 };
+    for (const id of ids) {
+      const sets = [];
+      const vals = [];
+      if (changes.creator   !== undefined) { sets.push('creator=?');   vals.push(changes.creator   || null); }
+      if (changes.copyright !== undefined) { sets.push('copyright=?'); vals.push(changes.copyright || null); }
+      if (changes.tags_csv  !== undefined) {
+        // tags_replace handled below
+      }
+      if (sets.length) {
+        await run(`UPDATE images SET ${sets.join(', ')} WHERE id=?`, [...vals, id]);
+      }
+      if (changes.tags_csv !== undefined) {
+        const tagNames = changes.tags_csv ? changes.tags_csv.split(',').map(t => t.trim()).filter(Boolean) : [];
+        await run('DELETE FROM image_tags WHERE image_id=?', [id]);
+        for (const tag of tagNames)
+          await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [id, tag]);
+      }
+      if (changes.tags_add && changes.tags_add.length) {
+        for (const tag of changes.tags_add)
+          await run('INSERT OR IGNORE INTO image_tags(image_id, tag) VALUES(?,?)', [id, tag]);
+      }
+    }
+    return { ok: true, updated: ids.length };
+  },
+
+  async fetchCreators() {
+    const rows = await query(`SELECT DISTINCT creator FROM images WHERE creator IS NOT NULL AND creator != '' ORDER BY creator ASC`);
+    return rows.map(r => r.creator);
+  },
+
+  async fetchCopyrights() {
+    const rows = await query(`SELECT DISTINCT copyright FROM images WHERE copyright IS NOT NULL AND copyright != '' ORDER BY copyright ASC`);
+    return rows.map(r => r.copyright);
   },
 
   // ── People ─────────────────────────────────────────────────────────────────
@@ -1295,6 +1334,7 @@ export const localAdapter = {
   async importProcessed({ filepath, filename, local_path, file_hash, width, height, date_taken,
                           faces = [], description, scene_type, tags = [],
                           thumbnail_b64, embedding_dim = 512,
+                          creator = null, copyright = null,
                           duplicate_mode = 'skip' }) {
     const fname = filename || filepath?.split('/').pop() || 'unknown';
     // Sanitize filepath: never store blob: URLs (Capacitor Camera webPath — revoked on reload).
@@ -1346,14 +1386,15 @@ export const localAdapter = {
 
     // Upsert image record
     await run(`INSERT OR IGNORE INTO images
-               (filename, filepath, local_path, file_hash, width, height, date_taken, description, scene_type, thumbnail_blob)
-               VALUES(?,?,?,?,?,?,?,?,?,?)`,
+               (filename, filepath, local_path, file_hash, width, height, date_taken, description, scene_type, thumbnail_blob, creator, copyright)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
               [fname, safeFilepath, local_path ?? null, file_hash ?? null,
                width ?? null, height ?? null,
-               date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null]);
+               date_taken ?? null, description ?? null, scene_type ?? null, thumbnail_b64 || null,
+               creator ?? null, copyright ?? null]);
 
-    // Update VLM/thumbnail if provided (handles re-run case when INSERT OR IGNORE is a no-op)
-    if (description || scene_type || thumbnail_b64) {
+    // Update VLM/thumbnail/meta if provided (handles re-run case when INSERT OR IGNORE is a no-op)
+    if (description || scene_type || thumbnail_b64 || creator || copyright) {
       const updates = [];
       const params = [];
       if (description) { updates.push('description = ?'); params.push(description); }
@@ -1361,6 +1402,8 @@ export const localAdapter = {
       if (thumbnail_b64) { updates.push('thumbnail_blob = ?'); params.push(thumbnail_b64); }
       if (local_path) { updates.push('local_path = ?'); params.push(local_path); }
       if (file_hash) { updates.push('file_hash = ?'); params.push(file_hash); }
+      if (creator) { updates.push('creator = ?'); params.push(creator); }
+      if (copyright) { updates.push('copyright = ?'); params.push(copyright); }
 
       if (updates.length > 0) {
         params.push(safeFilepath);

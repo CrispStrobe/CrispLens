@@ -45,6 +45,8 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
   const det_thresh    = req.body.det_thresh    ? parseFloat(req.body.det_thresh)    : undefined;
   const min_face_size = req.body.min_face_size ? parseInt(req.body.min_face_size)   : undefined;
   const max_size      = req.body.max_size      ? parseInt(req.body.max_size)        : undefined;
+  const creator       = req.body.creator       || null;
+  const copyright     = req.body.copyright     || null;
 
   const db = getDb();
   try {
@@ -92,6 +94,7 @@ router.post('/upload-local', requireAuth, upload.single('file'), async (req, res
       skip_recognition: skip_faces,
       skip_vlm,
       owner_id, det_model, det_thresh, min_face_size, max_size,
+      creator, copyright,
     });
     const enriched = db.prepare('SELECT ai_description, ai_scene_type, ai_tags FROM images WHERE id=?').get(result.imageId);
     const vlmTags  = enriched?.ai_tags ? enriched.ai_tags.split(',').map(t => t.trim()).filter(Boolean) : [];
