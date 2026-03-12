@@ -183,8 +183,25 @@ export async function internxtLogin(email, password, tfaCode) {
   if (!tempToken) throw new Error(`Internxt auth: no token. Response: ${JSON.stringify(accessRes)}`);
 
   const hydrated = await apiGet(`${INTERNXT_API}/users/refresh`, { Authorization: `Bearer ${tempToken}` });
-  const rootFolderUuid = hydrated.user?.rootFolderUuid || hydrated.user?.rootFolderId;
-  return { token: hydrated.token, newToken: hydrated.newToken, user: hydrated.user, rootFolderUuid };
+  const user = hydrated.user || {};
+  const rootFolderUuid = user.rootFolderUuid || user.rootFolderId;
+  // bridgeUser = email used as Basic-auth username for the network API
+  // userId = user UUID used as Basic-auth password for the network API
+  const bridgeUser = user.bridgeUser || user.email || cleanEmail;
+  const userId     = user.userId || user.uuid || user.id;
+  // Mnemonic is returned AES-256-CBC encrypted with the user's password — decrypt it now.
+  // This is the same flow as server/routes/cloud-drives.js internxtLogin().
+  let mnemonic = null;
+  if (user.mnemonic) {
+    try {
+      mnemonic = await decryptTextWithKey(user.mnemonic, password);
+      console.log('[BrowserCloud/internxt] Mnemonic decrypted OK');
+    } catch (e) {
+      console.warn('[BrowserCloud/internxt] Could not decrypt mnemonic:', e.message);
+    }
+  }
+  return { token: hydrated.token, newToken: hydrated.newToken, user,
+           rootFolderUuid, bridgeUser, userId, mnemonic };
 }
 
 async function internxtListFolder(bearerToken, folderUuid) {
@@ -363,4 +380,141 @@ export async function filenBrowse(tokenData, path) {
 
   const entries = [...folders, ...files].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
   return { path, parent: parentPath, entries };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internxt: file download (browser SubtleCrypto AES-256-CTR)
+// Mirrors server/routes/cloud-drives.js internxtDownloadFile() for Node.js
+// ─────────────────────────────────────────────────────────────────────────────
+const INTERNXT_NETWORK = 'https://gateway.internxt.com/network';
+
+async function _bip39ToSeed(mnemonic) {
+  const km   = await crypto.subtle.importKey('raw', enc.encode(mnemonic), { name: 'PBKDF2' }, false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode('mnemonic'), iterations: 2048, hash: 'SHA-512' }, km, 512
+  );
+  return new Uint8Array(bits);
+}
+
+async function _internxtFileKey(mnemonic, bucketId, indexHex) {
+  const seed         = await _bip39ToSeed(mnemonic);
+  const bucketBytes  = hexToBytes(bucketId);
+  const indexBytes   = hexToBytes(indexHex);
+  // bucketKey = SHA-512(seed ‖ bucketIdBytes)
+  const bucketKeyBuf = await crypto.subtle.digest('SHA-512', concatU8(seed, bucketBytes));
+  const bucketKey    = new Uint8Array(bucketKeyBuf);
+  // fileKey   = SHA-512(bucketKey[:32] ‖ indexBytes)[:32]
+  const fileKeyBuf   = await crypto.subtle.digest('SHA-512', concatU8(bucketKey.slice(0, 32), indexBytes));
+  const fileKey      = new Uint8Array(fileKeyBuf).slice(0, 32);
+  const iv           = indexBytes.slice(0, 16);
+  return { fileKey, iv };
+}
+
+/**
+ * Download + decrypt an Internxt file in the browser.
+ * tokenData must include: token (bearer), mnemonic, bridgeUser, userId
+ * Returns { blob: Blob, name: string }
+ */
+export async function internxtDownloadFile(tokenData, fileUuid) {
+  const { mnemonic, bridgeUser, userId } = tokenData;
+  const bearer = tokenData.newToken || tokenData.token;
+  if (!mnemonic) throw new Error('Internxt: mnemonic missing — unmount and remount the drive to re-authenticate');
+
+  // Step 1: file meta → bucket + fileId + size + name
+  const metaRes  = await apiGet(`${INTERNXT_API}/files/${fileUuid}/meta`, { Authorization: `Bearer ${bearer}` });
+  const bucketId = metaRes.item?.bucket;
+  const fileId   = metaRes.item?.id;
+  const fileSize = parseInt(metaRes.item?.size || 0, 10);
+  const name     = (metaRes.item?.plainName || '') + (metaRes.item?.type ? '.' + metaRes.item.type : fileUuid);
+  if (!bucketId || !fileId) throw new Error('Internxt: missing bucket/fileId in meta response');
+
+  // Step 2: network shard info (Basic auth: bridgeUser:userId)
+  const basic    = btoa(`${bridgeUser}:${userId}`);
+  const linkRes  = await fetch(`${INTERNXT_NETWORK}/buckets/${bucketId}/files/${fileId}/info`, {
+    headers: { 'x-api-version': '2', Authorization: `Basic ${basic}` },
+  });
+  if (!linkRes.ok) throw new Error(`Internxt network info HTTP ${linkRes.status}`);
+  const linkInfo   = await linkRes.json();
+  const shardUrl   = linkInfo?.shards?.[0]?.url;
+  const indexHex   = linkInfo?.index;
+  if (!shardUrl)  throw new Error('Internxt: no shard URL in network info');
+  if (!indexHex)  throw new Error('Internxt: no index in network info');
+
+  // Step 3: download encrypted binary
+  const encRes  = await fetch(shardUrl);
+  if (!encRes.ok) throw new Error(`Internxt shard download HTTP ${encRes.status}`);
+  const encData = new Uint8Array(await encRes.arrayBuffer());
+
+  // Step 4: AES-256-CTR decrypt (SubtleCrypto — length:128 = full counter block, matches Node.js default)
+  const { fileKey, iv } = await _internxtFileKey(mnemonic, bucketId, indexHex);
+  const ck        = await crypto.subtle.importKey('raw', fileKey, { name: 'AES-CTR' }, false, ['decrypt']);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 128 }, ck, encData);
+  const trimmed   = fileSize > 0 ? decrypted.slice(0, fileSize) : decrypted;
+  return { blob: new Blob([trimmed]), name };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filen: file download (browser SubtleCrypto AES-256-GCM)
+// Mirrors server/routes/cloud-drives.js filenDownloadFile() for Node.js
+// ─────────────────────────────────────────────────────────────────────────────
+const FILEN_EGEST = 'https://egest.filen.io';
+
+/**
+ * Download + decrypt a Filen file in the browser.
+ * tokenData must include: apiKey, masterKeys (string[])
+ * Returns { blob: Blob, name: string }
+ */
+export async function filenDownloadFile(tokenData, fileUuid) {
+  const { apiKey, masterKeys } = tokenData;
+
+  async function tryDecrypt(encrypted) {
+    for (let i = masterKeys.length - 1; i >= 0; i--) {
+      try { return await filenDecryptMetadata(encrypted, masterKeys[i]); } catch {}
+    }
+    return null;
+  }
+
+  // Step 1: file metadata
+  const metadata = await filenFetch('POST', '/v3/file', { body: { uuid: fileUuid }, apiKey });
+  const chunks   = parseInt(metadata.chunks || 0, 10);
+  const region   = metadata.region;
+  const bucket   = metadata.bucket;
+  const encMeta  = metadata.metadata;
+  if (!encMeta)  throw new Error('Filen: no metadata in file response');
+
+  // Step 2: decrypt metadata → { key, name, size }
+  const metaStr = await tryDecrypt(encMeta);
+  if (!metaStr) throw new Error('Filen: could not decrypt file metadata');
+  const meta = JSON.parse(metaStr);
+  const name = meta.name || fileUuid;
+  let fileKeyBytes;
+  if (meta.key && meta.key.length === 32) {
+    fileKeyBytes = enc.encode(meta.key);                                          // UTF-8 32-char key
+  } else if (meta.key) {
+    fileKeyBytes = Uint8Array.from(atob(meta.key), c => c.charCodeAt(0));         // base64-encoded key
+  } else {
+    throw new Error('Filen: no file key in decrypted metadata');
+  }
+  const ck = await crypto.subtle.importKey('raw', fileKeyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+
+  // Step 3+4: download + decrypt each chunk (AES-256-GCM: iv[:12] ‖ ct ‖ tag[-16:])
+  const decryptedChunks = [];
+  for (let i = 0; i < chunks; i++) {
+    const url       = `${FILEN_EGEST}/${region}/${bucket}/${fileUuid}/${i}`;
+    const chunkRes  = await fetch(url);
+    if (!chunkRes.ok) throw new Error(`Filen chunk ${i} HTTP ${chunkRes.status}`);
+    const chunkData = new Uint8Array(await chunkRes.arrayBuffer());
+    const iv        = chunkData.slice(0, 12);
+    const ciphertext = chunkData.slice(12, -16);
+    const tag       = chunkData.slice(-16);
+    const combined  = concatU8(ciphertext, tag);   // SubtleCrypto expects ciphertext||tag
+    const plain     = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, ck, combined);
+    decryptedChunks.push(new Uint8Array(plain));
+  }
+
+  const totalLen = decryptedChunks.reduce((s, c) => s + c.length, 0);
+  const out      = new Uint8Array(totalLen);
+  let off = 0;
+  for (const c of decryptedChunks) { out.set(c, off); off += c.length; }
+  return { blob: new Blob([out]), name };
 }

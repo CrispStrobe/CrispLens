@@ -616,10 +616,11 @@ export async function nuclearResetDatabase() {
 /** localStorage keys that are app config (survive hard reset) vs transient data. */
 const _CONFIG_KEYS = [
   'crisplens_sync_settings',   // thumb_size, maxItems, maxSizeMb
-  'db_mode',
+  'data_source',
   'remote_url',
   'crisp_server_presets',
   'crisplens_locale',
+  'crisp_processing_backend',
 ];
 
 /**

@@ -4,7 +4,7 @@
   import { browseFilesystem, addToDb, thumbnailUrl, uploadLocal,
            fetchCloudDrives, browseCloudDrive, ingestCloudDrive,
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
-           downloadCloudFile, importProcessed, isLocalMode,
+           downloadCloudFile, downloadCloudFileBlob, importProcessed, isLocalMode,
            downloadImage, openInOs, openFolderInOs } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -193,17 +193,29 @@
     }
   }
 
-  function doDownloadCloud() {
+  async function doDownloadCloud() {
     const paths = [...selected].filter(p => !entries.find(e => e.path === p)?.is_dir);
     if (paths.length === 0 || cloudDriveId === null) return;
-    for (const p of paths) {
-      const url = downloadCloudFile(cloudDriveId, p);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    if (isLocalMode()) {
+      // Standalone browser mode: decrypt in browser via BrowserCloudDrives.js
+      for (const p of paths) {
+        try {
+          const { blob, name } = await downloadCloudFileBlob(cloudDriveId, p);
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = objUrl; a.download = name;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(objUrl), 2000);
+        } catch (e) { cloudOpsMsg = `Download failed: ${e.message}`; }
+      }
+    } else {
+      // Server mode: hit the server download-file endpoint
+      for (const p of paths) {
+        const url = downloadCloudFile(cloudDriveId, p);
+        const a = document.createElement('a');
+        a.href = url; a.download = '';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      }
     }
   }
 
@@ -570,11 +582,8 @@
       addProgress = { ...addProgress, current: name };
 
       try {
-        // 1. Download blob from server's cloud-drive download endpoint
-        const url  = downloadCloudFile(cloudDriveId, p);
-        const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
-        const blob = await resp.blob();
+        // 1. Download blob — via BrowserCloudDrives in local mode, server endpoint otherwise
+        const { blob } = await downloadCloudFileBlob(cloudDriveId, p);
         const file = new File([blob], name, { type: blob.type || 'image/jpeg' });
 
         // 2. Run ONNX face detection + embedding in browser

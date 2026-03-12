@@ -137,6 +137,7 @@
         ortUseCUDA     = c?.inference?.ort_use_cuda     ?? false;
         ortUseDirectML = c?.inference?.ort_use_directml ?? false;
         processingBackend.set(procBackend);
+        localStorage.setItem('crisp_processing_backend', procBackend);
       }
     }).catch(e => console.error('[SettingsView] fetchSettings failed:', e));
     // Non-admin: load personal VLM prefs (shows effective = override || global fallback)
@@ -310,7 +311,7 @@
 
   // ── Storage mode: 'server' (HTTP) vs 'local' (on-device SQLite) ─────────
   let dbMode = typeof window !== 'undefined'
-    ? (localStorage.getItem('db_mode') || 'server')
+    ? (localStorage.getItem('data_source') || 'server')
     : 'server';
 
   async function switchDbMode(mode) {
@@ -632,8 +633,9 @@
           ortUseCUDA     = cfg?.inference?.ort_use_cuda     ?? false;
           ortUseDirectML = cfg?.inference?.ort_use_directml ?? false;
           processingBackend.set(procBackend);
+          localStorage.setItem('crisp_processing_backend', procBackend);
         }
-      } catch (e) { 
+      } catch (e) {
         console.error('[SettingsView] onMount: settings fetch error:', e);
         saveMsg = '⚠ Could not load server settings: ' + e.message; 
       }
@@ -848,6 +850,7 @@
             ort_use_directml:   ortUseDirectML,
           });
           processingBackend.set(procBackend);
+          localStorage.setItem('crisp_processing_backend', procBackend);
         } else {
           // Non-admin saves language + upload settings to global config
           await saveSettings({ language, upload_max_dimension: uploadMaxDim });
@@ -1284,11 +1287,11 @@
       : 'This will reset app settings to defaults (watch folders, configuration). Your image data is safe. Continue?';
     if (!confirm(msg)) return;
     try {
-      // Always switch to server mode on reset — clears any stale db_mode=local
+      // Always switch to server mode on reset — clears any stale data_source=local
       setLocalMode(false);
       // Clear other stale localStorage keys from old code iterations
-      localStorage.removeItem('db_mode_set');
-      localStorage.removeItem('db_mode_explicit');
+      localStorage.removeItem('data_source_set');
+      localStorage.removeItem('data_source_explicit');
       if (!isLocal) {
         // Only call server reset when we can reach the server
         await hardResetApp();
@@ -1611,10 +1614,10 @@
     {/if}
   </section>
 
-  <!-- Browser/PWA: editable API server URL (only shown in server mode) -->
+  <!-- Browser/PWA: editable API server URL (Axis 2 — only shown in server mode) -->
   {#if dbMode === 'server'}
   <section class="card">
-    <h3>{$t('api_server_section')}</h3>
+    <h3>{$t('api_server_section')} <span style="font-size:11px;font-weight:400;color:#8090b0;">(Axis 2)</span></h3>
     <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
 
     <!-- Saved presets -->

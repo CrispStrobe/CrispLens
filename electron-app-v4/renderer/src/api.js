@@ -1,7 +1,7 @@
 /**
  * api.js — Typed fetch wrappers for all FastAPI/v4-Node endpoints.
  *
- * Three modes, controlled by localStorage key 'db_mode':
+ * Three modes, controlled by localStorage key 'data_source':
  *   'server' (default) — HTTP fetch to a v4 Node.js or v2 FastAPI server
  *   'local'            — @capacitor-community/sqlite directly on-device (no server)
  *
@@ -182,6 +182,10 @@ const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?
 // _localMode=true  →  use browser-side WASM SQLite / LocalAdapter (no server needed)
 // _localMode=false →  use HTTP API (v4 Node, v2 FastAPI, Electron embedded, remote)
 //
+// Axis 1: Data Source — controlled by localStorage key 'data_source' ('local'|'server')
+// Axis 2: API Server  — controlled by localStorage key 'remote_url' (URL string)
+// Axis 3: Inference   — controlled by localStorage key 'crisp_processing_backend'
+//
 // Default: Capacitor native → local; everything else → server.
 // User can always switch via Settings and the choice is persisted in localStorage.
 // Cloud drives and filesystem browse are SERVER features — they ignore _localMode
@@ -190,15 +194,23 @@ const _inCapacitor = typeof window !== 'undefined' && typeof (window.Capacitor ?
 let _localMode = false;
 
 {
-  const stored = localStorage.getItem('db_mode');
+  // One-time migration from old key 'db_mode' to 'data_source'
+  const legacy = localStorage.getItem('db_mode');
+  if (legacy !== null && localStorage.getItem('data_source') === null) {
+    localStorage.setItem('data_source', legacy);
+    localStorage.removeItem('db_mode');
+    console.log(`[api] Migrated db_mode=${legacy} → data_source=${legacy}`);
+  }
+
+  const stored = localStorage.getItem('data_source');
   if (stored !== null) {
     // Respect explicit user choice in all contexts.
     _localMode = stored === 'local';
-    console.log(`[api] Restored db_mode=${stored} → localMode=${_localMode}`);
+    console.log(`[api] Restored data_source=${stored} → localMode=${_localMode}`);
   } else if (_inCapacitor) {
     // Capacitor first run: default to local (no server needed on mobile).
     _localMode = true;
-    localStorage.setItem('db_mode', 'local');
+    localStorage.setItem('data_source', 'local');
     console.log('[api] Capacitor first run — defaulting to standalone local mode');
   } else {
     // Browser/Electron first run: default to server.
@@ -213,7 +225,7 @@ console.log(`[api] Initializing. localMode=${_localMode} inElectron=${_inElectro
 export function setLocalMode(enabled) {
   console.log(`[api] setLocalMode(${enabled})`);
   _localMode = enabled;
-  localStorage.setItem('db_mode', enabled ? 'local' : 'server');
+  localStorage.setItem('data_source', enabled ? 'local' : 'server');
 }
 
 export function isLocalMode() { return _localMode; }
@@ -932,19 +944,20 @@ export function scanHashes(onEvent) {
 
 // ── Cloud drives ──────────────────────────────────────────────────────────────
 // Routing strategy:
-//   Native Capacitor (no server): LocalAdapter → BrowserCloudDrives.js (CapacitorHttp, no CORS)
-//   Browser (server running at localhost): always use server API via getD/postD.
-//     Even when _localMode=true, browser fetch to cloud APIs is blocked by CORS — only the
-//     server-side Node.js process can make those requests without restriction.
+//   _localMode=true (standalone — no server):
+//     → LocalAdapter → BrowserCloudDrives.js (direct browser fetch, SubtleCrypto)
+//     Both Internxt and Filen have web apps that make direct browser API calls,
+//     so their APIs allow CORS from any origin.
+//     SMB/SFTP require OS-level TCP mounts — those throw a clear error.
+//
+//   _localMode=false (server available):
+//     → getD/postD to v4 Node.js or v2 FastAPI server
 
 function _cloudGuard(name, localFn) {
-  // Only route to LocalAdapter on native Capacitor where CapacitorHttp bypasses CORS.
-  // In the browser (PWA / dev), the server is always reachable and must proxy cloud calls.
-  if (_localMode && Capacitor.isNativePlatform()) {
-    console.log(`[api] NATIVE CAPACITOR INTERCEPT: ${name}`);
+  if (_localMode) {
     return (async () => {
       try { return await localFn(); }
-      catch (err) { console.error(`[api] NATIVE ERROR for ${name}:`, err.message || err); throw err; }
+      catch (err) { console.error(`[api] LOCAL CLOUD ERROR for ${name}:`, err.message || err); throw err; }
     })();
   }
   return null;
@@ -1001,10 +1014,30 @@ export function ingestCloudDrive(driveId, paths, recursive, visibility, onEvent,
   return _streamSSE(`${BASE}/cloud-drives/${driveId}/ingest`, { paths, recursive, visibility, ...detParams }, onEvent);
 }
 export function downloadCloudFile(driveId, filePath) {
-  // Returns the download URL — open in browser to trigger native download
+  // Returns the server download URL — used in server mode (v4/v2 backend running)
   const q = new URLSearchParams({ path: filePath });
   return `${BASE}/cloud-drives/${driveId}/download-file?${q}`;
 }
+
+/**
+ * Download a cloud file and return { blob: Blob, name: string }.
+ * In local mode: uses BrowserCloudDrives.js (direct E2E decrypt in browser).
+ * In server mode: fetches via the server's download-file endpoint.
+ */
+export async function downloadCloudFileBlob(driveId, filePath) {
+  const g = _cloudGuard('downloadCloudFileBlob', () => localAdapter.downloadCloudFile(driveId, filePath));
+  if (g) return g;
+  // Server mode: stream through the server download endpoint
+  const url  = downloadCloudFile(driveId, filePath);
+  const resp = await fetch(url, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`Cloud download HTTP ${resp.status}`);
+  const blob = await resp.blob();
+  const cd   = resp.headers.get('Content-Disposition') || '';
+  const name = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)?.[1]?.replace(/['"]/g, '')
+             || filePath.split('/').pop();
+  return { blob, name };
+}
+
 export function renameCloudDriveItem(driveId, path, newName) {
   // rename/trash/delete item ops are server-only for now (rare in WASM mode)
   return postD(`/cloud-drives/${driveId}/rename`, { path, new_name: newName });

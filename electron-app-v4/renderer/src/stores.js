@@ -181,8 +181,8 @@ const EN = {
   api_server_save_as:         'Save as',
   api_server_preset_ph:       'Preset name…',
   api_server_save_preset:     'Save',
-  processing_backend_section: 'Inference Backend',
-  processing_backend_hint:    'Only applies when the API server is the local v4 Node.js. Routes face detection/embedding to a remote server while keeping this v4 as the API/DB server.',
+  processing_backend_section: 'Inference Engine (Axis 3)',
+  processing_backend_hint:    'Where does face detection and embedding run? Local = v4 Node.js ONNX on this machine. Remote v2 = Python/InsightFace on a separate server. Remote v4 = ONNX on a separate v4 Node.js server.',
   backend_local:              'Local (Node.js ONNX)',
   backend_remote_v2:          'Remote v2 Python FastAPI',
   backend_remote_v4:          'Remote v4 Node.js API',
@@ -543,8 +543,8 @@ const EN = {
   pv_dup_skipped:            'skipped (duplicate)',
 
   // Standalone / Storage mode
-  settings_storage_mode:     'Storage Mode',
-  settings_storage_mode_hint: 'Choose how CrispLens stores data. Server connects to a v4 Node.js or v2 FastAPI backend. Standalone (Local) uses on-device SQLite — no server required, ideal for iOS/Android offline use.',
+  settings_storage_mode:     'Data Source (Axis 1)',
+  settings_storage_mode_hint: 'Where does image/people data come from? Server connects to a v4 Node.js or v2 FastAPI backend (Axis 2 sets which one). Standalone uses on-device SQLite — no server required, ideal for iOS/Android offline use.',
   settings_standalone_active: '⚡ Standalone mode active. Face detection and recognition run on-device using ONNX models cached below. Cloud VLM enrichment (optional) calls external API providers directly — no server needed.',
   settings_sync_target:      'Sync Target',
   settings_sync_target_hint: 'Set the remote server to push/pull data from when in standalone mode.',
@@ -768,8 +768,8 @@ export const TRANSLATIONS = {
     api_server_save_as:         'Speichern als',
     api_server_preset_ph:       'Name des Eintrags…',
     api_server_save_preset:     'Speichern',
-    processing_backend_section: 'Inferenz-Backend',
-    processing_backend_hint:    'Nur aktiv wenn der API-Server der lokale v4-Node.js ist. Leitet Gesichtserkennung/-einbettung an einen Remote-Server weiter, während v4 als API/DB-Server bleibt.',
+    processing_backend_section: 'Inferenz-Engine (Achse 3)',
+    processing_backend_hint:    'Wo laufen Gesichtserkennung und Einbettung? Lokal = v4 Node.js ONNX. Remote v2 = Python/InsightFace auf separatem Server. Remote v4 = ONNX auf separatem v4-Server.',
     backend_local:              'Lokal (Node.js ONNX)',
     backend_remote_v2:          'Remote v2 Python FastAPI',
     backend_remote_v4:          'Remote v4 Node.js API',
@@ -1129,8 +1129,8 @@ export const TRANSLATIONS = {
     pv_dup_skipped:            'übersprungen (Duplikat)',
 
     // Standalone / Storage mode
-    settings_storage_mode:     'Speichermodus',
-    settings_storage_mode_hint: 'Wählen Sie, wie CrispLens Daten speichert. Server verbindet sich mit einem v4 Node.js oder v2 FastAPI Backend. Standalone (Lokal) verwendet SQLite auf dem Gerät — kein Server erforderlich, ideal für die Offline-Nutzung unter iOS/Android.',
+    settings_storage_mode:     'Datenquelle (Achse 1)',
+    settings_storage_mode_hint: 'Woher kommen Bild-/Personendaten? Server verbindet sich mit einem v4 Node.js oder v2 FastAPI Backend (Achse 2 legt fest, welches). Standalone verwendet SQLite auf dem Gerät — kein Server erforderlich.',
     settings_standalone_active: '⚡ Standalone-Modus aktiv. Gesichtserkennung läuft lokal mit den unten zwischengespeicherten ONNX-Modellen. Cloud-VLM-Anreicherung (optional) ruft externe API-Anbieter direkt auf – kein Server erforderlich.',
     settings_sync_target:      'Synchronisierungsziel',
     settings_sync_target_hint: 'Legen Sie den Remote-Server fest, von dem Daten im Standalone-Modus gesendet/empfangen werden sollen.',
@@ -1290,7 +1290,11 @@ export const localModelStatus = writable({});   // { buffalo_l: bool, ... }
 // 'local'      — Node.js ONNX (SCRFD + YuNet)
 // 'remote_v2'  — Route to remote v2 FastAPI server (Python pipeline)
 // 'remote_v4'  — Route to remote v4 Node.js API server (SCRFD + YuNet)
-export const processingBackend = writable('local');
+// Axis 3 of the three-axis model. Persisted in localStorage key 'crisp_processing_backend'
+// so it is available regardless of which server (or no server) is currently connected.
+export const processingBackend = writable(
+  (typeof window !== 'undefined' && localStorage.getItem('crisp_processing_backend')) || 'local'
+);
 
 // ── Derived ───────────────────────────────────────────────────────────────────
 export const activeFilterCount = derived(filters, $f =>

@@ -3,9 +3,9 @@
  * LocalAdapter.js — implements the same interface as api.js remote calls
  * but reads/writes directly from @capacitor-community/sqlite on-device.
  *
- * Used when db_mode='local' (standalone Capacitor, no server required).
+ * Used when data_source='local' (Axis 1 = standalone, no server required).
  * All three paths — local, v4 server, v2 FastAPI — share the same Svelte UI;
- * only api.js routes differently based on db_mode.
+ * only api.js routes differently based on data_source (localStorage 'data_source' key).
  *
  * ⚠ PARALLEL IMPLEMENTATION WARNING
  * Every public method here must return the same shape as the corresponding
@@ -23,7 +23,8 @@
 import { Capacitor } from '@capacitor/core';
 import { query, run, exportDatabase, importDatabase, getDatabaseSize, clearDatabase, hardResetApp } from './LocalDB.js';
 import { VLM_PROVIDERS, VLM_MODELS } from './VlmData.js';
-import { internxtLogin, internxtBrowse, filenLogin, filenBrowse } from './BrowserCloudDrives.js';
+import { internxtLogin, internxtBrowse, internxtDownloadFile,
+         filenLogin, filenBrowse, filenDownloadFile } from './BrowserCloudDrives.js';
 
 // ── Voy-search helper (WASM HNSW) ─────────────────────────────────────────────
 
@@ -1562,6 +1563,7 @@ export const localAdapter = {
     try {
       if (type === 'internxt') {
         tokenData = await internxtLogin(config.email, config.password, config.tfa_code || '');
+        // mnemonic is decrypted from the login response by internxtLogin() — no manual merge needed
       } else if (type === 'filen') {
         tokenData = await filenLogin(config.email, config.password, config.tfa_code || '');
       } else {
@@ -1594,6 +1596,30 @@ export const localAdapter = {
       return filenBrowse(tokenData, path);
     } else {
       throw new Error(`Drive type '${type}' not supported in browser mode`);
+    }
+  },
+
+  /**
+   * Download a single cloud file and return { blob: Blob, name: string }.
+   * path format: "/folderUuid/file/fileUuid" (both Internxt and Filen)
+   */
+  async downloadCloudFile(driveId, path) {
+    const rows = await query('SELECT type,token_data FROM cloud_drives WHERE id=?', [driveId]);
+    if (!rows.length) throw new Error('Drive not found');
+    const { type, token_data } = rows[0];
+    if (!token_data) throw new Error('Drive not mounted — call mountCloudDrive first');
+    const tokenData = JSON.parse(token_data);
+
+    // Extract file UUID — path ends with /file/<uuid>
+    const fileUuid = path.includes('/file/') ? path.split('/file/').pop().split('/')[0]
+                                              : path.split('/').pop();
+
+    if (type === 'internxt') {
+      return internxtDownloadFile(tokenData, fileUuid);
+    } else if (type === 'filen') {
+      return filenDownloadFile(tokenData, fileUuid);
+    } else {
+      throw new Error(`File download not supported for drive type '${type}' in browser mode (SMB/SFTP require a server)`);
     }
   },
 
