@@ -20,8 +20,8 @@ const fs           = require('fs');
 // ── Env / CLI args ────────────────────────────────────────────────────────────
 
 const PORT    = process.env.PORT    || process.argv[2] || 7861;
-const DB_PATH = process.env.DB_PATH || process.argv[3] ||
-  path.join(__dirname, '..', 'face_recognition.db');
+const DB_PATH = path.resolve(process.env.DB_PATH || process.argv[3] ||
+  path.join(__dirname, '..', 'face_recognition.db'));
 
 process.env.DB_PATH = DB_PATH;
 

@@ -17,8 +17,8 @@ let _path = null;
 
 function getDbPath() {
   if (_path) return _path;
-  return process.env.DB_PATH ||
-    path.join(__dirname, '..', '..', 'face_recognition.db');
+  const p = process.env.DB_PATH || path.join(__dirname, '..', '..', 'face_recognition.db');
+  return path.resolve(p);
 }
 
 function getDb() {
