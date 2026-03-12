@@ -1131,7 +1131,7 @@
 
     <!-- Creator picker (single free-text with autocomplete) -->
     <div class="picker-group">
-      <label class="picker-label">{$t('pv_creator_label') || 'Creator'}</label>
+      <label class="picker-label">{$t('pv_creator_label')}</label>
       <div class="picker-chips">
         {#if creatorInput}
           <span class="chip">{creatorInput}
@@ -1142,7 +1142,7 @@
             <input
               type="text"
               class="picker-input"
-              placeholder={$t('pv_creator_placeholder') || 'Creator name…'}
+              placeholder={$t('pv_creator_placeholder')}
               bind:value={creatorInput}
               on:focus={() => creatorDropdownOpen = true}
               on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
@@ -1161,7 +1161,7 @@
 
     <!-- Copyright picker (single free-text with autocomplete) -->
     <div class="picker-group">
-      <label class="picker-label">{$t('pv_copyright_label') || 'Copyright'}</label>
+      <label class="picker-label">{$t('pv_copyright_label')}</label>
       <div class="picker-chips">
         {#if copyrightInput}
           <span class="chip">{copyrightInput}
@@ -1172,7 +1172,7 @@
             <input
               type="text"
               class="picker-input"
-              placeholder={$t('pv_copyright_placeholder') || '© 2025 Name…'}
+              placeholder={$t('pv_copyright_placeholder')}
               bind:value={copyrightInput}
               on:focus={() => copyrightDropdownOpen = true}
               on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}

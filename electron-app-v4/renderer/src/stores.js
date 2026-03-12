@@ -565,6 +565,10 @@ const EN = {
   pv_album_label:            'Album',
   pv_album_placeholder:      'Pick or type new album…',
   pv_album_new_prefix:       'Create:',
+  pv_creator_label:          'Creator',
+  pv_creator_placeholder:    'Creator name…',
+  pv_copyright_label:        'Copyright',
+  pv_copyright_placeholder:  '© 2025 Name…',
   pv_submit_batch_job:       'Create batch job',
   pv_follow_symlinks:        'Follow symbolic links',
 
@@ -1150,6 +1154,10 @@ export const TRANSLATIONS = {
     pv_album_label:            'Album',
     pv_album_placeholder:      'Album wählen oder eingeben…',
     pv_album_new_prefix:       'Erstellen:',
+    pv_creator_label:          'Urheber',
+    pv_creator_placeholder:    'Urhebername…',
+    pv_copyright_label:        'Copyright',
+    pv_copyright_placeholder:  '© 2025 Name…',
     pv_submit_batch_job:       'Stapelauftrag erstellen',
     pv_follow_symlinks:        'Symlinks folgen',
 
