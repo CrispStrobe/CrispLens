@@ -211,13 +211,15 @@ function _guard(msg, fallbackFn = null) {
 }
 
 async function _fetch(method, path, body) {
-  if (_localMode) {
-    console.warn(`[api] _fetch(${method}, ${path}) called in local mode!`);
-    throw new Error('Server calls disabled in standalone mode');
-  }
-  
+  // Cloud drives and filesystem browse are SERVER features — they should work
+  // regardless of _localMode.  Primary image/people data is guarded by _guard().
+  return _fetchDirect(method, path, body);
+}
+
+/** Explicit server-only fetch that bypasses _localMode checks. Used for FS/Cloud/Batch features. */
+async function _fetchDirect(method, path, body) {
   const fullUrl = BASE + path;
-  console.log(`[api] fetch: ${method} ${fullUrl}`, body ? '(with body)' : '');
+  console.log(`[api] fetchDirect: ${method} ${fullUrl}`, body ? '(with body)' : '');
 
   const opts = {
     method,
@@ -241,7 +243,6 @@ async function _fetch(method, path, body) {
     }
     return res.text();
   } catch (err) {
-    // Stringify error for better logs on Capacitor
     const errMsg = err.message || JSON.stringify(err);
     console.error(`[api] ${method} ${path} error:`, errMsg);
     throw new Error(errMsg);
@@ -254,29 +255,6 @@ const put  = (path, body)  => _fetch('PUT',    path, body);
 const patch = (path, body) => _fetch('PATCH',  path, body);
 const del  = (path)        => _fetch('DELETE', path);
 
-// Direct server fetch — bypasses the _localMode guard.
-// Use for features that are always server-side regardless of which data source
-// the user has chosen (cloud drives, filesystem browse, settings, etc.).
-async function _fetchDirect(method, path, body) {
-  const fullUrl = BASE + path;
-  console.log(`[api] fetchDirect: ${method} ${fullUrl}`, body ? '(with body)' : '');
-  const opts = { method, headers: body ? { 'Content-Type': 'application/json' } : {}, credentials: 'include' };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  try {
-    const res = await robustFetch(fullUrl, opts);
-    console.log(`[api] response: ${method} ${path} → ${res.status} ${res.statusText}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`${method} ${path} → ${res.status}: ${text}`);
-    }
-    const ct = res.headers.get('content-type') || '';
-    return ct.includes('application/json') ? res.json() : res.text();
-  } catch (err) {
-    const errMsg = err.message || JSON.stringify(err);
-    console.error(`[api] ${method} ${path} error:`, errMsg);
-    throw new Error(errMsg);
-  }
-}
 const getD  = (path)       => _fetchDirect('GET',    path);
 const postD = (path, body) => _fetchDirect('POST',   path, body);
 const putD  = (path, body) => _fetchDirect('PUT',    path, body);

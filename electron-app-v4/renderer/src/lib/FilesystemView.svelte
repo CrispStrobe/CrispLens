@@ -792,13 +792,76 @@
     addProgress = { total: filePaths.length, done: 0, errors: 0, current: '' };
     backgroundTask.set({ label: 'Uploading to DB', done: 0, total: filePaths.length });
 
+    const isStandalone = isLocalMode();
+    let engine;
+    let vlmCfg = {};
+    let vlmKeys = {};
+    let detRetries = 1;
+
+    if (isStandalone) {
+      console.log('[FSView] Standalone mode: initializing local inference engine...');
+      try {
+        const mod = await import('./FaceEngineWeb.js');
+        engine = mod.default || mod.faceEngineWeb;
+        // Load current settings to get VLM provider/model
+        const s = await fetchSettings();
+        vlmCfg = s?.vlm || {};
+        detRetries = s?.face_recognition?.insightface?.det_retries ?? 1;
+        const { localAdapter } = await import('./LocalAdapter.js');
+        vlmKeys = await localAdapter.getVlmKeys();
+        
+        const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/ort-wasm';
+        engine.setModelBaseUrl(modelBase);
+      } catch (err) {
+        console.error('[FSView] Failed to init engine:', err);
+        addErrorList = [...addErrorList, { name: 'Engine Init', error: err.message }];
+        adding = false;
+        return;
+      }
+    }
+
     for (const filePath of filePaths) {
       if (!adding) break;
       const name = filePath.split('/').pop();
       addProgress = { ...addProgress, current: name };
       try {
         const buffer = await window.electronAPI.readLocalFile(filePath);
-        await uploadLocal(buffer, filePath, visibility, {}, { creator: ingestCreator || null, copyright: ingestCopyright || null });
+        if (!buffer) throw new Error('Could not read file data');
+
+        if (isStandalone) {
+          // Axis 1: Standalone (WASM Inference)
+          const fileObj = new File([buffer], name, { type: 'image/jpeg' });
+          const faceData = await engine.processFile(fileObj, {
+            det_thresh:    ingestDetThresh,
+            min_face_size: ingestMinFace,
+            det_model:     ingestDetModel,
+            max_retries:   detRetries,
+            visibility:    'shared',
+            vlm_enabled:   !ingestSkipVlm,
+            vlm_provider:  vlmCfg.provider,
+            vlm_model:     vlmCfg.model,
+            vlm_keys:      vlmKeys,
+            thumb_size:    ingestThumbSize,
+            onProgress: (m) => { backgroundTask.set({ label: `[${name}] ${m}`, done: addProgress.done, total: filePaths.length }); }
+          });
+          
+          // Inject original info
+          faceData.filename = name;
+          faceData.local_path = filePath;
+          if (hasElectron) faceData.filepath = filePath;
+
+          await importProcessed({ 
+            ...faceData, 
+            duplicate_mode: ingestDupMode,
+            creator: ingestCreator.trim() || null, 
+            copyright: ingestCopyright.trim() || null 
+          });
+        } else {
+          // Axis 2: Server-side processing
+          await uploadLocal(buffer, filePath, visibility, 
+            { det_thresh: ingestDetThresh, min_face_size: ingestMinFace, det_model: ingestDetModel, max_size: ingestMaxSize }, 
+            { creator: ingestCreator || null, copyright: ingestCopyright || null });
+        }
         addProgress = { ...addProgress, done: addProgress.done + 1 };
       } catch (e) {
         addErrorList = [...addErrorList, { name, error: e?.message || String(e) }];
@@ -806,6 +869,9 @@
       }
       backgroundTask.set({ label: 'Uploading to DB', done: addProgress.done, total: filePaths.length });
     }
+
+    // Release ONNX models (~200 MB)
+    try { if (engine?.releaseModels) await engine.releaseModels(); } catch {}
 
     adding = false;
     addDone = true;

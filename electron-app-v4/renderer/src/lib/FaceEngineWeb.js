@@ -166,15 +166,25 @@ export class FaceEngineWeb {
       let resp=await cache.match(canonicalKey);
       if(!resp) resp=await cache.match(fetchUrl);
       if(!resp){
+        console.log(`[FaceEngineWeb] Model ${filename} not in cache, fetching from ${fetchUrl}...`);
         this._progress(`Downloading ${filename}…`);
         resp=await fetch(fetchUrl);
-        if(!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
-        try { await cache.put(canonicalKey, resp.clone()); } catch(e) {
+        if(!resp.ok) {
+          console.error(`[FaceEngineWeb] Fetch failed for ${filename}: ${resp.status}`);
+          throw new Error(`Fetch failed: ${resp.status}`);
+        }
+        try { 
+          await cache.put(canonicalKey, resp.clone()); 
+          console.log(`[FaceEngineWeb] Model ${filename} saved to Cache API`);
+        } catch(e) {
           console.warn('[FaceEngineWeb] Cache.put skipped (Electron/CSP restriction):', e.message);
         }
+      } else {
+        console.log(`[FaceEngineWeb] Model ${filename} loaded from Cache API`);
       }
       return resp.arrayBuffer();
     }
+    console.log(`[FaceEngineWeb] Cache API not available, fetching ${filename} directly...`);
     const resp = await fetch(fetchUrl);
     return resp.arrayBuffer();
   }
@@ -268,16 +278,33 @@ export class FaceEngineWeb {
       let n=b.length; const u=new Uint8Array(n); while(n--) u[n]=b.charCodeAt(n);
       file=new File([u], 'image.jpg', {type:m});
     }
+    
+    // Set engine progress callback
+    if (opts.onProgress) this.onProgress = opts.onProgress;
+
     console.log(`[FaceEngineWeb] processFile START | name=${file.name} size=${(file.size/1024).toFixed(1)}KB det_thresh=${opts.det_thresh??'default'} min_face=${opts.min_face_size??'default'} vlm=${opts.vlm_enabled?opts.vlm_provider:'off'}`);
+    this._progress('Loading image…');
+    
     const t0=performance.now();
-    const img=await this._loadImage(file);
+    let img;
+    try {
+      img = await this._loadImage(file);
+    } catch (e) {
+      console.error(`[FaceEngineWeb] Failed to load image ${file.name}:`, e);
+      this._progress('Error: Could not load image');
+      throw e;
+    }
+
     // Always revoke the blob URL when done, even on error.
     const imgBlobUrl = img.src.startsWith('blob:') ? img.src : null;
     try {
       const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
 
       // ── Detection ─────────────────────────────────────────────────────────
+      this._progress('Initializing detector…');
       await this._initDetector();
+      
+      this._progress('Running face detection…');
       let faces;
       {
         // Scoped block so canvas + pixel data are eligible for GC before recognition.
@@ -286,48 +313,45 @@ export class FaceEngineWeb {
         const rgba=ctx.getImageData(0,0,SCRFD_SIZE,SCRFD_SIZE).data;
         const it=new ort.Tensor('float32', new Float32Array(3*px), [1,3,SCRFD_SIZE,SCRFD_SIZE]);
         for(let i=0;i<px;i++){ it.data[i]=(rgba[i*4]-127.5)/128; it.data[i+px]=(rgba[i*4+1]-127.5)/128; it.data[i+px*2]=(rgba[i*4+2]-127.5)/128; }
+        
+        console.log('[FaceEngineWeb] Detector run...');
         const detRes=await this._run(this._detSession, this._detEp, { [this._detSession.inputNames[0]]: it });
+        
+        this._progress('Decoding faces…');
         faces=decodeSCRFD(detRes, this._detSession.outputNames, invScale, opts.det_thresh||0.5);
         for(const t of Object.values(detRes)) t.dispose?.();
         it.dispose();
-        // canvas, ctx, rgba go out of scope here → GC-eligible
       }
       faces=applyNMS(faces);
       console.log(`[FaceEngineWeb] Detection: ${faces.length} face(s) after NMS | ${(performance.now()-t0).toFixed(0)}ms`);
 
       // ── Recognition ───────────────────────────────────────────────────────
-      await this._initRecognizer();
+      if (faces.length > 0) {
+        this._progress('Initializing recognizer…');
+        await this._initRecognizer();
+      }
+
       const facePayloads=[];
-      for(const f of faces){
+      for(let i=0; i<faces.length; i++){
+        const f = faces[i];
+        this._progress(`Embedding face ${i+1}/${faces.length}…`);
+        
         const {a,b,tx,ty}=similarityTransform(f.landmarks, ARC_DST);
         let emb, face_crop_b64 = null;
         {
-          // Scoped block so the face crop canvas is GC-eligible after each face.
           const fc=new OffscreenCanvas(ARCFACE_SIZE, ARCFACE_SIZE);
           const fctx=fc.getContext('2d'); fctx.setTransform(a,b,-b,a,tx,ty); fctx.drawImage(img,0,0);
           const sp=ARCFACE_SIZE*ARCFACE_SIZE;
           const frgba=fctx.getImageData(0,0,ARCFACE_SIZE,ARCFACE_SIZE).data;
           const fit=new ort.Tensor('float32', new Float32Array(3*sp), [1,3,ARCFACE_SIZE,ARCFACE_SIZE]);
-          for(let i=0;i<sp;i++){ fit.data[i]=(frgba[i*4+2]-127.5)/128; fit.data[i+sp]=(frgba[i*4+1]-127.5)/128; fit.data[i+sp*2]=(frgba[i*4]-127.5)/128; }
-          // Debug: log ArcFace input tensor stats
-          {
-            const d=fit.data, n=d.length;
-            let mn=Infinity, mx=-Infinity, sm=0;
-            for(let i=0;i<n;i++){sm+=d[i]; if(d[i]<mn)mn=d[i]; if(d[i]>mx)mx=d[i];}
-            console.log(`[FaceEngineWeb] ArcFace input: ${ARCFACE_SIZE}×${ARCFACE_SIZE} BGR f32 NCHW [1,3,${ARCFACE_SIZE},${ARCFACE_SIZE}] | mean=${(sm/n).toFixed(4)} min=${mn.toFixed(4)} max=${mx.toFixed(4)} | first8=[${Array.from(d.slice(0,8)).map(v=>v.toFixed(3))}]`);
-          }
+          for(let j=0;j<sp;j++){ fit.data[j]=(frgba[j*4+2]-127.5)/128; fit.data[j+sp]=(frgba[j*4+1]-127.5)/128; fit.data[j+sp*2]=(frgba[j*4]-127.5)/128; }
+          
           const recRes=await this._run(this._recSession, this._recEp, { [this._recSession.inputNames[0]]: fit });
           const rawEmb=Array.from(recRes[this._recSession.outputNames[0]].data);
-          const rawNorm=Math.sqrt(rawEmb.reduce((s,v)=>s+v*v,0));
           emb=l2normalize(rawEmb);
-          const embNorm=Math.sqrt(emb.reduce((s,v)=>s+v*v,0));
-          console.log(`[FaceEngineWeb] ArcFace output: dim=${rawEmb.length} raw_L2=${rawNorm.toFixed(4)} → L2-norm'd=${embNorm.toFixed(4)} | first8=[${emb.slice(0,8).map(v=>v.toFixed(4))}]`);
           for(const t of Object.values(recRes)) t.dispose?.(); fit.dispose();
-          // fc, fctx, frgba go out of scope here
         }
 
-        // Per-face thumbnail from original high-res image (not ArcFace 112px crop).
-        // Includes 20% padding around the bbox for a natural portrait crop.
         try {
           const [fx1,fy1,fx2,fy2]=f.bbox;
           const fw=fx2-fx1, fh=fy2-fy1;
@@ -339,13 +363,13 @@ export class FaceEngineWeb {
           ftc.getContext('2d').drawImage(img, cx, cy, cw, ch, 0, 0, FACE_THUMB, FACE_THUMB);
           const ftb=await ftc.convertToBlob({type:'image/jpeg',quality:0.9});
           face_crop_b64=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.readAsDataURL(ftb);});
-          console.log(`[FaceEngineWeb] Face ${facePayloads.length} thumbnail: ${FACE_THUMB}×${FACE_THUMB} from bbox=[${[Math.round(fx1),Math.round(fy1),Math.round(fx2),Math.round(fy2)]}] src_crop=${cw}×${ch}px`);
         } catch(e) { console.warn('[FaceEngineWeb] face thumbnail failed:', e.message); }
 
         facePayloads.push({ bbox_left:Math.max(0,f.bbox[0]/W), bbox_top:Math.max(0,f.bbox[1]/H), bbox_right:Math.min(1,f.bbox[2]/W), bbox_bottom:Math.min(1,f.bbox[3]/H), detection_confidence:f.score, embedding:emb, embedding_dimension:emb.length, face_crop_b64 });
       }
 
-      // ── Thumbnail (generate before SHA-256 to avoid holding two large buffers) ──
+      // ── Thumbnail ──────────────────────────────────────────────────────────
+      this._progress('Generating thumbnail…');
       const thumbSize = opts.thumb_size || 200;
       let thumbnail_b64 = '';
       try {
@@ -357,10 +381,10 @@ export class FaceEngineWeb {
         thumbnail_b64 = await new Promise(res => {
           const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(tb);
         });
-        // tc, tb go out of scope
       } catch(e) { console.warn('[FaceEngineWeb] thumbnail generation failed:', e.message); }
 
-      // ── SHA-256 hash (read file once; done after all large in-memory work) ──
+      // ── SHA-256 hash ──────────────────────────────────────────────────────
+      this._progress('Computing hash…');
       const hash=Array.from(new Uint8Array(
         await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
       )).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -368,6 +392,7 @@ export class FaceEngineWeb {
       // ── VLM enrichment ────────────────────────────────────────────────────
       let description = null, scene_type = null, tags = [];
       if (opts.vlm_enabled && opts.vlm_provider && opts.vlm_keys?.[opts.vlm_provider]) {
+        this._progress(`AI Enrichment (${opts.vlm_provider})…`);
         try {
           const vlmMod = await import('./VlmWeb.js');
           const vlmClient = vlmMod.vlmClientWeb ?? vlmMod.default;
@@ -385,8 +410,9 @@ export class FaceEngineWeb {
         }
       }
 
+      this._progress('Done');
       const elapsed = (performance.now()-t0).toFixed(0);
-      console.log(`[FaceEngineWeb] processFile DONE | faces=${facePayloads.length} vlm=${description?'✓':'none'} thumb=${thumbnail_b64?'✓':'none'} total=${elapsed}ms`);
+      console.log(`[FaceEngineWeb] processFile DONE | faces=${facePayloads.length} vlm=${description?'✓':'none'} total=${elapsed}ms`);
       const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '.jpg';
       return { local_path:file.name, filename:file.name,
                filepath:`browser:${hash}${ext}`,
@@ -394,7 +420,6 @@ export class FaceEngineWeb {
                file_hash:hash, thumbnail_b64, faces:facePayloads,
                description, scene_type, tags };
     } finally {
-      // Always revoke the blob URL so the browser can free the decoded image memory.
       if (imgBlobUrl) URL.revokeObjectURL(imgBlobUrl);
     }
   }

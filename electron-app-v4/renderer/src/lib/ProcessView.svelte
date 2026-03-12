@@ -586,7 +586,10 @@
                 vlm_prompt:    $t('vlm_prompt'),
                 vlm_keys:      vlmKeys,
                 thumb_size:    thumb_size_final,
-                onProgress: (msg) => { webInferMsg = `[${item.name}] ${msg}`; },
+                onProgress: (msg) => { 
+                  webInferMsg = `[${item.name}] ${msg}`;
+                  queue = queue.map(q => q.id === item.id ? { ...q, engineMsg: msg } : q);
+                },
               });
 
               console.log(`[ProcessView] processFile OK for ${item.name}. VLM description present: ${!!faceData.description}. Importing results...`);
@@ -1317,7 +1320,9 @@
               {#if item.status === 'queued'}<span class="badge queued">⬆ {$t('offline_push_btn')}</span>{/if}
             </div>
             <div class="line2">
-              {#if item.status === 'done' && item.description}
+              {#if item.status === 'processing' && item.engineMsg}
+                <span class="desc engine-msg">⚡ {item.engineMsg}…</span>
+              {:else if item.status === 'done' && item.description}
                 <span class="desc">{item.description.slice(0, 120)}{item.description.length > 120 ? '…' : ''}</span>
               {:else if item.status === 'done' && item.sceneType}
                 <span class="desc muted">{item.sceneType}</span>
@@ -1693,6 +1698,7 @@
     display: block;
     max-width: 100%;
   }
+  .engine-msg { color: #a0c4ff; font-style: italic; }
   .desc.muted { color: #404055; }
   .desc.err   { color: #e07070; white-space: normal; word-break: break-word; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
