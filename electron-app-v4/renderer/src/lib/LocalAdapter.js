@@ -954,7 +954,9 @@ export const localAdapter = {
       const { faceEngineWeb } = await import('./FaceEngineWeb.js');
       
       // Ensure engine knows where to find models in this session
-      const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models/';
+      // For standalone/PWA, we MUST use a relative path so the Service Worker can intercept/cache it.
+      // Absolute URLs like http://localhost:7861/models/ bypass the offline cache when the server is off.
+      const modelBase = '/models/';
       console.log(`[LocalAdapter] Configuring engine modelBaseUrl: ${modelBase}`);
       faceEngineWeb.setModelBaseUrl(modelBase);
       
@@ -964,20 +966,22 @@ export const localAdapter = {
       let effectiveMinFaceSize = params.min_face_size || 60;
 
       // Try fetching the full image from the server (if filepath looks like a URL or we are on the same origin)
-      try {
-        const fullUrl = toWebUrl(imgRow.filepath);
-        console.log(`[LocalAdapter] Attempting to fetch full image from: ${fullUrl}`);
-        const res = await fetch(fullUrl);
-        if (res.ok) {
-          const blob = await res.blob();
-          fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: blob.type || 'image/jpeg' });
-          sourceInfo = 'Full File (Remote/Local URL)';
-          console.log(`[LocalAdapter] Successfully loaded full image (${blob.size} bytes)`);
-        } else {
-          console.warn(`[LocalAdapter] Full image fetch failed (status ${res.status})`);
+      if (imgRow.filepath && !imgRow.filepath.startsWith('browser:')) {
+        try {
+          const fullUrl = toWebUrl(imgRow.filepath);
+          console.log(`[LocalAdapter] Attempting to fetch full image from: ${fullUrl}`);
+          const res = await fetch(fullUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            fileObj = new File([blob], imgRow.filename || 'image.jpg', { type: blob.type || 'image/jpeg' });
+            sourceInfo = 'Full File (Remote/Local URL)';
+            console.log(`[LocalAdapter] Successfully loaded full image (${blob.size} bytes)`);
+          } else {
+            console.warn(`[LocalAdapter] Full image fetch failed (status ${res.status})`);
+          }
+        } catch (err) {
+          console.warn(`[LocalAdapter] Full image fetch error: ${err.message}`);
         }
-      } catch (err) {
-        console.warn(`[LocalAdapter] Full image fetch error: ${err.message}`);
       }
 
       // Fallback to thumbnail_blob if full file failed

@@ -2,7 +2,8 @@
 import * as ort from 'onnxruntime-web';
 
 // Configure onnxruntime-web WASM paths
-const wasmBase = (typeof self !== 'undefined' ? self.location.origin : '') + '/ort-wasm/';
+// For standalone/PWA, we MUST use a relative path so the Service Worker can intercept/cache it.
+const wasmBase = '/ort-wasm/';
 console.log(`[FaceEngineWeb] Setting wasmPaths to: ${wasmBase}`);
 ort.env.wasm.wasmPaths = wasmBase;
 ort.env.wasm.numThreads = 1;

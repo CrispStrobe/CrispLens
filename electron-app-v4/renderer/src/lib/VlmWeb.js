@@ -7,24 +7,36 @@
  */
 
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { robustFetch } from './RobustFetch.js';
 
 // Helper for native-safe fetch
 async function crossFetch(url, options = {}) {
+  // 1. Electron Proxy
+  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
+    try {
+      const res = await window.electronAPI.proxyFetch(url, options);
+      if (!res.ok && res.error) throw new Error(res.error);
+      return {
+        ok: res.ok, status: res.status, statusText: res.statusText,
+        json: async () => res.data,
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
+      };
+    } catch (e) {
+      console.warn('[VlmWeb/crossFetch] Electron proxy failed, falling back to fetch:', e.message);
+    }
+  }
+
+  // 2. Capacitor Native HTTP
   if (Capacitor.isNativePlatform()) {
-    console.log(`[crossFetch] Native platform detected, using CapacitorHttp for: ${url}`);
-    
-    // Map fetch options to CapacitorHttp options
+    console.log(`[VlmWeb/crossFetch] Native platform detected, using CapacitorHttp for: ${url}`);
     const capOptions = {
       url,
       method: options.method || 'GET',
       headers: options.headers || {},
       data: options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
     };
-    
     try {
       const response = await CapacitorHttp.request(capOptions);
-      
-      // Mock a fetch-like response object
       return {
         ok: response.status >= 200 && response.status < 300,
         status: response.status,
@@ -33,13 +45,34 @@ async function crossFetch(url, options = {}) {
         text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
       };
     } catch (err) {
-      console.error('[crossFetch] Native HTTP error:', err);
+      console.error('[VlmWeb/crossFetch] Native HTTP error:', err);
       throw err;
     }
   }
-  
+
+  // 3. Browser Standalone: try direct fetch first, then fallback to proxy
+  const isTargetCrossDomain = typeof window !== 'undefined' && !url.startsWith('/') && !url.startsWith(window.location.origin);
+  if (isTargetCrossDomain) {
+    console.log(`[VlmWeb/crossFetch] Standalone: trying direct fetch for ${url}`);
+    try {
+      // Use a shorter timeout for direct attempt
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+      console.log(`[VlmWeb/crossFetch] Direct fetch success (status ${res.status}) for ${url}`);
+      return res;
+    } catch (err) {
+      console.warn(`[VlmWeb/crossFetch] Direct fetch failed (CORS?), falling back to server proxy:`, err.message);
+      // Fallback to the centralized robustFetch which handles the server proxy path correctly
+      return robustFetch(url, options);
+    }
+  }
+
   return fetch(url, options);
 }
+
+const isWeb = typeof window !== 'undefined' && !window.electronAPI && !Capacitor.isNativePlatform();
 
 const OPENAI_COMPATIBLE = {
   'openai':     'https://api.openai.com/v1',

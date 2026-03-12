@@ -564,9 +564,11 @@
     addProgress = { total: filePaths.length, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
     backgroundTask.set({ label: 'Processing from cloud', done: 0, total: filePaths.length });
 
-    let engine;
+    let engine, vlmKeys = {};
     try {
       engine = await _getWebEngine();
+      const { localAdapter } = await import('./LocalAdapter.js');
+      vlmKeys = await localAdapter.getVlmKeys();
     } catch (e) {
       adding = false;
       error = `Failed to load face engine: ${e.message}`;
@@ -595,6 +597,8 @@
           det_model:     ingestDetParams.det_model,
           max_size:      ingestDetParams.max_size || undefined,
           vlm_enabled:   !ingestSkipVlm,
+          vlm_provider:  vlmProvider,
+          vlm_keys:      vlmKeys,
         });
 
         // 3. Store result in LocalAdapter (importProcessed routes via _guard)

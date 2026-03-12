@@ -35,18 +35,11 @@ export default defineConfig({
         },
         {
           // voy-search WASM binary (wasm-bindgen bundler target).
-          // Vite's assetsInclude:['**/*.wasm'] rewrites the static import in voy_search.js
-          // to a URL namespace; __wbg_set_wasm then receives a URL string instead of the
-          // module exports, leaving wasm.voy_new undefined. LocalAdapter._getVoyIndex()
-          // works around this by manually fetching the binary from this known path and
-          // calling WebAssembly.instantiate() to inject the real exports.
           src: 'node_modules/voy-search/voy_search_bg.wasm',
           dest: 'assets',
         },
         {
-          // MediaPipe tasks-vision WASM runtime — served from /mediapipe/ so
-          // FaceEngineWeb.js can use FilesetResolver.forVisionTasks('/mediapipe/')
-          // without hitting an external CDN (works offline / on LAN).
+          // MediaPipe tasks-vision WASM runtime
           src: 'node_modules/@mediapipe/tasks-vision/wasm/*',
           dest: 'mediapipe',
         },
@@ -80,38 +73,44 @@ export default defineConfig({
         categories: ['photography', 'productivity', 'utilities'],
       },
       workbox: {
-        // Exclude JS/CSS from precache — they have no content hashes so revision=null
-        // means the SW won't refresh them on update. These are handled by NetworkFirst
-        // runtime caching below, which always fetches fresh from server.
+        // Precaching static layout assets
         globPatterns: ['**/*.{html,png,svg,ico,woff,woff2}'],
-        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
+        maximumFileSizeToCacheInBytes: 20 * 1024 * 1024, // 20MB
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [
-          /^\/api\//, 
-          /^\/models\//, 
-          /^\/ort-wasm\//, 
-          /^\/wasm\//, 
-          /^\/assets\//,
-          /\.(js|mjs|wasm|css|png|jpg|jpeg|gif|svg|ico|json)$/
-        ],
+        // Denylist must only contain API calls, NOT our logic bundles/wasm
+        navigateFallbackDenylist: [/^\/api\//],
         cleanupOutdatedCaches: true,
         skipWaiting: true,
         clientsClaim: true,
         runtimeCaching: [
-          // JS/CSS app bundles: NetworkFirst so new builds load immediately without
-          // requiring SW unregistration. Files have no content hashes so CacheFirst
-          // would serve stale bundles indefinitely after an update.
+          // JS/CSS bundles: StaleWhileRevalidate for instant load + background update
           {
-            urlPattern: /\/assets\/.*\.(js|css)$/,
-            handler: 'NetworkFirst',
+            urlPattern: /\/assets\/.*\.(js|mjs|css)$/,
+            handler: 'StaleWhileRevalidate',
             options: {
-              cacheName: 'crisplens-app-bundles',
-              // No timeout — local server always responds fast; timeout would cause
-              // stale fallback masking updates when server is briefly slow.
-              networkTimeoutSeconds: 0,
+              cacheName: 'crisplens-app-logic',
+              expiration: { maxEntries: 100, maxAgeSeconds: 7 * 24 * 60 * 60 },
             },
           },
-          // Thumbnails: CacheFirst — automatically cached as user browses (enables offline gallery)
+          // WASM runtimes (ONNX, SQLite, Voy): CacheFirst (they change very rarely)
+          {
+            urlPattern: /^\/(ort-wasm|mediapipe|wasm)\/.*\.wasm$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'crisplens-wasm-runtimes',
+              expiration: { maxEntries: 50, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            },
+          },
+          // ONNX WASM helper modules (.mjs / .js inside /ort-wasm/)
+          {
+            urlPattern: /^\/ort-wasm\/.*\.(js|mjs)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'crisplens-wasm-helpers',
+              expiration: { maxEntries: 20, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            },
+          },
+          // Thumbnails: CacheFirst
           {
             urlPattern: /\/api\/images\/\d+\/thumbnail/,
             handler: 'CacheFirst',
@@ -120,36 +119,26 @@ export default defineConfig({
               expiration: { maxEntries: 5000, maxAgeSeconds: 30 * 24 * 60 * 60 },
             },
           },
-          {
-            urlPattern: /^\/ort-wasm\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'crisplens-wasm-assets',
-              expiration: { maxEntries: 50 },
-            },
-          },
-          { urlPattern: /^\/api\//, handler: 'NetworkOnly' },
-          // ONNX models: cache-first after first download (very large, rarely change)
+          // ONNX AI models: CacheFirst
           {
             urlPattern: /^\/models\//,
             handler: 'CacheFirst',
             options: {
               cacheName: 'crisplens-onnx-models',
-              expiration: { maxEntries: 10 },
+              expiration: { maxEntries: 10, maxAgeSeconds: 30 * 24 * 60 * 60 },
             },
           },
+          // API always hits network
+          { urlPattern: /^\/api\//, handler: 'NetworkOnly' },
         ],
       },
     }),
   ],
 
-  // Exclude pre-built WASM packages from Vite's esbuild optimizer.
-  // These packages manage their own WASM initialization; bundling them breaks it.
   optimizeDeps: {
     exclude: ['onnxruntime-web', 'voy-search'],
   },
 
-  // Treat .wasm files as assets so Rollup doesn't try to parse them
   assetsInclude: ['**/*.wasm'],
 
   server: {
@@ -171,7 +160,6 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    // Disable hashing for predictable filenames (fixes dynamic import issues on some hosts)
     rollupOptions: {
       output: {
         entryFileNames: `assets/[name].js`,

@@ -77,7 +77,9 @@ if (uiDist) {
       } else {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
-      console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')} from ${finalPath}`);
+      if (process.env.DEBUG) {
+        console.log(`[server] PRIORITY SERVE: ${req.path} -> ${res.getHeader('Content-Type')} from ${finalPath}`);
+      }
       return res.sendFile(finalPath);
     }
     res.status(404).send('Asset not found');
