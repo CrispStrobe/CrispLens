@@ -16,13 +16,13 @@
 
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, dialog,
-  shell, nativeImage, protocol,
+  shell, nativeImage, protocol, net,
 } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const os   = require('os');
 const http = require('http');
-const net  = require('net');
+const nodeNet = require('net');
 
 // ── localfile:// protocol — serve arbitrary local paths with auth ─────────────
 protocol.registerSchemesAsPrivileged([
@@ -42,7 +42,7 @@ function findFreePort(start) {
   return new Promise((resolve, reject) => {
     const try_ = (p) => {
       if (p > start + 20) return reject(new Error(`No free port found in range ${start}–${start + 20}`));
-      const s = net.createServer();
+      const s = nodeNet.createServer();
       s.once('error', () => try_(p + 1));
       s.once('listening', () => s.close(() => resolve(p)));
       s.listen(p, '127.0.0.1');
@@ -347,6 +347,39 @@ function registerIpc() {
       catch (err) { results.push({ path: p, ok: false, error: err.message }); }
     }
     return results;
+  });
+
+  /** Generic network proxy to bypass CORS (renderer calls via window.electronAPI.proxyFetch). */
+  ipcMain.handle('proxy-fetch', async (_e, url, options = {}) => {
+    console.log(`[main] proxy-fetch: ${options.method || 'GET'} ${url}`);
+    try {
+      const response = await net.fetch(url, options);
+      const headers = {};
+      response.headers.forEach((v, k) => { headers[k] = v; });
+
+      let data;
+      const contentType = (headers['content-type'] || '').toLowerCase();
+      if (contentType.includes('application/json')) {
+        data = await response.json();
+      } else if (contentType.includes('text/') || contentType.includes('xml') || contentType.includes('javascript')) {
+        data = await response.text();
+      } else {
+        // Binary data (images, shards, etc.) — return as Uint8Array
+        const ab = await response.arrayBuffer();
+        data = new Uint8Array(ab);
+      }
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+        data,
+      };
+    } catch (err) {
+      console.error(`[main] proxy-fetch error for ${url}:`, err.message);
+      return { ok: false, error: err.message };
+    }
   });
 }
 

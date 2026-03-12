@@ -44,4 +44,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Generic IPC ─────────────────────────────────────────────────────────────
   on:   (channel, cb) => ipcRenderer.on(channel, (_e, ...args) => cb(...args)),
   send: (channel, ...args) => ipcRenderer.send(channel, ...args),
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+
+  // ── Network Proxy (to bypass CORS) ──────────────────────────────────────────
+  proxyFetch: (url, options) => ipcRenderer.invoke('proxy-fetch', url, options),
 });

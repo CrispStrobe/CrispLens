@@ -147,14 +147,77 @@ function generateKeys(password) {
 const INTERNXT_API = 'https://gateway.internxt.com/drive';
 const INTERNXT_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json', 'internxt-client': 'internxt-cli' };
 
+/**
+ * Robust fetch that bypasses CORS in Electron (via main process proxy)
+ * and on Mobile (via Capacitor native HTTP).
+ */
+async function robustFetch(url, options = {}) {
+  // 1. Electron Proxy (highest priority for Desktop)
+  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
+    try {
+      const res = await window.electronAPI.proxyFetch(url, options);
+      if (!res.ok && res.error) throw new Error(res.error);
+      return {
+        ok: res.ok, status: res.status, statusText: res.statusText,
+        json: async () => res.data,
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+        arrayBuffer: async () => {
+          if (res.data instanceof Uint8Array) return res.data.buffer;
+          if (typeof res.data === 'string') return new TextEncoder().encode(res.data).buffer;
+          return new ArrayBuffer(0);
+        },
+        headers: { get: (n) => res.headers[n] || res.headers[n.toLowerCase()] }
+      };
+    } catch (e) {
+      console.warn('[robustFetch] Electron proxy failed, falling back to fetch:', e.message);
+    }
+  }
+
+  // 2. Capacitor Native HTTP (for mobile)
+  const Cap = (typeof window !== 'undefined') ? (window.Capacitor || globalThis.Capacitor) : null;
+  if (Cap?.isNativePlatform?.()) {
+    try {
+      const { CapacitorHttp } = Cap;
+      const res = await CapacitorHttp.request({
+        url,
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        data: options.body ? JSON.parse(options.body) : undefined,
+      });
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        json: async () => res.data,
+        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+        arrayBuffer: async () => {
+          // Capacitor usually returns base64 for binary data
+          if (typeof res.data === 'string') {
+            const bin = atob(res.data.replace(/^data:[^;]+;base64,/, ''));
+            const u8 = new Uint8Array(bin.length);
+            for (let i=0; i<bin.length; i++) u8[i] = bin.charCodeAt(i);
+            return u8.buffer;
+          }
+          return new ArrayBuffer(0);
+        },
+        headers: { get: (n) => res.headers[n] || res.headers[n.toLowerCase()] }
+      };
+    } catch (e) {
+      console.warn('[robustFetch] Capacitor native failed, falling back to fetch:', e.message);
+    }
+  }
+
+  // 3. Standard fetch (subject to CORS)
+  return fetch(url, options);
+}
+
 async function apiGet(url, extraHeaders = {}) {
-  const r = await fetch(url, { method: 'GET', headers: { ...INTERNXT_HEADERS, ...extraHeaders } });
+  const r = await robustFetch(url, { method: 'GET', headers: { ...INTERNXT_HEADERS, ...extraHeaders } });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.message || data.error || `HTTP ${r.status}`);
   return data;
 }
 async function apiPost(url, body, extraHeaders = {}) {
-  const r = await fetch(url, { method: 'POST', headers: { ...INTERNXT_HEADERS, ...extraHeaders }, body: JSON.stringify(body) });
+  const r = await robustFetch(url, { method: 'POST', headers: { ...INTERNXT_HEADERS, ...extraHeaders }, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.message || data.error || `HTTP ${r.status}`);
   return data;
@@ -303,7 +366,7 @@ const FILEN_API = 'https://gateway.filen.io';
 async function filenFetch(method, path, { body, apiKey } = {}) {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const r = await fetch(`${FILEN_API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const r = await robustFetch(`${FILEN_API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   if (!r.ok || data.status === false) throw new Error(data.message || `Filen HTTP ${r.status}`);
   return data.data ?? data;
@@ -430,7 +493,7 @@ export async function internxtDownloadFile(tokenData, fileUuid) {
 
   // Step 2: network shard info (Basic auth: bridgeUser:userId)
   const basic    = btoa(`${bridgeUser}:${userId}`);
-  const linkRes  = await fetch(`${INTERNXT_NETWORK}/buckets/${bucketId}/files/${fileId}/info`, {
+  const linkRes  = await robustFetch(`${INTERNXT_NETWORK}/buckets/${bucketId}/files/${fileId}/info`, {
     headers: { 'x-api-version': '2', Authorization: `Basic ${basic}` },
   });
   if (!linkRes.ok) throw new Error(`Internxt network info HTTP ${linkRes.status}`);
@@ -441,7 +504,7 @@ export async function internxtDownloadFile(tokenData, fileUuid) {
   if (!indexHex)  throw new Error('Internxt: no index in network info');
 
   // Step 3: download encrypted binary
-  const encRes  = await fetch(shardUrl);
+  const encRes  = await robustFetch(shardUrl);
   if (!encRes.ok) throw new Error(`Internxt shard download HTTP ${encRes.status}`);
   const encData = new Uint8Array(await encRes.arrayBuffer());
 
@@ -501,7 +564,7 @@ export async function filenDownloadFile(tokenData, fileUuid) {
   const decryptedChunks = [];
   for (let i = 0; i < chunks; i++) {
     const url       = `${FILEN_EGEST}/${region}/${bucket}/${fileUuid}/${i}`;
-    const chunkRes  = await fetch(url);
+    const chunkRes  = await robustFetch(url);
     if (!chunkRes.ok) throw new Error(`Filen chunk ${i} HTTP ${chunkRes.status}`);
     const chunkData = new Uint8Array(await chunkRes.arrayBuffer());
     const iv        = chunkData.slice(0, 12);
