@@ -75,6 +75,14 @@ class IngestRequest(BaseModel):
     paths: List[str] = ['/']
     recursive: bool = True
     visibility: str = 'shared'
+    # Detection params (v4-compatible)
+    det_thresh: Optional[float] = None
+    min_face_size: Optional[int] = None
+    rec_thresh: Optional[float] = None
+    max_size: Optional[int] = None
+    det_model: Optional[str] = None
+    skip_vlm: bool = True
+    duplicate_mode: str = 'skip'
 
 
 class RenameRequest(BaseModel):
@@ -346,6 +354,66 @@ def get_drive_config(drive_id: int,
         raise HTTPException(status_code=500, detail=f'Could not decrypt config: {e}')
 
 
+@router.get('/{drive_id}/download-file')
+async def download_drive_file(drive_id: int, path: str,
+                              user=Depends(get_current_user)):
+    """Download a single file from the cloud drive and stream it to the browser.
+    Used by the frontend for direct file download and for browser-side WASM ingest."""
+    import asyncio, mimetypes
+    s = _state()
+    conn = None
+    try:
+        conn = _db_connect(s.db_path)
+        row = conn.execute('SELECT * FROM cloud_drives WHERE id=?', (drive_id,)).fetchone()
+    finally:
+        if conn:
+            conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail='Drive not found')
+    drive = dict(row)
+    if not _user_can_see(drive, user):
+        raise HTTPException(status_code=403, detail='Access denied')
+
+    try:
+        loop = asyncio.get_event_loop()
+        item = {'path': path, 'name': os.path.basename(path)}
+        local_path, is_temp = await loop.run_in_executor(
+            None, lambda: download_to_temp(s.db_path, drive_id, item)
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    filename = os.path.basename(path)
+    mime, _ = mimetypes.guess_type(filename)
+
+    if is_temp:
+        async def _iter_and_cleanup():
+            try:
+                with open(local_path, 'rb') as fh:
+                    while True:
+                        chunk = fh.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    os.unlink(local_path)
+                except OSError:
+                    pass
+        from fastapi.responses import StreamingResponse as _SR
+        return _SR(
+            _iter_and_cleanup(),
+            media_type=mime or 'application/octet-stream',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        )
+    else:
+        from fastapi.responses import FileResponse
+        return FileResponse(local_path, filename=filename,
+                            media_type=mime or 'application/octet-stream')
+
+
 @router.post('/{drive_id}/ingest')
 async def ingest_drive(drive_id: int, body: IngestRequest,
                        user=Depends(get_current_user)):
@@ -401,9 +469,18 @@ async def ingest_drive(drive_id: int, body: IngestRequest,
                 if is_temp:
                     tmp_path = local_path
 
+                vlm_prov = None if body.skip_vlm else s.vlm_provider
                 result = await loop.run_in_executor(
                     None,
-                    lambda lp=local_path: s.engine.process_image(lp, s.vlm_provider),
+                    lambda lp=local_path: s.engine.process_image(
+                        lp, vlm_prov,
+                        det_thresh=body.det_thresh,
+                        min_face_size=body.min_face_size,
+                        rec_thresh=body.rec_thresh,
+                        max_size=body.max_size or 0,
+                        det_model=body.det_model or 'auto',
+                        skip_vlm=body.skip_vlm,
+                    ),
                 )
                 r = result if isinstance(result, dict) else {}
                 image_id = r.get('image_id')

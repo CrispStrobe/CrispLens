@@ -326,22 +326,49 @@ else
             CREATE INDEX IF NOT EXISTS idx_album_shares_user  ON album_shares(user_id);
         " 2>/dev/null && info "album_shares table ensured" || true
 
-        # cloud_drives table (added 2026-02-22)
+        # cloud_drives table (v2 schema — updated 2026-03-12)
+        # Uses config_encrypted (Fernet BLOB) + is_mounted/scope/allowed_roles/auto_mount/enabled
         run_sql "
             CREATE TABLE IF NOT EXISTS cloud_drives (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                name         TEXT NOT NULL,
-                type         TEXT NOT NULL,
-                config       TEXT NOT NULL,
-                mount_point  TEXT,
-                status       TEXT DEFAULT 'disconnected',
-                owner_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT NOT NULL,
+                type           TEXT NOT NULL,
+                config_encrypted BLOB NOT NULL DEFAULT '',
+                mount_point    TEXT,
+                scope          TEXT NOT NULL DEFAULT 'system',
+                owner_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                allowed_roles  TEXT NOT NULL DEFAULT '[\"admin\",\"medienverwalter\"]',
+                auto_mount     INTEGER NOT NULL DEFAULT 0,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                is_mounted     INTEGER NOT NULL DEFAULT 0,
+                last_error     TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_cloud_drives_owner  ON cloud_drives(owner_id);
-            CREATE INDEX IF NOT EXISTS idx_cloud_drives_status ON cloud_drives(status);
+            CREATE INDEX IF NOT EXISTS idx_cloud_drives_type   ON cloud_drives(type);
         " 2>/dev/null && info "cloud_drives table ensured" || true
+
+        # cloud_drives migrations: upgrade old schema (config → config_encrypted, status → is_mounted)
+        apply_migration "cloud_drives.config_encrypted" \
+            "ALTER TABLE cloud_drives ADD COLUMN config_encrypted BLOB NOT NULL DEFAULT '';"
+        apply_migration "cloud_drives.scope" \
+            "ALTER TABLE cloud_drives ADD COLUMN scope TEXT NOT NULL DEFAULT 'system';"
+        apply_migration "cloud_drives.allowed_roles" \
+            "ALTER TABLE cloud_drives ADD COLUMN allowed_roles TEXT NOT NULL DEFAULT '[\"admin\",\"medienverwalter\"]';"
+        apply_migration "cloud_drives.auto_mount" \
+            "ALTER TABLE cloud_drives ADD COLUMN auto_mount INTEGER NOT NULL DEFAULT 0;"
+        apply_migration "cloud_drives.enabled" \
+            "ALTER TABLE cloud_drives ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"
+        apply_migration "cloud_drives.is_mounted" \
+            "ALTER TABLE cloud_drives ADD COLUMN is_mounted INTEGER NOT NULL DEFAULT 0;"
+        apply_migration "cloud_drives.last_error" \
+            "ALTER TABLE cloud_drives ADD COLUMN last_error TEXT;"
+        apply_migration "cloud_drives.updated_at" \
+            "ALTER TABLE cloud_drives ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"
+        # v4-compat: token column (plain JSON session token used by v4 Node.js backend)
+        apply_migration "cloud_drives.token" \
+            "ALTER TABLE cloud_drives ADD COLUMN token TEXT;"
 
         # batch_jobs + batch_job_files tables (added 2026-02-28)
         run_sql "
@@ -422,18 +449,28 @@ fi
 # =============================================================================
 step "Syncing Svelte frontend (renderer/dist/)"
 
-DIST_SRC="${REPO_DIR}/electron-app-v2/renderer/dist"
-DIST_DST="${INSTALL_DIR}/renderer/dist"
+# Prefer v4 renderer if it exists (v4 Node.js backend), fall back to v2
+if [[ -d "${REPO_DIR}/electron-app-v4/renderer/dist" ]]; then
+    DIST_SRC="${REPO_DIR}/electron-app-v4/renderer/dist"
+    DIST_DST="${INSTALL_DIR}/electron-app-v4/renderer/dist"
+elif [[ -d "${REPO_DIR}/electron-app-v2/renderer/dist" ]]; then
+    DIST_SRC="${REPO_DIR}/electron-app-v2/renderer/dist"
+    DIST_DST="${INSTALL_DIR}/renderer/dist"
+else
+    DIST_SRC=""
+fi
 
-if [[ -d "$DIST_SRC" ]]; then
+if [[ -n "$DIST_SRC" ]]; then
     mkdir -p "$DIST_DST"
     rsync -a --delete "${DIST_SRC}/" "${DIST_DST}/"
     if id "${SVC_USER}" &>/dev/null; then
-        chown -R "${SVC_USER}:${SVC_USER}" "${INSTALL_DIR}/renderer"
+        chown -R "${SVC_USER}:${SVC_USER}" "$(dirname "$DIST_DST")"
     fi
-    info "Frontend dist synced"
+    info "Frontend dist synced from ${DIST_SRC}"
 else
-    warn "renderer/dist/ not found in repo — build it first: cd electron-app-v2/renderer && npm run build"
+    warn "renderer/dist/ not found in repo — build it first:"
+    warn "  v4: cd electron-app-v4/renderer && npm run build"
+    warn "  v2: cd electron-app-v2/renderer && npm run build"
 fi
 
 # =============================================================================

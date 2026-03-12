@@ -128,6 +128,43 @@
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PEOPLE EMBEDDINGS (offline sync)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Single item from GET /api/people/embeddings.
+ * Server v4: server/routes/people.js GET /embeddings
+ * Server v2: routers/people.py GET /embeddings (added 2026-03-12)
+ * Used by: SyncManager._pullEmbeddings(), FaceEngineWeb.buildVoyIndex()
+ *
+ * @typedef {Object} PersonEmbedding
+ * @property {number} person_id   - people.id
+ * @property {string} name        - people.name
+ * @property {string} embedding   - base64-encoded Float32Array (512 floats = 2048 bytes)
+ * @property {number} dim         - embedding dimension (always 512)
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOUD DRIVE INGEST (detection params — v4-compatible, now in v2 as well)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Request body for POST /api/cloud-drives/{id}/ingest.
+ * Both v4 and v2 accept these params.
+ *
+ * @typedef {Object} CloudIngestRequest
+ * @property {string[]} paths            - cloud paths to ingest
+ * @property {boolean}  [recursive]      - recurse into subdirectories (default: true)
+ * @property {string}   [visibility]     - 'shared'|'private' (default: 'shared')
+ * @property {number}   [det_thresh]     - detection threshold 0..1 (default: backend default)
+ * @property {number}   [min_face_size]  - min face pixel size (default: backend default)
+ * @property {number}   [max_size]       - max image dimension before downscale (0=no limit)
+ * @property {string}   [det_model]      - 'auto'|'scrfd'|'yunet'|'retinaface'|'mediapipe'|'none'
+ * @property {boolean}  [skip_vlm]       - skip VLM enrichment (default: true)
+ * @property {string}   [duplicate_mode] - 'skip'|'update'|'add' (default: 'skip')
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RE-IDENTIFY
 // ─────────────────────────────────────────────────────────────────────────────
 

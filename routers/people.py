@@ -46,6 +46,49 @@ def list_people() -> List[Dict[str, Any]]:
     return s.engine.get_all_people()
 
 
+@router.get("/embeddings")
+def get_person_embeddings():
+    """Export one representative 512D embedding per known person (for offline sync).
+    Returns [{person_id, name, embedding: base64(Float32Array), dim}]."""
+    import base64
+    s = _state()
+    conn = None
+    try:
+        conn = _connect(s.db_path)
+        # One embedding per person: highest recognition_confidence, verified=1
+        rows = conn.execute("""
+            SELECT p.id AS person_id, p.name,
+                   fe.embedding_vector, fe.embedding_dimension
+            FROM people p
+            JOIN face_embeddings fe ON fe.person_id = p.id
+            WHERE fe.verified = 1 AND fe.embedding_vector IS NOT NULL
+              AND fe.id = (
+                  SELECT id FROM face_embeddings
+                  WHERE person_id = p.id AND verified = 1 AND embedding_vector IS NOT NULL
+                  ORDER BY recognition_confidence DESC
+                  LIMIT 1
+              )
+        """).fetchall()
+        result = []
+        for row in rows:
+            blob = row['embedding_vector']
+            if blob is None:
+                continue
+            dim = row['embedding_dimension'] or (len(blob) // 4)
+            result.append({
+                'person_id': row['person_id'],
+                'name':      row['name'],
+                'embedding': base64.b64encode(blob).decode('ascii'),
+                'dim':       dim,
+            })
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
 @router.get("/{person_id}")
 def get_person(person_id: int):
     s = _state()
