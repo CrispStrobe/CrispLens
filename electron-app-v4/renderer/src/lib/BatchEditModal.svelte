@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { patchMetadata } from '../api.js';
+  import { patchMetadata, batchEditImages } from '../api.js';
   import { t, selectedItems, galleryImages } from '../stores.js';
 
   const dispatch = createEventDispatcher();
@@ -8,6 +8,9 @@
   let description = '';
   let tags_csv = '';
   let scene_type = '';
+  let creator = '';
+  let copyright = '';
+  let tags_mode = 'replace';  // 'replace' | 'add'
   let saving = false;
 
   const SCENE_TYPES = ['', 'indoor', 'outdoor', 'portrait', 'group',
@@ -17,12 +20,21 @@
     saving = true;
     try {
       const ids = Array.from($selectedItems);
-      for (const id of ids) {
-        // We only want to update fields that are NOT empty if we want to "merge" or "overwrite selective"
-        // But for simplicity, let's just patch what's provided.
-        // The backend patchMetadata currently overwrites all 3. 
-        // We might want a more sophisticated partial patch.
-        await patchMetadata(id, { description, scene_type, tags_csv });
+      const changes = {};
+      if (tags_csv || tags_mode === 'replace') {
+        if (tags_mode === 'add') changes.tags_add = tags_csv.split(',').map(t => t.trim()).filter(Boolean);
+        else changes.tags_csv = tags_csv;
+      }
+      if (creator.trim())   changes.creator   = creator.trim();
+      if (copyright.trim()) changes.copyright = copyright.trim();
+      // description and scene_type still use per-image patchMetadata (they have dedicated fields)
+      if (description || scene_type) {
+        for (const id of ids) {
+          await patchMetadata(id, { description, scene_type, tags_csv: '', creator: '', copyright: '' });
+        }
+      }
+      if (Object.keys(changes).length) {
+        await batchEditImages(ids, changes);
       }
       dispatch('saved');
       dispatch('close');
@@ -43,7 +55,19 @@
       <textarea bind:value={description} placeholder="New description for all selected..."></textarea>
 
       <label>{$t('tags')}</label>
-      <input type="text" bind:value={tags_csv} placeholder="tag1, tag2 (overwrites existing!)" />
+      <div class="tag-row">
+        <select bind:value={tags_mode} class="mode-sel">
+          <option value="replace">Replace all</option>
+          <option value="add">Add</option>
+        </select>
+        <input type="text" bind:value={tags_csv} placeholder="tag1, tag2…" style="flex:1" />
+      </div>
+
+      <label>{$t('pv_creator_label') || 'Creator'}</label>
+      <input type="text" bind:value={creator} placeholder="Creator name…" />
+
+      <label>{$t('pv_copyright_label') || 'Copyright'}</label>
+      <input type="text" bind:value={copyright} placeholder="© 2025 Name…" />
 
       <label>{$t('scene_type')}</label>
       <select bind:value={scene_type}>
@@ -85,4 +109,6 @@
   label { font-size: 12px; color: #7080a0; }
   textarea, input, select { width: 100%; }
   .actions { display: flex; justify-content: flex-end; gap: 12px; }
+  .tag-row { display: flex; gap: 6px; align-items: center; }
+  .mode-sel { width: auto; flex-shrink: 0; }
 </style>

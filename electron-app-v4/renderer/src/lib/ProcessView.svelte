@@ -1129,61 +1129,45 @@
       </div>
     </div>
 
-    <!-- Creator picker (single free-text with autocomplete) -->
+    <!-- Creator picker (always-visible input with autocomplete) -->
     <div class="picker-group">
       <label class="picker-label">{$t('pv_creator_label')}</label>
-      <div class="picker-chips">
-        {#if creatorInput}
-          <span class="chip">{creatorInput}
-            <button class="chip-remove" on:click={() => creatorInput = ''}>✕</button>
-          </span>
-        {:else}
-          <div class="picker-input-wrap" style="position:relative">
-            <input
-              type="text"
-              class="picker-input"
-              placeholder={$t('pv_creator_placeholder')}
-              bind:value={creatorInput}
-              on:focus={() => creatorDropdownOpen = true}
-              on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
-            />
-            {#if creatorDropdownOpen && filteredCreators.length}
-              <div class="picker-dropdown">
-                {#each filteredCreators as c}
-                  <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
-                {/each}
-              </div>
-            {/if}
+      <div class="picker-input-wrap" style="position:relative;flex:1">
+        <input
+          type="text"
+          class="picker-input"
+          placeholder={$t('pv_creator_placeholder')}
+          bind:value={creatorInput}
+          on:focus={() => creatorDropdownOpen = true}
+          on:blur={() => setTimeout(() => creatorDropdownOpen = false, 150)}
+        />
+        {#if creatorDropdownOpen && filteredCreators.length}
+          <div class="picker-dropdown">
+            {#each filteredCreators as c}
+              <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
+            {/each}
           </div>
         {/if}
       </div>
     </div>
 
-    <!-- Copyright picker (single free-text with autocomplete) -->
+    <!-- Copyright picker (always-visible input with autocomplete) -->
     <div class="picker-group">
       <label class="picker-label">{$t('pv_copyright_label')}</label>
-      <div class="picker-chips">
-        {#if copyrightInput}
-          <span class="chip">{copyrightInput}
-            <button class="chip-remove" on:click={() => copyrightInput = ''}>✕</button>
-          </span>
-        {:else}
-          <div class="picker-input-wrap" style="position:relative">
-            <input
-              type="text"
-              class="picker-input"
-              placeholder={$t('pv_copyright_placeholder')}
-              bind:value={copyrightInput}
-              on:focus={() => copyrightDropdownOpen = true}
-              on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}
-            />
-            {#if copyrightDropdownOpen && filteredCopyrights.length}
-              <div class="picker-dropdown">
-                {#each filteredCopyrights as c}
-                  <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
-                {/each}
-              </div>
-            {/if}
+      <div class="picker-input-wrap" style="position:relative;flex:1">
+        <input
+          type="text"
+          class="picker-input"
+          placeholder={$t('pv_copyright_placeholder')}
+          bind:value={copyrightInput}
+          on:focus={() => copyrightDropdownOpen = true}
+          on:blur={() => setTimeout(() => copyrightDropdownOpen = false, 150)}
+        />
+        {#if copyrightDropdownOpen && filteredCopyrights.length}
+          <div class="picker-dropdown">
+            {#each filteredCopyrights as c}
+              <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
+            {/each}
           </div>
         {/if}
       </div>

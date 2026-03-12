@@ -270,7 +270,7 @@
           <button class="primary" on:click={doConvert} disabled={saving}>
             {saving ? $t('conv_converting') : isBatch ? `${$t('conv_convert')} ${imageIds.length}` : $t('conv_convert')}
           </button>
-          <button on:click={handleClose} disabled={saving}>{$t('cancel')}</button>
+          <button on:click={handleClose}>{$t('cancel')}</button>
         </div>
       {/if}
     </div>

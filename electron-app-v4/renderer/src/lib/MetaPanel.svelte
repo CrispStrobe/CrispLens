@@ -23,11 +23,16 @@
   let saving = false;
   let statusMsg = '';
   let showIdentifyModal = false;
+  let _editingId = null; // track which image's fields are loaded
 
   const SCENE_TYPES = ['', 'indoor', 'outdoor', 'portrait', 'group',
                        'landscape', 'event', 'nature', 'urban', 'other'];
 
-  $: if (image) {
+  // Only reset editable fields when switching to a different image.
+  // Prevents the reactive block from wiping in-progress edits when the parent
+  // re-assigns the same image object (e.g. after a gallery refresh).
+  $: if (image && image.id !== _editingId) {
+    _editingId   = image.id;
     description  = image.ai_description ?? '';
     scene_type   = image.ai_scene_type  ?? '';
     tags_csv     = (image.ai_tags_list ?? []).join(', ');

@@ -466,6 +466,57 @@ router.post('/filesystem/add', requireAuth, async (req, res) => {
   res.end();
 });
 
+// ── POST /filesystem/copy ──────────────────────────────────────────────────────
+
+router.post('/filesystem/copy', requireAuth, (req, res) => {
+  const { paths = [], dest_dir = '' } = req.body || {};
+  if (!dest_dir) return res.status(400).json({ detail: 'dest_dir required' });
+  if (!fs.existsSync(dest_dir)) {
+    try { fs.mkdirSync(dest_dir, { recursive: true }); } catch (e) {
+      return res.status(400).json({ detail: `Cannot create dest_dir: ${e.message}` });
+    }
+  }
+  const results = [];
+  for (const src of paths) {
+    if (!fs.existsSync(src)) { results.push({ src, ok: false, error: 'not found' }); continue; }
+    try {
+      const dest = path.join(dest_dir, path.basename(src));
+      fs.copyFileSync(src, dest);
+      results.push({ src, dest, ok: true });
+    } catch (e) {
+      results.push({ src, ok: false, error: e.message });
+    }
+  }
+  res.json({ ok: true, results });
+});
+
+// ── POST /filesystem/move ──────────────────────────────────────────────────────
+
+router.post('/filesystem/move', requireAuth, (req, res) => {
+  const { paths = [], dest_dir = '' } = req.body || {};
+  if (!dest_dir) return res.status(400).json({ detail: 'dest_dir required' });
+  if (!fs.existsSync(dest_dir)) {
+    try { fs.mkdirSync(dest_dir, { recursive: true }); } catch (e) {
+      return res.status(400).json({ detail: `Cannot create dest_dir: ${e.message}` });
+    }
+  }
+  const db = require('../db').getDb();
+  const results = [];
+  for (const src of paths) {
+    if (!fs.existsSync(src)) { results.push({ src, ok: false, error: 'not found' }); continue; }
+    try {
+      const dest = path.join(dest_dir, path.basename(src));
+      fs.renameSync(src, dest);
+      // Update DB if this file is tracked
+      db.prepare('UPDATE images SET filepath=?, local_path=? WHERE filepath=?').run(dest, dest, src);
+      results.push({ src, dest, ok: true });
+    } catch (e) {
+      results.push({ src, ok: false, error: e.message });
+    }
+  }
+  res.json({ ok: true, results });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DUPLICATES
 // ─────────────────────────────────────────────────────────────────────────────

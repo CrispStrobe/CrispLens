@@ -1015,6 +1015,13 @@ export function deleteCloudDriveItem(driveId, path) {
 
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
+export function copyFilesystem(paths, destDir) {
+  return post('/filesystem/copy', { paths, dest_dir: destDir });
+}
+export function moveFilesystem(paths, destDir) {
+  return post('/filesystem/move', { paths, dest_dir: destDir });
+}
+
 export function browseFilesystem(path = '') {
   // In local mode, filesystem browse requires a server session.
   // Return empty so the view shows gracefully instead of 401.

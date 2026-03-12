@@ -6,7 +6,8 @@
            renameCloudDriveItem, trashCloudDriveItem, deleteCloudDriveItem,
            downloadCloudFile, downloadCloudFileBlob, importProcessed, isLocalMode,
            downloadImage, openInOs, openFolderInOs,
-           batchEditImages, fetchCreators, fetchCopyrights, fetchTags, deleteImage } from '../api.js';
+           batchEditImages, fetchCreators, fetchCopyrights, fetchTags, deleteImage,
+           copyFilesystem, moveFilesystem } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const hasFSA      = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -539,6 +540,31 @@
       batchEditStatus = `Error: ${e.message}`;
     }
     batchEditBusy = false;
+  }
+
+  // ── Copy / Move panel ──────────────────────────────────────────────────────
+  let showCopyMove = false;
+  let copyMoveMode = 'copy'; // 'copy' | 'move'
+  let copyMoveDest = '';
+  let copyMoveBusy = false;
+  let copyMoveStatus = '';
+
+  async function applyFilesystemCopyMove() {
+    const paths = [...selected].filter(p => !entries.find(e => e.path === p)?.is_dir);
+    if (!paths.length || !copyMoveDest.trim()) return;
+    copyMoveBusy = true;
+    copyMoveStatus = '';
+    try {
+      const fn = copyMoveMode === 'copy' ? copyFilesystem : moveFilesystem;
+      const r = await fn(paths, copyMoveDest.trim());
+      const ok = r.results?.filter(x => x.ok).length ?? 0;
+      const fail = r.results?.filter(x => !x.ok).length ?? 0;
+      copyMoveStatus = `${ok} file${ok !== 1 ? 's' : ''} ${copyMoveMode === 'copy' ? 'copied' : 'moved'}${fail > 0 ? `, ${fail} failed` : ''}.`;
+      if (copyMoveMode === 'move') { clearSelection(); refresh(); }
+    } catch (e) {
+      copyMoveStatus = `Error: ${e.message}`;
+    }
+    copyMoveBusy = false;
   }
 
   async function deleteSelected() {
@@ -1400,16 +1426,28 @@
         </button>
         <button class="btn-sm det-toggle-btn" on:click={() => showIngestSettings = !showIngestSettings}
           title={$t('pv_det_settings')}>⚙{showIngestSettings ? '▲' : '▼'}</button>
-        {#if !cloudMode && !localMode && selectedInDbCount > 0}
-          <button class="btn-sm" on:click={downloadSelected}>
-            ⬇ {$t('download')} ({selectedInDbCount})
+        {#if !cloudMode && !localMode && selected.size > 0}
+          {#if selectedInDbCount > 0}
+            <button class="btn-sm" on:click={downloadSelected}>
+              ⬇ {$t('download')} ({selectedInDbCount})
+            </button>
+            <button class="btn-sm" on:click={openBatchEdit}>
+              ✏ Edit ({selectedInDbCount})
+            </button>
+          {/if}
+          <button class="btn-sm" on:click={() => { copyMoveMode = 'copy'; showCopyMove = !showCopyMove; copyMoveStatus = ''; }}
+            title="Copy selected files to another folder">
+            📋 Copy ({selected.size})
           </button>
-          <button class="btn-sm" on:click={openBatchEdit}>
-            ✏ Edit ({selectedInDbCount})
+          <button class="btn-sm" on:click={() => { copyMoveMode = 'move'; showCopyMove = !showCopyMove; copyMoveStatus = ''; }}
+            title="Move selected files to another folder">
+            ✂ Move ({selected.size})
           </button>
-          <button class="btn-sm btn-trash" on:click={deleteSelected}>
-            🗑 Delete ({selectedInDbCount})
-          </button>
+          {#if selectedInDbCount > 0}
+            <button class="btn-sm btn-trash" on:click={deleteSelected}>
+              🗑 Delete ({selectedInDbCount})
+            </button>
+          {/if}
         {/if}
         {#if cloudMode && cloudDriveId !== null}
           <button class="btn-sm" on:click={doDownloadCloud}
@@ -1427,6 +1465,7 @@
     </div>
     {#if showIngestSettings && !adding && !addDone}
       <div class="ingest-settings">
+        <div class="ingest-hint">⚙ These settings apply when adding selected files to the database.</div>
         {#if cloudMode}
         <div class="det-param-row">
           <label>{$t('pv_max_size_label')}: <span class="hint">{$t('pv_max_size_hint')}</span></label>
@@ -1532,11 +1571,13 @@
         <div style="position:relative;flex:1">
           <input type="text" class="picker-input" style="width:100%" placeholder="Creator name…"
             bind:value={beCreator}
+            on:focus={() => {}}
+            on:blur={() => setTimeout(() => {}, 100)}
           />
           {#if beCreator.trim() && beFilteredCreators.length}
             <div class="picker-dropdown">
               {#each beFilteredCreators as c}
-                <button class="picker-option" on:mousedown|preventDefault={() => beCreator = c}>{c}</button>
+                <button class="picker-option" on:mousedown|preventDefault={() => { beCreator = c; }}>{c}</button>
               {/each}
             </div>
           {/if}
@@ -1553,7 +1594,7 @@
           {#if beCopyright.trim() && beFilteredCopyrights.length}
             <div class="picker-dropdown">
               {#each beFilteredCopyrights as c}
-                <button class="picker-option" on:mousedown|preventDefault={() => beCopyright = c}>{c}</button>
+                <button class="picker-option" on:mousedown|preventDefault={() => { beCopyright = c; }}>{c}</button>
               {/each}
             </div>
           {/if}
@@ -1564,6 +1605,31 @@
         {#if batchEditStatus}<span class="be-status">{batchEditStatus}</span>{/if}
         <button class="primary" on:click={applyBatchEdit} disabled={batchEditBusy}>
           {batchEditBusy ? 'Saving…' : 'Apply'}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Copy / Move panel -->
+  {#if showCopyMove && !adding && !addDone}
+    <div class="batch-edit-panel">
+      <div class="batch-edit-header">
+        <strong>{copyMoveMode === 'copy' ? '📋 Copy' : '✂ Move'} — {selected.size} file{selected.size !== 1 ? 's' : ''}</strong>
+        <button class="btn-sm" on:click={() => { showCopyMove = false; copyMoveStatus = ''; }}>✕</button>
+      </div>
+      <div class="be-row">
+        <label class="be-label">Destination</label>
+        <input type="text" class="picker-input" style="flex:1"
+          bind:value={copyMoveDest}
+          placeholder="/path/to/destination"
+          on:keydown={e => e.key === 'Enter' && applyFilesystemCopyMove()}
+        />
+      </div>
+      <div class="be-footer">
+        {#if copyMoveStatus}<span class="be-status">{copyMoveStatus}</span>{/if}
+        <button class="primary" on:click={applyFilesystemCopyMove}
+          disabled={copyMoveBusy || !copyMoveDest.trim()}>
+          {copyMoveBusy ? 'Working…' : copyMoveMode === 'copy' ? 'Copy' : 'Move'}
         </button>
       </div>
     </div>
@@ -2091,6 +2157,8 @@
   }
   .btn-trash { color: #c07070; }
   .btn-trash:hover { background: #2a1a1a; color: #e08080; }
+
+  .ingest-hint { font-size: 11px; color: #606080; margin-bottom: 6px; font-style: italic; }
 
   /* ── Picker shared (batch edit) ── */
   .picker-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
