@@ -1545,11 +1545,12 @@ export const localAdapter = {
       } else if (type === 'filen') {
         await filenLogin(config.email, config.password, config.tfa_code || '');
       } else {
-        return { ok: false, error: `Drive type '${type}' not supported in browser mode` };
+        return { ok: false, message: `Drive type '${type}' not supported in browser mode` };
       }
-      return { ok: true };
+      return { ok: true, message: 'Connected OK' };
     } catch (e) {
-      return { ok: false, error: e.message };
+      console.error('[LocalAdapter] testCloudDrive error:', e);
+      return { ok: false, message: e.message };
     }
   },
 

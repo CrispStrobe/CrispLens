@@ -1,13 +1,4 @@
-/**
- * BrowserCloudDrives.js — Browser-native Internxt + Filen client.
- *
- * Ported from server/routes/cloud-drives.js to use SubtleCrypto + fetch so
- * cloud drives work in PWA / standalone (_localMode=true) without a v4 server.
- *
- * Auth flows are identical to the Node.js implementation:
- *   Internxt: EVP_BytesToKey(MD5) + AES-256-CBC + PBKDF2-SHA1
- *   Filen:    PBKDF2-SHA512 + AES-256-GCM
- */
+import { robustFetch } from '../api.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tiny MD5 (needed for Internxt's OpenSSL EVP_BytesToKey — not in SubtleCrypto)
@@ -146,69 +137,6 @@ function generateKeys(password) {
 // ─────────────────────────────────────────────────────────────────────────────
 const INTERNXT_API = 'https://gateway.internxt.com/drive';
 const INTERNXT_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json', 'internxt-client': 'internxt-cli' };
-
-/**
- * Robust fetch that bypasses CORS in Electron (via main process proxy)
- * and on Mobile (via Capacitor native HTTP).
- */
-async function robustFetch(url, options = {}) {
-  // 1. Electron Proxy (highest priority for Desktop)
-  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
-    try {
-      const res = await window.electronAPI.proxyFetch(url, options);
-      if (!res.ok && res.error) throw new Error(res.error);
-      return {
-        ok: res.ok, status: res.status, statusText: res.statusText,
-        json: async () => res.data,
-        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-        arrayBuffer: async () => {
-          if (res.data instanceof Uint8Array) return res.data.buffer;
-          if (typeof res.data === 'string') return new TextEncoder().encode(res.data).buffer;
-          return new ArrayBuffer(0);
-        },
-        headers: { get: (n) => res.headers[n] || res.headers[n.toLowerCase()] }
-      };
-    } catch (e) {
-      console.warn('[robustFetch] Electron proxy failed, falling back to fetch:', e.message);
-    }
-  }
-
-  // 2. Capacitor Native HTTP (for mobile)
-  const Cap = (typeof window !== 'undefined') ? (window.Capacitor || globalThis.Capacitor) : null;
-  if (Cap?.isNativePlatform?.()) {
-    try {
-      const { CapacitorHttp } = Cap;
-      const res = await CapacitorHttp.request({
-        url,
-        method: options.method || 'GET',
-        headers: options.headers || {},
-        data: options.body ? JSON.parse(options.body) : undefined,
-      });
-      return {
-        ok: res.status >= 200 && res.status < 300,
-        status: res.status,
-        json: async () => res.data,
-        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-        arrayBuffer: async () => {
-          // Capacitor usually returns base64 for binary data
-          if (typeof res.data === 'string') {
-            const bin = atob(res.data.replace(/^data:[^;]+;base64,/, ''));
-            const u8 = new Uint8Array(bin.length);
-            for (let i=0; i<bin.length; i++) u8[i] = bin.charCodeAt(i);
-            return u8.buffer;
-          }
-          return new ArrayBuffer(0);
-        },
-        headers: { get: (n) => res.headers[n] || res.headers[n.toLowerCase()] }
-      };
-    } catch (e) {
-      console.warn('[robustFetch] Capacitor native failed, falling back to fetch:', e.message);
-    }
-  }
-
-  // 3. Standard fetch (subject to CORS)
-  return fetch(url, options);
-}
 
 async function apiGet(url, extraHeaders = {}) {
   const r = await robustFetch(url, { method: 'GET', headers: { ...INTERNXT_HEADERS, ...extraHeaders } });
