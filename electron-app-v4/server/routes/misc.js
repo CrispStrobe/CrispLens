@@ -434,7 +434,7 @@ router.get('/filesystem/browse', requireAuth, (req, res) => {
 });
 
 router.post('/filesystem/add', requireAuth, async (req, res) => {
-  const { paths = [], recursive = true, visibility = 'shared' } = req.body || {};
+  const { paths = [], recursive = true, visibility = 'shared', creator = null, copyright = null } = req.body || {};
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -452,7 +452,7 @@ router.post('/filesystem/add', requireAuth, async (req, res) => {
   let done = 0, errors = 0;
   for (const fp of files) {
     try {
-      const r = await processImageIntoDb(fp, null, { visibility });
+      const r = await processImageIntoDb(fp, null, { visibility, creator, copyright });
       done++;
       send({ index: done, total: files.length, path: fp, image_id: r.imageId,
              result: { faces_detected: r.facesFound } });

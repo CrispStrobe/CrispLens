@@ -53,6 +53,8 @@
   let ingestDetModel    = 'auto';
   let ingestSkipVlm     = true;
   let ingestDupMode     = 'skip';
+  let ingestCreator     = '';
+  let ingestCopyright   = '';
   // Initialize thumb size from sync settings (same as offline sync uses), fall back to 400
   let ingestThumbSize = (() => {
     try {
@@ -107,6 +109,14 @@
         parentPath  = data.parent || null;
         entries     = data.entries;
       } else if (localMode) {
+        if (!hasElectron) {
+          // Standalone browser: FSA requires user gesture, can't browse programmatically.
+          // Show an empty view — user must click "Open Folder" to pick a directory.
+          currentPath = browsePath || '';
+          parentPath  = null;
+          entries     = [];
+          return;
+        }
         const data = await window.electronAPI.readLocalDir(browsePath || '');
         currentPath = data.path;
         parentPath  = data.parent;
@@ -569,6 +579,7 @@
     const paths  = [...selected];
     const hasDirs = paths.some(p => entries.find(e => e.path === p)?.is_dir);
 
+    const serverMeta = { creator: ingestCreator || undefined, copyright: ingestCopyright || undefined };
     addStream = addToDb(paths, hasDirs, event => {
       if (event.started) {
         addProgress = { ...addProgress, total: event.total };
@@ -598,7 +609,7 @@
         };
         backgroundTask.set({ label: 'Adding to DB', done: event.index, total: addProgress.total });
       }
-    }, visibility);
+    }, visibility, serverMeta);
   }
 
   // ── Cloud mode: ingest via SSE ─────────────────────────────────────────────
@@ -616,6 +627,7 @@
     });
     const hasDirs = paths.some(p => entries.find(e => e.path === p)?.is_dir);
 
+    const ingestMeta = { creator: ingestCreator || undefined, copyright: ingestCopyright || undefined };
     addStream = ingestCloudDrive(cloudDriveId, paths, hasDirs, visibility, event => {
       if (event.started) {
         addProgress = { ...addProgress, total: event.total, faces: 0 };
@@ -644,7 +656,7 @@
         };
         backgroundTask.set({ label: 'Fetching from cloud', done: event.index, total: addProgress.total });
       }
-    }, ingestDetParams);
+    }, { ...ingestDetParams, ...ingestMeta });
   }
 
   // ── Browser WASM mode: download cloud blob → FaceEngineWeb → LocalAdapter ──
@@ -704,7 +716,8 @@
 
         // 3. Store result in LocalAdapter (importProcessed routes via _guard)
         faceData.filename = name;
-        const r = await importProcessed({ ...faceData, duplicate_mode: ingestDupMode });
+        const r = await importProcessed({ ...faceData, duplicate_mode: ingestDupMode,
+          creator: ingestCreator || null, copyright: ingestCopyright || null });
 
         done++;
         totalFaces += r.face_count ?? faceData.faces?.length ?? 0;
@@ -748,7 +761,7 @@
       addProgress = { ...addProgress, current: name };
       try {
         const buffer = await window.electronAPI.readLocalFile(filePath);
-        await uploadLocal(buffer, filePath, visibility);
+        await uploadLocal(buffer, filePath, visibility, {}, { creator: ingestCreator || null, copyright: ingestCopyright || null });
         addProgress = { ...addProgress, done: addProgress.done + 1 };
       } catch (e) {
         addErrorList = [...addErrorList, { name, error: e?.message || String(e) }];
@@ -856,7 +869,7 @@
       addProgress = { ...addProgress, current: entry.name };
       try {
         const file = await entry.handle.getFile();
-        await uploadLocal(await file.arrayBuffer(), entry.name, visibility);
+        await uploadLocal(await file.arrayBuffer(), entry.name, visibility, {}, { creator: ingestCreator || null, copyright: ingestCopyright || null });
         addProgress = { ...addProgress, done: addProgress.done + 1 };
       } catch (e) {
         addErrorList = [...addErrorList, { name: entry.name, error: e?.message || String(e) }];
@@ -1385,10 +1398,8 @@
         <button class="primary" on:click={startAddToDb}>
           {cloudMode ? '⬇ ' + $t('fs_add_to_db_cloud') : localMode ? '⬆ ' + $t('fs_upload_to_db') : $t('fs_add_to_db')}
         </button>
-        {#if cloudMode}
-          <button class="btn-sm det-toggle-btn" on:click={() => showIngestSettings = !showIngestSettings}
-            title={$t('pv_det_settings')}>⚙{showIngestSettings ? '▲' : '▼'}</button>
-        {/if}
+        <button class="btn-sm det-toggle-btn" on:click={() => showIngestSettings = !showIngestSettings}
+          title={$t('pv_det_settings')}>⚙{showIngestSettings ? '▲' : '▼'}</button>
         {#if !cloudMode && !localMode && selectedInDbCount > 0}
           <button class="btn-sm" on:click={downloadSelected}>
             ⬇ {$t('download')} ({selectedInDbCount})
@@ -1414,8 +1425,9 @@
         <button class="btn-sm" on:click={clearSelection}>{$t('deselect')}</button>
       {/if}
     </div>
-    {#if cloudMode && showIngestSettings && !adding && !addDone}
+    {#if showIngestSettings && !adding && !addDone}
       <div class="ingest-settings">
+        {#if cloudMode}
         <div class="det-param-row">
           <label>{$t('pv_max_size_label')}: <span class="hint">{$t('pv_max_size_hint')}</span></label>
           <input type="number" bind:value={ingestMaxSize} min="0" max="9999" step="100"
@@ -1455,6 +1467,17 @@
           <input type="checkbox" bind:checked={ingestSkipVlm} />
           {$t('pv_skip_vlm')}
         </label>
+        {/if}
+        <div class="det-param-row">
+          <label>{$t('pv_creator_label') || 'Creator'}:</label>
+          <input type="text" bind:value={ingestCreator} placeholder="{$t('pv_creator_placeholder') || 'Creator name…'}"
+                 class="num-input" style="width:160px" />
+        </div>
+        <div class="det-param-row">
+          <label>{$t('pv_copyright_label') || 'Copyright'}:</label>
+          <input type="text" bind:value={ingestCopyright} placeholder="© 2025 Name…"
+                 class="num-input" style="width:160px" />
+        </div>
       </div>
     {/if}
   {/if}

@@ -14,9 +14,11 @@
 
   const dispatch = createEventDispatcher();
 
-  let description = '';
-  let scene_type  = '';
-  let tags_csv    = '';
+  let description  = '';
+  let scene_type   = '';
+  let tags_csv     = '';
+  let creator      = '';
+  let copyright    = '';
   let new_filename = '';
   let saving = false;
   let statusMsg = '';
@@ -29,14 +31,16 @@
     description  = image.ai_description ?? '';
     scene_type   = image.ai_scene_type  ?? '';
     tags_csv     = (image.ai_tags_list ?? []).join(', ');
-    new_filename = image.filename ?? '';
+    creator      = image.creator    ?? '';
+    copyright    = image.copyright  ?? '';
+    new_filename = image.filename   ?? '';
   }
 
   async function save() {
     saving = true;
     statusMsg = '';
     try {
-      await patchMetadata(image.id, { description, scene_type, tags_csv });
+      await patchMetadata(image.id, { description, scene_type, tags_csv, creator, copyright });
       statusMsg = '✓ Saved';
       dispatch('saved');
     } catch (e) {
@@ -159,6 +163,12 @@
   {#if image.created_at}
     <div class="exif-line">📥 <b>{$t('date_imported') || 'Imported'}:</b> {image.created_at}</div>
   {/if}
+  {#if image.creator}
+    <div class="exif-line">✍️ <b>{$t('pv_creator_label') || 'Creator'}:</b> {image.creator}</div>
+  {/if}
+  {#if image.copyright}
+    <div class="exif-line">© <b>{$t('pv_copyright_label') || 'Copyright'}:</b> {image.copyright}</div>
+  {/if}
 
   <!-- Collapsible extended details -->
   <details class="exif-details">
@@ -166,8 +176,8 @@
     {#if image.updated_at}
       <div class="exif-line">✏️ <b>{$t('date_modified')}:</b> {image.updated_at}</div>
     {/if}
-    {#if image.processed_at}
-      <div class="exif-line">⚙️ <b>{$t('date_processed') || 'Processed'}:</b> {image.processed_at}</div>
+    {#if image.processed_at ?? image.created_at}
+      <div class="exif-line">⚙️ <b>{$t('date_processed') || 'Processed'}:</b> {image.processed_at ?? image.created_at}</div>
     {/if}
     {#if image.file_size}
       <div class="exif-line">💾 <b>{$t('file_size') || 'Size'}:</b> {(image.file_size / 1024 / 1024).toFixed(2)} MB</div>
@@ -242,6 +252,12 @@
   <!-- Description -->
   <div class="section-label">📝 {$t('description')}</div>
   <textarea bind:value={description} rows="3" class="full" placeholder="{$t('description')}…"></textarea>
+
+  <!-- Creator / Copyright -->
+  <div class="section-label">✍️ {$t('pv_creator_label') || 'Creator'}</div>
+  <input type="text" bind:value={creator} class="full" placeholder="{$t('pv_creator_placeholder') || 'Creator name…'}" />
+  <div class="section-label">© {$t('pv_copyright_label') || 'Copyright'}</div>
+  <input type="text" bind:value={copyright} class="full" placeholder="{$t('pv_copyright_placeholder') || '© 2025 Name…'}" />
 
   <!-- Save -->
   <button class="primary full" on:click={save} disabled={saving}>

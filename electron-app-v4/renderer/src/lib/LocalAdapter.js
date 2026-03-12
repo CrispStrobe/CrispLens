@@ -895,8 +895,9 @@ export const localAdapter = {
         detected_people: faceRows,
         face_count:      faceRows.length,
         // Normalize date field names to match server API convention
-        taken_at:     r.date_taken    ?? null,
+        taken_at:     r.date_taken     ?? null,
         created_at:   r.date_processed ?? null,
+        processed_at: r.date_processed ?? null,
         file_size:    r.file_size ?? null,
         thumb_width,
         thumb_height,
