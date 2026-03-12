@@ -12,99 +12,13 @@ import syncManager from './lib/SyncManager.js';
 import { localAdapter, fileCache, thumbCache, toWebUrl } from './lib/LocalAdapter.js';
 import { localThumb } from './lib/LocalThumbnailCache.js';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { robustFetch, base64ToBlob } from './lib/RobustFetch.js';
 
-export { localThumb };
+export { localThumb, robustFetch };
 
 // ── Native-safe Fetch ────────────────────────────────────────────────────────
 // On iOS/Android, standard fetch() often fails due to CORS (capacitor://localhost).
 // Capacitor's built-in native HTTP bypasses this.
-
-/** Specific helper for robust fetch that bypasses CORS in Electron/Capacitor. */
-export async function robustFetch(url, options = {}) {
-  // 1. Electron Proxy (highest priority for Desktop)
-  if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
-    console.log(`[api] Electron: using proxyFetch for ${url}`);
-    try {
-      const res = await window.electronAPI.proxyFetch(url, options);
-      if (!res.ok && res.error) throw new Error(res.error);
-      return {
-        ok: res.ok, status: res.status, statusText: res.statusText,
-        json: async () => res.data,
-        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-        arrayBuffer: async () => {
-          if (res.data instanceof Uint8Array) return res.data.buffer;
-          if (typeof res.data === 'string') return new TextEncoder().encode(res.data).buffer;
-          return new ArrayBuffer(0);
-        },
-        blob: async () => {
-          if (res.data instanceof Uint8Array) return new Blob([res.data]);
-          if (typeof res.data === 'string') return new Blob([res.data]);
-          return new Blob([]);
-        },
-        headers: { get: (n) => res.headers[n] || res.headers[n.toLowerCase()] }
-      };
-    } catch (e) {
-      console.warn('[robustFetch] Electron proxy failed, falling back to fetch:', e.message);
-    }
-  }
-
-  // 2. Capacitor Native HTTP (for mobile)
-  if (Capacitor.isNativePlatform()) {
-    console.log(`[api] Native platform: using CapacitorHttp for ${url}`);
-    try {
-      // Map standard fetch to CapacitorHttp
-      const capOpts = {
-        url,
-        method: options.method || 'GET',
-        headers: {
-          ...options.headers,
-          // Support for cookies/credentials if needed
-          ...(options.credentials === 'include' ? { 'X-Capacitor-HTTP-Cookies': 'true' } : {})
-        },
-        // For non-GET requests, handle the body
-        data: options.method !== 'GET' && options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined,
-      };
-
-      const res = await CapacitorHttp.request(capOpts);
-      
-      // Map back to fetch-like Response
-      return {
-        ok: res.status >= 200 && res.status < 300,
-        status: res.status,
-        statusText: String(res.status),
-        json: async () => res.data,
-        text: async () => typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-        arrayBuffer: async () => {
-          // Capacitor usually returns base64 for binary data if responseType is not set
-          if (typeof res.data === 'string') {
-            const bin = atob(res.data.replace(/^data:[^;]+;base64,/, ''));
-            const u8 = new Uint8Array(bin.length);
-            for (let i=0; i<bin.length; i++) u8[i] = bin.charCodeAt(i);
-            return u8.buffer;
-          }
-          return new ArrayBuffer(0);
-        },
-        blob: async () => {
-          // If native HTTP returned base64, convert it
-          if (typeof res.data === 'string') {
-            const contentType = res.headers['Content-Type'] || res.headers['content-type'] || 'application/octet-stream';
-            return base64ToBlob(res.data.replace(/^data:[^;]+;base64,/, ''), contentType);
-          }
-          return res.data; // Already a Blob
-        },
-        headers: {
-          get: (name) => res.headers[name] || res.headers[name.toLowerCase()]
-        }
-      };
-    } catch (err) {
-      console.error('[api] CapacitorHttp error:', err);
-      throw err;
-    }
-  }
-
-  // 3. Standard fetch (subject to CORS)
-  return fetch(url, options);
-}
 
 /** Specific helper for multipart uploads on mobile */
 async function robustUpload(url, formData, options = {}) {
@@ -167,17 +81,6 @@ async function robustUpload(url, formData, options = {}) {
 }
 
 /** Helper to convert base64 to Blob for Capacitor native HTTP responses */
-function base64ToBlob(base64, contentType = '', sliceSize = 512) {
-  const byteCharacters = atob(base64);
-  const byteArrays = [];
-  for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
-    const slice = byteCharacters.slice(offset, offset + sliceSize);
-    const byteNumbers = new Array(slice.length);
-    for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
-    byteArrays.push(new Uint8Array(byteNumbers));
-  }
-  return new Blob(byteArrays, { type: contentType });
-}
 
 /** Fetch an image as an Object URL (bypassing CORS/Cookie issues on mobile) */
 export async function fetchImageAsUrl(url) {

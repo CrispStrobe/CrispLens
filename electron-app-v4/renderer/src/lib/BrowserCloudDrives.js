@@ -1,4 +1,4 @@
-import { robustFetch } from '../api.js';
+import { robustFetch } from './RobustFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tiny MD5 (needed for Internxt's OpenSSL EVP_BytesToKey — not in SubtleCrypto)
