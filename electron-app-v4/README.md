@@ -19,10 +19,12 @@ Run as a Node.js/Express server on your machine or VPS.
 
 ### 2. Standalone Mode (Browser-only / Demo)
 The app runs entirely within your web browser. Ideal for zero-install usage and extreme privacy.
-- **Database**: WASM SQLite (`@capacitor-community/sqlite`) stored in IndexedDB
-- **Inference**: SCRFD + ArcFace via `onnxruntime-web` + optional MediaPipe (GPU-accelerated)
-- **Storage Resolution**: Adjustable from 200px to 1200px via **Settings → Offline Cache**
-- **Offline Sync**: Processed embeddings queue locally and push to a remote server on reconnect
+- **Database**: WASM SQLite (`@capacitor-community/sqlite`) stored in IndexedDB.
+- **Inference**: SCRFD + ArcFace via `onnxruntime-web` + optional MediaPipe (GPU-accelerated).
+- **True Offline**: Service Worker (PWA) caches all logic and WASM binaries. Once loaded, the app works entirely without the Node server (including Face Detection, Search, and VLM).
+- **Direct Cloud Access**: Cloud downloads (Internxt/Filen) and VLM API calls go direct from browser to provider, bypassing the Node proxy whenever possible.
+- **Storage Resolution**: Adjustable from 200px to 1200px via **Settings → Offline Cache**.
+- **Offline Sync**: Processed embeddings queue locally and push to a remote server on reconnect.
 
 ### 3. Desktop App (Electron)
 Self-contained desktop app for macOS, Windows, and Linux. Bundles the Express server in-process — no separate terminal required.
@@ -129,14 +131,16 @@ v4 separates three concerns, allowing you to mix and match UI, API, and Inferenc
 │    • Same origin (default) — local v4 at localhost:7861     │
 │    • Standalone — Browser IndexedDB (no server)             │
 │    • Remote — any CrispLens v2 or v4 instance               │
-├─────────────────────────────────────────────────────────────┤
+├─────────────────────────────────────────────────────────────┐
 │  Axis 3: Inference Engine (Settings → Processing Override)  │
-│    Where face detection and embedding runs                  │
+│    Where face detection, embedding, and VLM enrichment runs │
 │    • Local ONNX — server-side (Node.js) or device (WASM)   │
+│    • Direct VLM — browser calls AI providers directly       │
 │    • Remote v2 — full image upload to remote server         │
 │    • Local Infer — device ONNX → only vectors sent remotely │
 │      (local_infer = privacy mode, full images never leave)  │
 └─────────────────────────────────────────────────────────────┘
+
 ```
 
 ---
@@ -150,6 +154,15 @@ All processing results, face thumbnails, and embeddings are stored in the browse
 - **Max size (MB)** — total IndexedDB budget
 
 The local Voy HNSW index (built from known-person embeddings) enables sub-millisecond face re-identification without any server round-trip.
+
+---
+
+## Proxy Middleware
+
+The v4 Node server includes a dedicated high-performance proxy for cloud storage and AI providers:
+- **CORS Bypass**: Allows browsers to call APIs that don't support CORS (like some legacy cloud gateways).
+- **Direct-First Logic**: The client (`RobustFetch.js`) always attempts a direct connection first for maximum speed and falls back to the server proxy only if needed.
+- **Reliability**: Optimized middleware ordering and increased timeouts (10 min) for handling large file transfers from Internxt and Filen.
 
 ---
 
@@ -257,3 +270,6 @@ Available backends depend on platform (shown automatically in Settings):
 | `localfile://` returns 404 | macOS Full Disk Access | Add CrispLens to System Preferences → Privacy → Full Disk Access |
 | Voy match returns "Unknown" | Unidentified embeddings in HNSW index | Fixed: only named-person embeddings are indexed |
 | Settings wiped after hard reset | Config keys not in preserved set | Fixed: `_CONFIG_KEYS` list saved/restored in `hardResetApp()` |
+| Standalone mode fails offline | Service Worker not updated | Rebuild UI (`npm run build`) and refresh browser to cache WASM/Logic |
+| Cloud download fails (400/504) | Proxy timeouts or auth issues | Fixed: use `RobustFetch` for direct access; proxy has 10m timeouts |
+| CORS error in standalone | Direct fetch blocked by provider | App automatically falls back to Node proxy if available |

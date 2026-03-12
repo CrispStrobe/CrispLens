@@ -46,8 +46,9 @@ A self-hosted face recognition and photo management system. Ships as a high-perf
 - **Duplicate Import Detection** — v4: SHA-256 pre-check before ONNX (fast skip), plus overwrite and always-add modes. v2: SHA256 / pHash / name+size with resolve actions.
 - **Privacy Mode** — `local_infer`: ONNX runs on your device, only 512D vectors + thumbnail sent to remote. Full images never leave your machine.
 - **Hybrid Ingest Modes** — direct upload, server-side folder scan, or `import-processed` (pre-computed vectors from any client).
-- **AI Image Enrichment** — 9 VLM providers (Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama); scene type, description, auto-tags.
-- **Offline-First (Standalone)** — browser-side WASM SQLite + HNSW index (Voy). Works without any server. Syncs to remote when back online.
+- **AI Image Enrichment** — 9 VLM providers (Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama); scene type, description, auto-tags. Works directly from the browser in Standalone mode.
+- **Offline-First (Standalone)** — browser-side WASM SQLite + HNSW index (Voy). True offline operation: Service Worker (PWA) caches all logic and WASM binaries so the app works even when the Node server is stopped.
+- **Direct Cloud Ingest** — Direct browser-to-cloud downloads for Internxt and Filen, bypassing the Node server for maximum performance and privacy.
 - **Role-based Access Control** — admin / mediamanager / user roles; image visibility (shared/private).
 - **Settings Persistence** — key settings survive hard reset via SQLite `pref_*` keys and preserved `localStorage` config keys.
 - **Image Editing** — EXIF-preserving rotate, free-draw crop, canvas resize, BFL AI editing (Flux Kontext/Fill).
@@ -68,10 +69,11 @@ node server.js          # → http://localhost:7861
 Login: **admin / admin**
 
 ### Standalone Mode (Browser-only)
-The app runs entirely in the browser using WASM SQLite and WASM ONNX — no server required.
+The app runs entirely in the browser using WASM SQLite and WASM ONNX.
 - **Database**: Browser IndexedDB (WASM SQLite).
 - **Inference**: SCRFD + ArcFace (WASM) + optional MediaPipe (GPU).
-- **Storage Resolution**: Adjustable via **Settings → Offline Cache → Thumbnail size** (200–1200 px).
+- **True Offline**: Service Worker (PWA) caches all Javascript bundles and WASM runtimes. The app remains fully functional (face detection, search, VLM) even if the Node server is stopped.
+- **Direct Ingest**: Browser downloads and decrypts cloud files (Internxt/Filen) directly, bypassing any server proxy.
 - **Offline Sync**: Processed results queue locally and push to a remote server on reconnect.
 
 ### Desktop App (Electron)
