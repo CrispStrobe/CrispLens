@@ -139,21 +139,24 @@ function startServer(dbPath) {
     process.env.PORT       = String(PORT);
     process.env.UPLOAD_DIR = path.join(path.dirname(dbPath), 'uploads');
 
-    // Load the Express app (server.js returns the app instance)
+    // Load the Express app
     let serverModule;
-    try { serverModule = require('./server.js'); }
-    catch (err) { return reject(err); }
+    try {
+      serverModule = require('./server.js');
+    } catch (err) {
+      return reject(err);
+    }
 
-    // server.js calls app.listen() itself and returns the app.
-    // Wait for it to be reachable.
-    const checkReady = (attempts = 0) => {
-      if (attempts > 40) return reject(new Error('Server did not start in time'));
-      http.get(`http://127.0.0.1:${PORT}/api/health`, res => {
-        if (res.statusCode === 200) { serverReady = true; resolve(); }
-        else setTimeout(() => checkReady(attempts + 1), 150);
-      }).on('error', () => setTimeout(() => checkReady(attempts + 1), 150));
-    };
-    checkReady();
+    // Call the exported startServer function with our resolved PORT
+    serverModule.startServer(PORT, '0.0.0.0')
+      .then(httpServer => {
+        expressApp = httpServer;
+        serverReady = true;
+        resolve();
+      })
+      .catch(err => {
+        reject(err);
+      });
   });
 }
 

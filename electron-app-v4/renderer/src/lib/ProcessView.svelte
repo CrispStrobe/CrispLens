@@ -522,11 +522,23 @@
           continue;
         }
       }
+      
+      // Electron fallback: read local file from path
+      if (!fileObj && inElectron && item.path) {
+        try {
+          const buffer = await window.electronAPI.readLocalFile(item.path);
+          if (buffer) {
+            fileObj = new File([buffer], item.name || 'photo.jpg', { type: 'image/jpeg' });
+          }
+        } catch (readErr) {
+          console.error(`[ProcessView] Could not read local file ${item.path}:`, readErr);
+        }
+      }
 
       if (!fileObj) {
         console.error(`[ProcessView] No file object for ${item.name}`);
         errorCount++;
-        queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'No file object — web local inference requires direct file selection' } : q);
+        queue = queue.map(q => q.id === item.id ? { ...q, status: 'error', error: 'No file object — could not read image data for inference' } : q);
         doneCount++;
         continue;
       }

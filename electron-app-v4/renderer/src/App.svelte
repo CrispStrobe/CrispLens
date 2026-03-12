@@ -68,6 +68,12 @@
   // Health-check via /api/health (always 200, no auth required).
   // Polling stops as soon as the backend is up; restarts only if it goes down.
   async function checkBackend() {
+    // STANDALONE MODE: Bypass the network health check entirely.
+    if (isLocalMode()) {
+      if (checkTimer) { clearInterval(checkTimer); checkTimer = null; }
+      return;
+    }
+
     attemptCount++;
     const url = serverUrl + '/api/health';
     dbg(`#${attemptCount} GET ${url}`);
@@ -272,24 +278,23 @@
     } catch { /* ignore */ }
 
     // ── Local (standalone) mode: browser WASM SQLite for image/face data ────────
-    // _localMode only controls WHERE image/face data comes from (local WASM vs server).
-    // Cloud drives + filesystem are always server-side and must work regardless.
     if (isLocalMode()) {
       console.log('[App] Standalone mode — initializing local WASM engine...');
+      backendReady.set(true);
+      modelReady.set(true);
+      sessionChecked = true;
+      
       setTimeout(async () => {
         try {
           const { getDB } = await import('./lib/LocalDB.js');
           await getDB();
           console.log('[App] Standalone engine initialized');
+          loadAll(); 
         } catch (e) {
           console.error('[App] Standalone engine initialization failed:', e);
+          loadAll(); // try anyway
         }
-      }, 500);
-
-      backendReady.set(true);
-      modelReady.set(true);
-      sessionChecked = true;
-      loadAll(); // _guard routes to local adapter; sets currentUser={username:'local',role:'admin'}
+      }, 100);
 
       return;
     }
@@ -300,15 +305,11 @@
       console.log('[App] Running in Electron');
       try {
         const s = await window.electronAPI.getSettings();
-        const client = s?.client || {};
-        if (client.connectTo === 'remote' && client.remoteUrl) {
-          console.log(`[App] Connecting to remote: ${client.remoteUrl}`);
-          applyServerUrl(client.remoteUrl);
-        } else if (s?.mode === 'remote' && s.remoteUrl) {
-          console.log(`[App] Connecting to remote (legacy): ${s.remoteUrl}`);
+        if (s?.remoteUrl) {
+          console.log(`[App] Connecting to remote: ${s.remoteUrl}`);
           applyServerUrl(s.remoteUrl);
         } else {
-          // Local mode — get the actual port assigned to Python
+          // Local mode — get the actual port assigned to the internal Node.js server
           try {
             const port = await window.electronAPI.getPort();
             console.log(`[App] Local server port: ${port}`);

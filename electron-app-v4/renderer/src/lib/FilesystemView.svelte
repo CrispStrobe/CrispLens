@@ -118,10 +118,11 @@
           entries     = [];
           return;
         }
+        // Electron: browse local disk
         const data = await window.electronAPI.readLocalDir(browsePath || '');
         currentPath = data.path;
         parentPath  = data.parent;
-        entries     = data.entries;
+        entries     = data.entries || [];
       } else {
         const data = await browseFilesystem(browsePath || '');
         currentPath = data.path;
@@ -229,6 +230,16 @@
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
       }
     }
+  }
+
+  async function pickLocalFolderElectron() {
+    if (!hasElectron) return;
+    try {
+      const paths = await window.electronAPI.openFolderDialog();
+      if (paths?.length) {
+        browse(paths[0]);
+      }
+    } catch (e) { console.error('pickLocalFolderElectron error:', e); }
   }
 
   async function doTrash() {
@@ -1066,7 +1077,8 @@
   {:else if localMode}
     <div class="mode-banner local-banner">
       {#if hasElectron}
-        💻 {$t('fs_upload_to_server')}
+        💻 {currentPath || $t('fs_local_folder_hint')}
+        <button class="btn-sm" style="margin-left:8px;" on:click={pickLocalFolderElectron}>{$t('pv_select_folder_btn')}</button>
       {:else if hasFSA && fsaStack.length > 0}
         📂 {fsaStack.map(s => s.name).join('/')} — {$t('fs_upload_to_db')}
         <button class="btn-sm" style="margin-left:8px;" on:click={pickFSARoot}>{$t('fs_change_folder')}</button>

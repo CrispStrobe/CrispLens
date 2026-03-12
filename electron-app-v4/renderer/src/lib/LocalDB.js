@@ -279,7 +279,9 @@ export async function getDB() {
       
       // Initialize WebStore for all non-native platforms (Web, PWA, Electron)
       const isNative = window.location.protocol === 'capacitor:';
-      if (!isNative) {
+      const isWeb = !isNative;
+      
+      if (isWeb) {
         console.log('[LocalDB] Step 3: Initializing WebStore (indexedDB)...');
         await sqlite.initWebStore();
         console.log('[LocalDB] WebStore initialized');
@@ -325,7 +327,6 @@ export async function getDB() {
       // only needed for existing databases created before the columns were added.
       try {
         console.log('[LocalDB] Starting migrations check...');
-        const isWeb = window.location.protocol !== 'capacitor:';
 
         async function columnExists(table, col) {
           const res = await _db.query(`PRAGMA table_info(${table});`);
@@ -418,7 +419,8 @@ export async function run(sql, params = []) {
     // automatically; this explicit call is a belt-and-suspenders flush for web.
     // We intentionally do NOT throw on saveToStore failure — the in-memory write
     // succeeded and auto-save will persist it; failing here would abort callers.
-    const isWeb = window.location.protocol !== 'capacitor:';
+    const isNative = window.location.protocol === 'capacitor:';
+    const isWeb = !isNative;
     if (isWeb && sqlite) {
       sqlite.saveToStore(DB_NAME).catch(e =>
         console.warn('[LocalDB] saveToStore non-fatal error:', e));
@@ -434,7 +436,8 @@ export async function execute(sql) {
   try {
     const db = await getDB();
     const result = await db.execute(sql);
-    const isWeb = window.location.protocol !== 'capacitor:';
+    const isNative = window.location.protocol === 'capacitor:';
+    const isWeb = !isNative;
     if (isWeb && sqlite) {
       sqlite.saveToStore(DB_NAME).catch(e =>
         console.warn('[LocalDB] saveToStore non-fatal error (execute):', e));

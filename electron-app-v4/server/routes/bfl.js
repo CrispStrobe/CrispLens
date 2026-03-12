@@ -51,21 +51,22 @@ function getBflKey(req) {
   const db  = getDb();
   const userId = req.user?.userId ?? null;
 
-  // Try user key first, then system key
+  // Try user key first, then system key (v4 native api_keys table)
   let row = null;
   if (userId != null) {
     row = db.prepare("SELECT key_value FROM api_keys WHERE provider='bfl' AND scope='user' AND owner_id=?").get(userId);
   }
   if (!row) {
-    row = db.prepare("SELECT key_value FROM api_keys WHERE provider='bfl' AND scope='system' ORDER BY rowid DESC LIMIT 1").get();
+    row = db.prepare("SELECT key_value FROM api_keys WHERE provider='bfl' AND scope='system' LIMIT 1").get();
   }
-  if (!row) {
-    // Fall back to env var
-    const envKey = process.env.BFL_API_KEY;
-    if (envKey) return envKey;
-    return null;
-  }
-  return row.key_value;
+
+  if (row?.key_value) return row.key_value;
+
+  // Fall back to env var
+  const envKey = process.env.BFL_API_KEY;
+  if (envKey) return envKey;
+  
+  return null;
 }
 
 function getImageInfo(imageId) {

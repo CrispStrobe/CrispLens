@@ -1672,4 +1672,14 @@ export const localAdapter = {
     }
   },
 
+  // ── Auth / Health ──────────────────────────────────────────────────────────
+
+  async health() {
+    return { ok: true, version: '4.0.0-standalone', model_ready: true, server_time: new Date().toISOString() };
+  },
+
+  async me() {
+    return { username: 'local', role: 'admin', id: 1 };
+  }
+
 };

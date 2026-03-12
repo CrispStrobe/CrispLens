@@ -17,6 +17,7 @@ const OPENAI_COMPATIBLE = {
   'mistral':    'https://api.mistral.ai/v1',
   'groq':       'https://api.groq.com/openai/v1',
   'poe':        'https://api.poe.com/v1',
+  'bfl':        'https://api.bfl.ai/v1',
 };
 
 const DEFAULT_MODELS = {
@@ -28,7 +29,8 @@ const DEFAULT_MODELS = {
   'mistral':    'ministral-14b-2512',
   'groq':       'meta-llama/llama-4-scout-17b-16e-instruct',
   'poe':        'claude-3-5-sonnet',
-  'google':     'gemini-1.5-flash'
+  'google':     'gemini-1.5-flash',
+  'bfl':        'flux-kontext-pro'
 };
 
 class VlmClient {

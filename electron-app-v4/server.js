@@ -361,33 +361,45 @@ setImmediate(() => {
   }
 });
 
-// ── Start (only when run directly, not when require()'d by Electron) ─────────
+// ── Start ───────────────────────────────────────────────────────────────────
 
 let _httpServer = null;
 
+function startServer(port = PORT, host = '0.0.0.0') {
+  return new Promise((resolve, reject) => {
+    _httpServer = app.listen(port, host, () => {
+      if (require.main === module) {
+        console.log('');
+        console.log('┌─────────────────────────────────────────────┐');
+        console.log('│  CrispLens v4 — Node.js backend             │');
+        console.log('├─────────────────────────────────────────────┤');
+        console.log(`│  API:  http://localhost:${port}/api           │`);
+        console.log(`│  UI:   http://localhost:${port}/              │`);
+        console.log(`│  DB:   ${path.basename(DB_PATH)}${' '.repeat(Math.max(0, 36 - path.basename(DB_PATH).length))}│`);
+        if (process.env.DEBUG) {
+          console.log('│  DEBUG mode: verbose logging enabled        │');
+        }
+        console.log('└─────────────────────────────────────────────┘');
+        console.log('  Tip: set DEBUG=1 for verbose request/detection logs');
+        console.log('');
+      }
+      resolve(_httpServer);
+    });
+    _httpServer.on('error', (err) => {
+      console.error('[server] Failed to start:', err.message);
+      reject(err);
+    });
+  });
+}
+
 if (require.main === module) {
   // Direct: node server.js
-  _httpServer = app.listen(PORT, () => {
-    console.log('');
-    console.log('┌─────────────────────────────────────────────┐');
-    console.log('│  CrispLens v4 — Node.js backend             │');
-    console.log('├─────────────────────────────────────────────┤');
-    console.log(`│  API:  http://localhost:${PORT}/api           │`);
-    console.log(`│  UI:   http://localhost:${PORT}/              │`);
-    console.log(`│  DB:   ${path.basename(DB_PATH)}${' '.repeat(Math.max(0, 36 - path.basename(DB_PATH).length))}│`);
-    if (process.env.DEBUG) {
-      console.log('│  DEBUG mode: verbose logging enabled        │');
-    }
-    console.log('└─────────────────────────────────────────────┘');
-    console.log('  Tip: set DEBUG=1 for verbose request/detection logs');
-    console.log('');
-  });
-} else {
-  // Required by electron-main.js — start listening on the configured PORT
-  _httpServer = app.listen(PORT, '0.0.0.0', () => {
-    // Quiet start for Electron mode
+  startServer().catch(err => {
+    console.error('Fatal error starting server:', err.message);
+    process.exit(1);
   });
 }
 
 module.exports = app;
-module.exports.httpServer = _httpServer;
+module.exports.startServer = startServer;
+module.exports.getHttpServer = () => _httpServer;
