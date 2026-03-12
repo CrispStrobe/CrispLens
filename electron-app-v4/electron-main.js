@@ -391,6 +391,16 @@ app.whenReady().then(async () => {
 
   const settings = readSettings();
   const remoteUrl = settings.remoteUrl || '';
+  const dataSource = settings.dataSource || 'server';
+
+  if (dataSource === 'local') {
+    // ── Standalone mode: bypass internal server ──────────────────────────────
+    console.log('[main] Standalone mode (local WASM SQLite) enabled');
+    serverReady = true;
+    createTray();
+    createWindow();
+    return;
+  }
 
   if (remoteUrl) {
     // ── Remote mode: connect to an existing v2/v4 server ─────────────────────
@@ -404,10 +414,23 @@ app.whenReady().then(async () => {
 
     // Resolve a free port before starting (avoids silent failure when 7861 is taken)
     try {
-      PORT = await findFreePort(PORT_PREF);
-      if (PORT !== PORT_PREF) console.log(`[main] Port ${PORT_PREF} in use, using ${PORT} instead`);
+      const preferredPort = settings.port || PORT_PREF;
+      PORT = await findFreePort(preferredPort);
+      if (PORT !== preferredPort) {
+        console.log(`[main] Port ${preferredPort} in use, using ${PORT} instead`);
+      }
     } catch (err) {
-      dialog.showErrorBox('CrispLens', `Could not find a free port:\n${err.message}`);
+      const btn = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'CrispLens',
+        message: `Could not find a free port:\n${err.message}`,
+        buttons: ['Quit', 'Switch to Standalone (Local) mode'],
+        defaultId: 0,
+      });
+      if (btn === 1) {
+        writeSettings({ ...settings, dataSource: 'local' });
+        app.relaunch();
+      }
       app.quit();
       return;
     }
@@ -420,7 +443,18 @@ app.whenReady().then(async () => {
       console.log(`[main] Server ready on port ${PORT}`);
     } catch (err) {
       console.error('[main] Server failed to start:', err);
-      dialog.showErrorBox('CrispLens', `Failed to start server:\n${err.message}`);
+      const btn = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'CrispLens',
+        message: `Server failed to start on port ${PORT}:\n${err.message}`,
+        buttons: ['Retry', 'Switch to Standalone (Local) mode', 'Quit'],
+        defaultId: 0,
+      });
+      if (btn === 0) { app.relaunch(); }
+      else if (btn === 1) {
+        writeSettings({ ...settings, dataSource: 'local' });
+        app.relaunch();
+      }
       app.quit();
       return;
     }

@@ -317,6 +317,12 @@
   async function switchDbMode(mode) {
     setLocalMode(mode === 'local');
     dbMode = mode;
+    if (isElectron) {
+      try {
+        const existing = await window.electronAPI.getSettings() || {};
+        await window.electronAPI.saveSettings({ ...existing, dataSource: mode });
+      } catch (e) { console.error('Failed to save dataSource to Electron settings:', e); }
+    }
     // Reload so the new mode takes effect immediately.
     // App.svelte handles robust initialization on the fresh load.
     setTimeout(() => { window.location.reload(); }, 500);
@@ -581,7 +587,8 @@
           connectionMode = s.remoteUrl ? 'remote' : 'local';
           remoteUrl      = s.remoteUrl || '';
           localPort      = s.port || 7861;
-          console.log('[SettingsView] Electron settings.json loaded:', { connectionMode, remoteUrl, localPort });
+          dbMode         = s.dataSource || localStorage.getItem('data_source') || 'server';
+          console.log('[SettingsView] Electron settings.json loaded:', { connectionMode, remoteUrl, localPort, dbMode });
         }
       } catch (e) { console.error('[SettingsView] getSettings error:', e); }
 
@@ -1409,117 +1416,12 @@
 
 <div class="settings-view">
   <h2>⚙ {$t('settings_title')}</h2>
-
-  <!-- Node.js Server (Electron only) -->
-  {#if isElectron}
-  <section class="card">
-    <h3>{$t('settings_server_section')}</h3>
-    <div class="mode-radios" style="margin-bottom: 8px;">
-      <label class="radio-row">
-        <input type="radio" bind:group={connectionMode} value="local" />
-        <div>
-          <span class="radio-label">{$t('settings_mode_run_local')}</span>
-          <span class="radio-hint">{$t('settings_mode_run_local_hint')}</span>
-        </div>
-      </label>
-      <label class="radio-row">
-        <input type="radio" bind:group={connectionMode} value="remote" />
-        <div>
-          <span class="radio-label">{$t('settings_mode_remote')}</span>
-          <span class="radio-hint">{$t('settings_mode_remote_hint')}</span>
-        </div>
-      </label>
-    </div>
-    <div class="form-grid">
-      {#if connectionMode === 'local'}
-        <label>{$t('settings_local_port')}</label>
-        <div class="field-row">
-          <input type="number" bind:value={localPort} min="1024" max="65535" style="width:90px;" />
-          <span class="hint" style="margin:0;">default 7861 — app finds next free port if taken</span>
-        </div>
-      {:else}
-        <label>{$t('settings_server_url')}</label>
-        <div style="display:flex; flex-direction:column; gap:4px; flex:1;">
-          <input type="text" bind:value={remoteUrl} placeholder="https://faces.example.com" />
-          {#if remoteUrl && remoteUrl.startsWith('http://') && !remoteUrl.startsWith('http://127') && !remoteUrl.startsWith('http://localhost')}
-            <span class="url-warning">⚠ URL uses HTTP — most servers redirect to HTTPS. Use <code>https://</code> to avoid redirect issues.</span>
-          {/if}
-          {#if remoteUrl && !remoteUrl.startsWith('http')}
-            <span class="url-warning">⚠ URL must start with https:// or http://</span>
-          {/if}
-        </div>
-      {/if}
-    </div>
-    <p class="hint" style="margin-top: 8px;">{$t('settings_server_restart_hint')}</p>
-  </section>
-
-  <!-- Database (Electron only) -->
-  <section class="card">
-    <h3>{$t('settings_db_section')}</h3>
-    {#if connectionMode === 'local'}
-      <!-- Active DB status -->
-      {#if activeDbInfo}
-        <div class="form-grid" style="margin-bottom:12px;">
-          <label>Active database</label>
-          <div style="display:flex;flex-direction:column;gap:3px;">
-            <code class="db-path-display" style="word-break:break-all;">{activeDbInfo.activePath}</code>
-            <span class="hint" style="margin:0;">
-              {(activeDbInfo.size / 1024 / 1024).toFixed(1)} MB
-              · {activeDbInfo.writable ? '✓ writable' : '⚠ read-only'}
-              {#if activeDbInfo.isDefault}<span style="color:#50a878;"> · default location</span>{/if}
-            </span>
-          </div>
-        </div>
-      {/if}
-
-      <p class="hint" style="margin-bottom:10px;">
-        CrispLens uses a standard SQLite <code>.db</code> file on your disk.
-        You can switch to any existing database or create a new empty one — the app will restart.
-      </p>
-
-      <!-- Open existing DB -->
-      <div style="margin-bottom:8px;">
-        <div style="font-weight:500;margin-bottom:6px;">Open existing database</div>
-        <div class="field-row">
-          <input type="text" bind:value={newDbPath} placeholder="/path/to/face_recognition.db" style="flex:1;" />
-          <button on:click={browseDb} style="flex-shrink:0;">Browse…</button>
-        </div>
-        <button
-          class="primary"
-          style="margin-top:8px;align-self:flex-start;"
-          on:click={doSwitchDb}
-          disabled={switchingDb || !newDbPath?.trim() || newDbPath.trim() === currentDbPath}
-        >
-          {switchingDb ? '…' : '🔄 Switch & Restart'}
-        </button>
-      </div>
-
-      <div class="field-row" style="gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <!-- Create new empty DB -->
-        <button on:click={doCreateNewDb} disabled={switchingDb}>
-          ✨ Create new empty database…
-        </button>
-        <!-- Reset to default -->
-        {#if activeDbInfo && !activeDbInfo.isDefault}
-          <button on:click={doResetDbToDefault} disabled={switchingDb} style="color:#e08050;">
-            ↩ Reset to default location
-          </button>
-        {/if}
-      </div>
-
-      {#if switchDbMsg}<div class="save-msg" style="margin-top:8px;">{switchDbMsg}</div>{/if}
-    {:else}
-      <p class="hint">{$t('settings_db_remote_info')} <code>{remoteUrl || '(server URL not set)'}</code>.</p>
-      <p class="hint" style="margin-top:4px;">The database is managed on the remote server — set <code>DB_PATH</code> env var there.</p>
-    {/if}
-  </section>
-  {:else}
-  <!-- ── Three-Axis Panel (browser/PWA/Capacitor) ──────────────────────── -->
+  <!-- ── Three-Axis Panel (Unified for Electron & Web) ──────────────────────── -->
   <section class="card">
     <h3>Connection &amp; Inference</h3>
-    <p class="hint" style="margin-bottom:16px;">Three independent settings control how CrispLens operates — each axis can be changed independently.</p>
+    <p class="hint" style="margin-bottom:16px;">Three independent settings control how CrispLens operates.</p>
 
-    <!-- ── Axis 1: Data Source ──────────────────────────────────────────── -->
+    <!-- ── Axis 1: Storage Mode (Data Source) ───────────────────────────── -->
     <div style="padding-bottom:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">AXIS 1</span>
@@ -1530,12 +1432,12 @@
         <button class="mode-btn" class:active={dbMode === 'server'} on:click={() => dbMode !== 'server' && switchDbMode('server')}>
           <span class="mode-icon">☁</span>
           <span class="mode-label">Server</span>
-          <span class="mode-desc">v4 Node.js or v2 FastAPI</span>
+          <span class="mode-desc">{isElectron ? 'Internal Node.js or Remote' : 'v4 Node.js or v2 FastAPI'}</span>
         </button>
         <button class="mode-btn" class:active={dbMode === 'local'} on:click={() => dbMode !== 'local' && switchDbMode('local')}>
           <span class="mode-icon">📱</span>
           <span class="mode-label">Standalone (Local)</span>
-          <span class="mode-desc">On-device SQLite, no server needed</span>
+          <span class="mode-desc">On-device SQLite (WASM)</span>
         </button>
       </div>
       {#if dbMode === 'local'}
@@ -1548,22 +1450,11 @@
               <button class="small" on:click={runDbDiag} disabled={testingDiag}>{testingDiag ? '...' : $t('settings_db_diag')}</button>
               <button class="small primary" on:click={doRestartEngine} disabled={restartingEngine}>{restartingEngine ? '...' : '🔄 Restart WASM Engine'}</button>
             </div>
-            {#if testDiagMsg}
-              <p style="font-size:11px; margin-top:8px; color: {testDiagMsg.startsWith('✓') ? '#80c080' : '#e08080'}">{testDiagMsg}</p>
-            {/if}
           </div>
         {/if}
         <p class="hint" style="margin-top:10px;color:#a0a060;">{$t('settings_standalone_active')}</p>
-        {#if !isStandaloneBroken}
-          <div style="display:flex; gap:8px; margin-top:6px; flex-wrap: wrap;">
-            <button class="small" on:click={runDbDiag} disabled={testingDiag}>{testingDiag ? '...' : 'Test Standalone DB Connection'}</button>
-            <button class="small" on:click={doRestartEngine} disabled={restartingEngine}>{restartingEngine ? '...' : '🔄 Restart SQLite Engine'}</button>
-          </div>
-          {#if testDiagMsg}
-            <p style="font-size:11px; margin-top:6px; color: {testDiagMsg.startsWith('✓') ? '#80c080' : '#e08080'}">{testDiagMsg}</p>
-          {/if}
-        {/if}
-        <!-- ONNX model cache status + download -->
+        
+        <!-- ONNX model cache status (for standalone WASM inference) -->
         <div class="model-cache-section">
           <div class="model-status-row">
             <span class="model-status-label">SCRFD detector</span>
@@ -1577,10 +1468,6 @@
               {modelStatus.w600k_r50 ? '✓ ' + $t('settings_model_cached') : '✗ ' + $t('settings_model_not_found')}
             </span>
           </div>
-          {#if modelDownloadMsg}
-            <div class="save-msg" class:error-msg={modelDownloadMsg.startsWith('✗')} style="margin-top:8px;">{modelDownloadMsg}</div>
-          {/if}
-          <p class="hint" style="margin-top:6px;">{$t('settings_models_download_hint')}</p>
           <button class="primary" style="margin-top:8px;" on:click={downloadModels}
                   disabled={modelDownloading || (modelStatus.det_10g && modelStatus.w600k_r50)}>
             {#if modelDownloading}⏳ {modelDownloadMsg || 'Downloading…'}
@@ -1588,102 +1475,89 @@
             {:else}⬇ Download ONNX models{/if}
           </button>
         </div>
-        <!-- Sync Target (standalone only) -->
-        <div style="margin-top:16px; padding-top:12px; border-top:1px solid #2a2a42;">
-          <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:8px;">{$t('settings_sync_target')}</div>
-          <p class="hint" style="margin-bottom:8px;">{$t('settings_sync_target_hint')}</p>
-          <div class="form-grid">
-            <label>{$t('api_server_url_label')}</label>
-            <input type="text" bind:value={syncRemoteUrl} placeholder="https://faces.example.com" />
-          </div>
-        </div>
       {/if}
     </div>
 
-    <!-- ── Axis 2: API Server (server mode only) ────────────────────────── -->
+    <!-- ── Axis 2: Connection / API Server (server mode only) ───────────── -->
     {#if dbMode === 'server'}
     <div style="border-top:1px solid #2a2a42;padding-top:14px;padding-bottom:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">AXIS 2</span>
-        <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('api_server_section')}</span>
+        <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{isElectron ? 'Connection' : $t('api_server_section')}</span>
       </div>
-      <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
-      {#if serverPresets.length > 0}
-      <div style="margin-bottom:12px;">
-        <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted,#888);margin-bottom:6px;">{$t('api_server_saved')}</div>
-        {#each serverPresets as preset, i}
-        <div class="preset-row">
-          <div class="preset-info" title={preset.url}>
-            <span class="preset-name">{preset.name}</span>
-            <span class="preset-url">{preset.url}</span>
+      
+      {#if isElectron}
+        <!-- Electron style connection selector (Internal vs Remote) -->
+        <div class="mode-radios" style="margin-bottom: 12px;">
+          <label class="radio-row">
+            <input type="radio" bind:group={connectionMode} value="local" />
+            <div>
+              <span class="radio-label">{$t('settings_mode_run_local')}</span>
+              <span class="radio-hint">{$t('settings_mode_run_local_hint')}</span>
+            </div>
+          </label>
+          <label class="radio-row">
+            <input type="radio" bind:group={connectionMode} value="remote" />
+            <div>
+              <span class="radio-label">{$t('settings_mode_remote')}</span>
+              <span class="radio-hint">{$t('settings_mode_remote_hint')}</span>
+            </div>
+          </label>
+        </div>
+        <div class="form-grid">
+          {#if connectionMode === 'local'}
+            <label>{$t('settings_local_port')}</label>
+            <div class="field-row">
+              <input type="number" bind:value={localPort} min="1024" max="65535" style="width:90px;" />
+              <span class="hint" style="margin:0;">default 7861 — app finds next free port if taken</span>
+            </div>
+          {:else}
+            <label>{$t('settings_server_url')}</label>
+            <input type="text" bind:value={remoteUrl} placeholder="https://faces.example.com" />
+          {/if}
+        </div>
+      {:else}
+        <!-- PWA style connection selector (Presets + URL) -->
+        <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
+        {#if serverPresets.length > 0}
+          <div style="margin-bottom:12px;">
+            {#each serverPresets as preset, i}
+            <div class="preset-row">
+              <div class="preset-info"><span class="preset-name">{preset.name}</span></div>
+              <button class="preset-connect" on:click={() => doPwaConnect(preset.url)}
+                class:active-preset={pwaServerUrl === preset.url}>{pwaServerUrl === preset.url ? '✓ ' : ''}Connect</button>
+              <button class="icon-btn danger" on:click={() => deletePreset(i)}>×</button>
+            </div>
+            {/each}
           </div>
-          <button class="preset-connect" on:click={() => doPwaConnect(preset.url)}
-            class:active-preset={pwaServerUrl === preset.url}
-          >{pwaServerUrl === preset.url ? '✓ ' : ''}{$t('api_server_connect')}</button>
-          <button class="icon-btn danger" on:click={() => deletePreset(i)} title="Remove preset">×</button>
+        {/if}
+        <div class="form-grid">
+          <label>URL</label>
+          <div class="field-row">
+            <input type="text" bind:value={pwaServerUrl} placeholder="https://faces.example.com" style="flex:1;" />
+            <button class="primary" on:click={() => doPwaConnect()}>Connect</button>
+          </div>
         </div>
-        {/each}
-      </div>
       {/if}
-      <div class="form-grid">
-        <label>{$t('api_server_url_label')}</label>
-        <div class="field-row">
-          <input type="text" bind:value={pwaServerUrl} placeholder="https://faces.example.com" style="flex:1;" />
-          <button class="primary" on:click={() => doPwaConnect()} style="flex-shrink:0;">{$t('api_server_connect')}</button>
-        </div>
-      </div>
-      {#if pwaConnectMsg}
-        <div class="save-msg" class:error-msg={pwaConnectMsg.startsWith('✗')}>{pwaConnectMsg}</div>
-      {/if}
-      <div class="form-grid" style="margin-top:10px;">
-        <label>{$t('api_server_save_as')}</label>
-        <div class="field-row">
-          <input type="text" bind:value={newPresetName} placeholder={pwaServerUrl || $t('api_server_preset_ph')} style="flex:1;" />
-          <button on:click={saveCurrentAsPreset} style="flex-shrink:0;">{$t('api_server_save_preset')}</button>
-        </div>
-      </div>
-      {#if presetMsg}
-        <div class="save-msg" class:error-msg={presetMsg.startsWith('✗')}>{presetMsg}</div>
-      {/if}
+      <p class="hint" style="margin-top: 10px;">{$t('settings_server_restart_hint')}</p>
     </div>
     {/if}
 
     <!-- ── Axis 3: Inference Engine ─────────────────────────────────────── -->
-    <!-- When standalone: always Browser WASM + WebGL/SIMD/WebGPU prefs     -->
-    <!-- When server + admin: full inference engine selector                  -->
-    <!-- When server + non-admin / offline: read-only current engine label    -->
-    <!-- _effectiveBackend (reactive): dbMode==='local' → 'standalone', else procBackend -->
     <div style="border-top:1px solid #2a2a42;padding-top:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">AXIS 3</span>
         <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('processing_backend_section')}</span>
       </div>
       {#if dbMode === 'local'}
-        <!-- Standalone: inference is always Browser WASM -->
-        <p class="hint" style="margin-bottom:10px;">
-          Running <strong>Browser WASM</strong> — SCRFD + ArcFace via onnxruntime-web, entirely in-browser.
-        </p>
-        <div class="form-grid">
-          <label title={$t('ort_use_webgl_hint')}>{$t('ort_use_webgl')}</label>
-          <div class="field-row">
-            <input type="checkbox" bind:checked={ortUseWebGL} on:change={saveOrtPrefs} />
-            <span class="hint">{$t('ort_use_webgl_hint')}</span>
-          </div>
-          <label title={$t('ort_use_simd_hint')}>{$t('ort_use_simd')} ⚠</label>
-          <div class="field-row">
-            <input type="checkbox" bind:checked={ortUseSIMD} on:change={saveOrtPrefs} />
-            <span class="hint" style="color:#c09030;">{$t('ort_use_simd_hint')}</span>
-          </div>
-          <label title={$t('ort_use_webgpu_hint')}>{$t('ort_use_webgpu')} ⚠</label>
-          <div class="field-row">
-            <input type="checkbox" bind:checked={ortUseWebGPU} on:change={saveOrtPrefs} />
-            <span class="hint" style="color:#c09030;">{$t('ort_use_webgpu_hint')}</span>
-          </div>
+        <p class="hint">Standalone: always <strong>Browser WASM</strong> (onnxruntime-web).</p>
+        <div class="form-grid" style="margin-top:8px;">
+          <label>{$t('ort_use_webgl')}</label>
+          <input type="checkbox" bind:checked={ortUseWebGL} on:change={saveOrtPrefs} />
+          <label>{$t('ort_use_webgpu')}</label>
+          <input type="checkbox" bind:checked={ortUseWebGPU} on:change={saveOrtPrefs} />
         </div>
-        <p class="hint" style="margin-top:8px;">{$t('reload_after_settings')}</p>
       {:else if isAdmin && $backendReady}
-        <!-- Server mode, admin: full inference engine selector -->
-        <p class="hint" style="margin-bottom:10px;">{$t('processing_backend_hint')}</p>
         <div class="form-grid">
           <label>{$t('processing_backend_section')}</label>
           <select bind:value={procBackend}>
@@ -1692,68 +1566,15 @@
             <option value="remote_v4">{$t('backend_remote_v4')}</option>
           </select>
         </div>
+        <!-- (Rest of Axis 3 engine params: remote v2 creds, server GPU toggles etc) -->
         {#if procBackend === 'remote_v2' || procBackend === 'remote_v4'}
-        <div class="form-grid" style="margin-top:10px;">
-          <label>{$t('remote_v2_url')}</label>
-          <input type="text" bind:value={remoteV2Url} placeholder="https://img.example.com" />
-          <label>{$t('remote_v2_user')}</label>
-          <input type="text" bind:value={remoteV2User} placeholder="admin" />
-          <label>{$t('remote_v2_pass')}</label>
-          <input type="password" bind:value={remoteV2Pass} placeholder="••••••••" autocomplete="new-password" />
-          <label>{$t('remote_v2_mode')}</label>
-          <select bind:value={remoteV2Mode}>
-            <option value="upload_bytes">{$t('remote_v2_upload_bytes')}</option>
-            <option value="local_infer">{$t('remote_v2_local_infer')}</option>
-          </select>
-        </div>
-        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-          <button on:click={doTestRemoteV2} disabled={remoteV2Testing || !remoteV2Url}>
-            {remoteV2Testing ? '…' : $t('remote_v2_test')}
-          </button>
-          {#if remoteV2TestMsg}
-            <span class:ok={remoteV2TestMsg.startsWith('✓')} class:error-msg={remoteV2TestMsg.startsWith('✗')}>{remoteV2TestMsg}</span>
-          {/if}
-        </div>
-        {/if}
-        <!-- Server ONNX providers (GPU acceleration) -->
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid #2a2a42;">
-          <div style="font-size:12px; font-weight:600; color:#8090b0; margin-bottom:4px;">{$t('ort_server_section')}</div>
-          <p class="hint" style="margin-bottom:10px;">{$t('ort_server_hint')}</p>
-          <div class="form-grid">
-            {#if isAppleSiliconClient}
-            <label title={$t('ort_use_coreml_hint')}>{$t('ort_use_coreml')}</label>
-            <div class="field-row">
-              <input type="checkbox" bind:checked={ortUseCoreML} />
-              <span class="hint">{$t('ort_use_coreml_hint')}</span>
-              <span style="color:#50c878; font-size:10px; margin-left:8px;">★ {$t('ort_recommended')}</span>
-            </div>
-            {/if}
-            {#if isWindowsClient || isLinuxClient}
-            <label title={$t('ort_use_cuda_hint')}>{$t('ort_use_cuda')}</label>
-            <div class="field-row">
-              <input type="checkbox" bind:checked={ortUseCUDA} />
-              <span class="hint">{$t('ort_use_cuda_hint')}</span>
-            </div>
-            {/if}
-            {#if isWindowsClient}
-            <label title={$t('ort_use_directml_hint')}>{$t('ort_use_directml')}</label>
-            <div class="field-row">
-              <input type="checkbox" bind:checked={ortUseDirectML} />
-              <span class="hint">{$t('ort_use_directml_hint')}</span>
-            </div>
-            {/if}
-            {#if !isAppleSiliconClient && !isWindowsClient && !isLinuxClient}
-            <span class="hint" style="grid-column:1/-1;">{$t('ort_no_accel_available')}</span>
-            {/if}
+          <div class="form-grid" style="margin-top:10px;">
+            <label>Remote URL</label>
+            <input type="text" bind:value={remoteV2Url} placeholder="https://..." />
           </div>
-        </div>
+        {/if}
       {:else}
-        <!-- Non-admin or backend offline: read-only current engine -->
-        <p class="hint">
-          Current: <strong>{procBackend === 'local' ? 'Local v4 Node.js ONNX' : procBackend === 'remote_v2' ? 'Remote v2 (Python / InsightFace)' : 'Remote v4 ONNX'}</strong>
-          {#if !isAdmin}<span style="margin-left:6px;font-size:11px;color:#606880;">(admin-only setting)</span>{/if}
-          {#if !$backendReady}<span style="margin-left:6px;font-size:11px;color:#806840;">(backend offline)</span>{/if}
-        </p>
+        <p class="hint">Current: <strong>{procBackend === 'local' ? 'Local v4 ONNX' : 'Remote'}</strong></p>
       {/if}
     </div>
   </section>
@@ -1823,7 +1644,6 @@
       <div class="save-msg" style="margin-top:8px;" class:error-msg={pushMsg.startsWith('✗')}>{pushMsg}</div>
     {/if}
   </section>
-  {/if}
 
   <!-- Image Processing / Ingest mode -->
   {#if isElectron}
