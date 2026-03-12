@@ -45,7 +45,8 @@ function findFreePort(start) {
       const s = nodeNet.createServer();
       s.once('error', () => try_(p + 1));
       s.once('listening', () => s.close(() => resolve(p)));
-      s.listen(p, '127.0.0.1');
+      // Check 0.0.0.0 specifically as that's what the real server will bind to
+      s.listen(p, '0.0.0.0');
     };
     try_(start);
   });
@@ -396,15 +397,6 @@ app.whenReady().then(async () => {
   const remoteUrl = settings.remoteUrl || '';
   const dataSource = settings.dataSource || 'server';
 
-  if (dataSource === 'local') {
-    // ── Standalone mode: bypass internal server ──────────────────────────────
-    console.log('[main] Standalone mode (local WASM SQLite) enabled');
-    serverReady = true;
-    createTray();
-    createWindow();
-    return;
-  }
-
   if (remoteUrl) {
     // ── Remote mode: connect to an existing v2/v4 server ─────────────────────
     console.log(`[main] Remote mode — connecting to: ${remoteUrl}`);
@@ -412,7 +404,11 @@ app.whenReady().then(async () => {
     createTray();
     createWindow(remoteUrl);
   } else {
-    // ── Local mode: start Express in-process ─────────────────────────────────
+    // ── Local / Standalone mode: start Express in-process ────────────────────
+    // (Standalone mode on Desktop STILL needs the Node server for FS/Cloud features)
+    if (dataSource === 'local') {
+      console.log('[main] Standalone mode detected; starting internal server for background tasks...');
+    }
     createTray();
 
     // Resolve a free port before starting (avoids silent failure when 7861 is taken)

@@ -1550,6 +1550,55 @@
         </div>
       {/if}
       <p class="hint" style="margin-top: 10px;">{$t('settings_server_restart_hint')}</p>
+
+      <!-- Database (Electron only, internal server) -->
+      {#if isElectron && connectionMode === 'local'}
+        <div style="border-top:1px solid #2a2a42; padding-top:14px; margin-top:14px;">
+          <div style="font-weight:600; color:#c0d0e0; font-size:13px; margin-bottom:8px;">Database File</div>
+          
+          {#if activeDbInfo}
+            <div class="form-grid" style="margin-bottom:12px;">
+              <label>Active database</label>
+              <div style="display:flex;flex-direction:column;gap:3px;">
+                <code class="db-path-display" style="word-break:break-all;">{activeDbInfo.activePath}</code>
+                <span class="hint" style="margin:0;">
+                  {(activeDbInfo.size / 1024 / 1024).toFixed(1)} MB
+                  · {activeDbInfo.writable ? '✓ writable' : '⚠ read-only'}
+                  {#if activeDbInfo.isDefault}<span style="color:#50a878;"> · default location</span>{/if}
+                </span>
+              </div>
+            </div>
+          {/if}
+
+          <div style="margin-bottom:8px;">
+            <div class="hint" style="margin-bottom:6px;">Open existing database</div>
+            <div class="field-row">
+              <input type="text" bind:value={newDbPath} placeholder="/path/to/face_recognition.db" style="flex:1;" />
+              <button on:click={browseDb} style="flex-shrink:0;">Browse…</button>
+            </div>
+            <button
+              class="primary"
+              style="margin-top:8px;align-self:flex-start;"
+              on:click={doSwitchDb}
+              disabled={switchingDb || !newDbPath?.trim() || newDbPath.trim() === currentDbPath}
+            >
+              {switchingDb ? '…' : '🔄 Switch & Restart'}
+            </button>
+          </div>
+
+          <div class="field-row" style="gap:8px;margin-top:12px;flex-wrap:wrap;">
+            <button on:click={doCreateNewDb} disabled={switchingDb}>
+              ✨ Create new empty database…
+            </button>
+            {#if activeDbInfo && !activeDbInfo.isDefault}
+              <button on:click={doResetDbToDefault} disabled={switchingDb} style="color:#e08050;">
+                ↩ Reset to default location
+              </button>
+            {/if}
+          </div>
+          {#if switchDbMsg}<div class="save-msg" style="margin-top:8px;">{switchDbMsg}</div>{/if}
+        </div>
+      {/if}
     </div>
     {/if}
 
