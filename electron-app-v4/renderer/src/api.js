@@ -80,8 +80,6 @@ async function robustUpload(url, formData, options = {}) {
   return fetch(url, { ...options, method: 'POST', body: formData });
 }
 
-/** Helper to convert base64 to Blob for Capacitor native HTTP responses */
-
 /** Fetch an image as an Object URL (bypassing CORS/Cookie issues on mobile) */
 export async function fetchImageAsUrl(url) {
   if (Capacitor.isNativePlatform()) {
@@ -217,13 +215,16 @@ async function _fetch(method, path, body) {
 }
 
 /** Explicit server-only fetch that bypasses _localMode checks. Used for FS/Cloud/Batch features. */
-async function _fetchDirect(method, path, body) {
+async function _fetchDirect(method, path, body, extraHeaders = {}) {
   const fullUrl = BASE + path;
   console.log(`[api] fetchDirect: ${method} ${fullUrl}`, body ? '(with body)' : '');
 
   const opts = {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders
+    },
     credentials: 'include',
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
@@ -246,6 +247,28 @@ async function _fetchDirect(method, path, body) {
     const errMsg = err.message || JSON.stringify(err);
     console.error(`[api] ${method} ${path} error:`, errMsg);
     throw new Error(errMsg);
+  }
+}
+
+async function _fetchDirectMultipart(method, path, formData, extraHeaders = {}) {
+  const fullUrl = BASE + path;
+  console.log(`[api] fetchDirectMultipart: ${method} ${fullUrl}`);
+  const opts = {
+    method,
+    headers: extraHeaders,
+    credentials: 'include',
+    body: formData
+  };
+  try {
+    const res = await robustFetch(fullUrl, opts);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+    }
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('application/json') ? res.json() : res.text();
+  } catch (err) {
+    throw new Error(err.message);
   }
 }
 
@@ -325,16 +348,11 @@ const _THUMB_BUCKETS = [150, 200, 300, 400, 600, 800, 1000];
 function _snapSize(size) {
   return _THUMB_BUCKETS.find(b => b >= size) ?? _THUMB_BUCKETS[_THUMB_BUCKETS.length - 1];
 }
-// In standalone browser mode, images can only be displayed from their stored
-// thumbnail_blob (base64 JPEG in SQLite). File paths are not browser-accessible
-// so toWebUrl() cannot work — returning '' lets the UI show a placeholder.
-// On native Capacitor (iOS/Android), toWebUrl() converts to a file:// URL that
-// WKWebView/WebView can load.
 function _localImgUrl(id) {
   const b64 = thumbCache.get(String(id));
   if (b64) return b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
   if (Capacitor.isNativePlatform()) return toWebUrl(fileCache.get(String(id)) || '');
-  return ''; // browser-only standalone: no accessible file path
+  return ''; 
 }
 
 export function thumbnailUrl(id, size = 200) {
@@ -497,7 +515,7 @@ export function trainFromFolder(folder) {
 }
 
 export function scanFolder(folder, recursive = true) {
-  return post('/process/scan-folder', { folder, recursive });
+  return _fetchDirect('POST', '/process/scan-folder', { folder, recursive });
 }
 
 // ── Hybrid ingest ─────────────────────────────────────────────────────────────
@@ -509,6 +527,7 @@ export function importProcessed(data) {
 }
 
 export async function uploadLocal(buffer, localPath, visibility = 'shared', detParams = {}, { tagIds = [], newTagNames = [], albumId = null, newAlbumName = null, creator = null, copyright = null } = {}) {
+  const h = await _bflHeaders();
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
   form.append('local_path', localPath);
@@ -527,20 +546,7 @@ export async function uploadLocal(buffer, localPath, visibility = 'shared', detP
   if (creator)                         form.append('creator',        creator);
   if (copyright)                       form.append('copyright',      copyright);
   
-  try {
-    const res = await robustUpload(`${BASE}/ingest/upload-local`, form, {
-      credentials: 'include',
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`upload-local → ${res.status}: ${text}`);
-    }
-    return res.json();
-  } catch (err) {
-    const errMsg = err.message || JSON.stringify(err);
-    console.error('[api] upload-local error:', errMsg);
-    throw new Error(errMsg);
-  }
+  return _fetchDirectMultipart('POST', '/ingest/upload-local', form, h);
 }
 
 export function streamBatchFiles(paths, onEvent) {
@@ -600,26 +606,26 @@ export function fetchMe() {
 
 // ── User management (admin only) ──────────────────────────────────────────────
 
-export function listUsers()                         { const g = _guard('listUsers', () => localAdapter.listUsers()); if (g) return g; return get('/users'); }
+export function listUsers()                         { const g = _guard('listUsers', () => localAdapter.listUsers()); if (g) return g; return getD('/users'); }
 export function createUser(username, password, role, allowed_folders = []) {
   const g = _guard('createUser', () => localAdapter.createUser(username, password, role));
   if (g) return g;
-  return post('/users', { username, password, role, allowed_folders });
+  return postD('/users', { username, password, role, allowed_folders });
 }
 export function updateUser(userId, changes)         {
   const g = _guard('updateUser', () => localAdapter.updateUser(userId, changes));
   if (g) return g;
-  return _fetch('PATCH', `/users/${userId}`, changes);
+  return _fetchDirect('PATCH', `/users/${userId}`, changes);
 }
 export function deleteUser(userId)                  {
   const g = _guard('deleteUser', () => localAdapter.deleteUser(userId));
   if (g) return g;
-  return del(`/users/${userId}`);
+  return delD(`/users/${userId}`);
 }
 export function resetUserLock(userId)               {
   const g = _guard('resetUserLock', () => ({ ok: true }));
   if (g) return g;
-  return post(`/users/${userId}/reset-lock`, {});
+  return postD(`/users/${userId}/reset-lock`, {});
 }
 
 // ── Image sharing ─────────────────────────────────────────────────────────────
@@ -649,12 +655,12 @@ export function fetchTranslations(nocache = false) {
   const q = nocache ? `?t=${Date.now()}` : '';
   return get(`/settings/i18n${q}`);
 }
-export function checkCredentials(username, password){ return post('/settings/check-credentials', { username, password }); }
-export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', () => localAdapter.dbStatus()); if (g) return g; return get('/settings/db-status'); }
-export function exportDB()     { const g = _guard('exportDB', () => localAdapter.exportDB()); if (g) return g; return get('/settings/db-export'); }
-export function importDB(json) { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; return post('/settings/db-import', { tables: json.tables ?? json }); }
-export function clearDB()      { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; return post('/settings/db-clear', {}); }
-export function hardResetApp() { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; return post('/settings/hard-reset', {}); }
+export function checkCredentials(username, password){ return postD('/settings/check-credentials', { username, password }); }
+export function fetchDbStatus()                     { const g = _guard('fetchDbStatus', () => localAdapter.dbStatus()); if (g) return g; return getD('/settings/db-status'); }
+export function exportDB()     { const g = _guard('exportDB', () => localAdapter.exportDB()); if (g) return g; return getD('/settings/db-export'); }
+export function importDB(json) { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; return postD('/settings/db-import', { tables: json.tables ?? json }); }
+export function clearDB()      { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; return postD('/settings/db-clear', {}); }
+export function hardResetApp() { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; return postD('/settings/hard-reset', {}); }
 export function fetchEngineStatus() {
   const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
   if (g) return g;
@@ -703,27 +709,27 @@ export function fetchServerLogsJson(lines = 50) {
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
-export function fetchProviders()              { const g = _guard('fetchProviders', () => localAdapter.getProviders()); if (g) return g; return get('/api-keys/providers'); }
-export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', () => localAdapter.getKeyStatus()); if (g) return g; return get('/api-keys/status'); }
+export function fetchProviders()              { const g = _guard('fetchProviders', () => localAdapter.getProviders()); if (g) return g; return getD('/api-keys/providers'); }
+export function fetchKeyStatus()              { const g = _guard('fetchKeyStatus', () => localAdapter.getKeyStatus()); if (g) return g; return getD('/api-keys/status'); }
 export async function fetchVlmModels(provider) {
   const g = _guard('fetchVlmModels', () => localAdapter.getVlmModels(provider));
   if (g) return g;
-  const d = await get(`/api-keys/models/${provider}`); return d.models ?? d;
+  const d = await getD(`/api-keys/models/${provider}`); return d.models ?? d;
 }
 export function saveApiKey(provider, api_key, scope = 'system') {
   const g = _guard('saveApiKey', () => localAdapter.saveApiKey(provider, api_key));
   if (g) return g;
-  return post('/api-keys', { provider, key_value: api_key, scope });
+  return postD('/api-keys', { provider, key_value: api_key, scope });
 }
 export function deleteApiKey(provider, scope = 'system') {
   const g = _guard('deleteApiKey', () => localAdapter.deleteApiKey(provider));
   if (g) return g;
-  return del(`/api-keys/${provider}?scope=${scope}`);
+  return delD(`/api-keys/${provider}?scope=${scope}`);
 }
 export function testApiKey(provider) {
   const g = _guard('testApiKey', () => localAdapter.testApiKey(provider));
   if (g) return g;
-  return post(`/api-keys/test/${provider}`, {});
+  return postD(`/api-keys/test/${provider}`, {});
 }
 
 // ── Tags & Stats ──────────────────────────────────────────────────────────────
@@ -1002,10 +1008,10 @@ export function deleteCloudDriveItem(driveId, path) {
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
 export function copyFilesystem(paths, destDir) {
-  return post('/filesystem/copy', { paths, dest_dir: destDir });
+  return postD('/filesystem/copy', { paths, dest_dir: destDir });
 }
 export function moveFilesystem(paths, destDir) {
-  return post('/filesystem/move', { paths, dest_dir: destDir });
+  return postD('/filesystem/move', { paths, dest_dir: destDir });
 }
 
 export function browseFilesystem(path = '') {
@@ -1077,13 +1083,51 @@ export function cloneImageMetadata(sourceId, targetId) {
 
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 
-export function outpaintImage(params)  { return post('/bfl/outpaint',  { register_in_db: false, ...params }); }
-export function inpaintImage(params)   { return post('/bfl/inpaint',   { register_in_db: false, ...params }); }
-export function aiEditImage(params)    { return post('/bfl/edit',      { register_in_db: false, ...params }); }
-export function generateImage(params)  { return post('/bfl/generate',  { register_in_db: false, ...params }); }
+export async function outpaintImage(params) {
+  const h = await _bflHeaders();
+  return _fetchDirect('POST', '/bfl/outpaint', { register_in_db: false, ...params }, h);
+}
+export async function inpaintImage(params) {
+  const h = await _bflHeaders();
+  return _fetchDirect('POST', '/bfl/inpaint', { register_in_db: false, ...params }, h);
+}
+export async function aiEditImage(params) {
+  const h = await _bflHeaders();
+  return _fetchDirect('POST', '/bfl/edit', { register_in_db: false, ...params }, h);
+}
+export async function generateImage(params) {
+  const headers = await _bflHeaders();
+  const fullUrl = BASE + '/bfl/generate';
+  console.log(`[api] generateImage: POST ${fullUrl}`);
+  const res = await robustFetch(fullUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    credentials: 'include',
+    body: JSON.stringify({ register_in_db: false, ...params })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`POST /bfl/generate → ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+/** Internal helper to attach BFL key from WASM DB to server requests in standalone mode. */
+async function _bflHeaders() {
+  if (!isLocalMode()) return {};
+  try {
+    const keys = await localAdapter.getKeyStatus();
+    if (keys.bfl?.has_user_key || keys.bfl?.has_system_key) {
+      const keyObj = await localAdapter.getApiKey('bfl', keys.bfl.has_user_key ? 'user' : 'system');
+      if (keyObj?.key_value) return { 'X-BFL-API-Key': keyObj.key_value };
+    }
+  } catch {}
+  return {};
+}
+
 export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
 export function bflPreviewUrl(filepath) { return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`; }
-export function registerBflFile(filepath) { return post('/bfl/register', { filepath }); }
+export function registerBflFile(filepath) { return postD('/bfl/register', { filepath }); }
 export async function downloadBflFile(filepath, filename) {
   const url = bflPreviewUrl(filepath);
   const resp = await fetch(url, { credentials: 'include' });
@@ -1224,26 +1268,20 @@ export function scanWatchFolder(id, onEvent) {
 
 // ── Batch Jobs ─────────────────────────────────────────────────────────────────
 
-export function createBatchJob(params)      { return post('/batch-jobs', params); }
-export function listBatchJobs()             { return get('/batch-jobs'); }
-export function getBatchJob(id)             { return get(`/batch-jobs/${id}`); }
-export function deleteBatchJob(id)          { return del(`/batch-jobs/${id}`); }
-export function cancelBatchJob(id)          { return post(`/batch-jobs/${id}/cancel`, {}); }
+export function createBatchJob(params)      { return _fetchDirect('POST', '/batch-jobs', params); }
+export function listBatchJobs()             { return _fetchDirect('GET', '/batch-jobs'); }
+export function getBatchJob(id)             { return _fetchDirect('GET', `/batch-jobs/${id}`); }
+export function deleteBatchJob(id)          { return _fetchDirect('DELETE', `/batch-jobs/${id}`); }
+export function cancelBatchJob(id)          { return _fetchDirect('POST', `/batch-jobs/${id}/cancel`, {}); }
 export function fetchBatchJobLogs(id, { limit = 100, offset = 0 } = {}) {
-  return get(`/batch-jobs/${id}/logs?limit=${limit}&offset=${offset}`);
+  return _fetchDirect('GET', `/batch-jobs/${id}/logs?limit=${limit}&offset=${offset}`);
 }
-export function addFileToBatchJob(jobId, data) { return post(`/batch-jobs/${jobId}/add-file`, data); }
+export function addFileToBatchJob(jobId, data) { return _fetchDirect('POST', `/batch-jobs/${jobId}/add-file`, data); }
 export async function uploadBatchFile(buffer, localPath) {
   const form = new FormData();
   form.append('file', new Blob([buffer]), localPath.split('/').pop() || 'image.jpg');
   form.append('local_path', localPath);
-  const res = await fetch(`${BASE}/batch-jobs/upload-file`, {
-    method: 'POST',
-    credentials: 'include',
-    body: form,
-  });
-  if (!res.ok) throw new Error(`uploadBatchFile → ${res.status}`);
-  return res.json();
+  return _fetchDirectMultipart('POST', '/batch-jobs/upload-file', form);
 }
 export function startBatchJob(id, onEvent, retry = false) {
   const q = retry ? '?retry=true' : '';

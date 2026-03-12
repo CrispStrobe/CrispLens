@@ -18,7 +18,7 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: 'node_modules/onnxruntime-web/dist/*',
+          src: ['node_modules/onnxruntime-web/dist/*.wasm', 'node_modules/onnxruntime-web/dist/*.mjs'],
           dest: 'ort-wasm',
         },
         {
@@ -160,6 +160,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
         entryFileNames: `assets/[name].js`,

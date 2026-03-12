@@ -48,10 +48,17 @@ const FLUX2_MODELS = new Set(Object.keys(GENERATE_ENDPOINTS).filter(m => m.start
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getBflKey(req) {
+  // 1. Check for explicit header (allows Standalone mode to pass the key from WASM DB)
+  const headerKey = req.headers['x-bfl-api-key'];
+  if (headerKey) {
+    console.log('[bfl] Using API key provided via request header');
+    return headerKey;
+  }
+
   const db  = getDb();
   const userId = req.user?.userId ?? null;
 
-  // Try user key first, then system key (v4 native api_keys table)
+  // 2. Try user key then system key in server DB
   let row = null;
   if (userId != null) {
     row = db.prepare("SELECT key_value FROM api_keys WHERE provider='bfl' AND scope='user' AND owner_id=?").get(userId);
@@ -60,12 +67,19 @@ function getBflKey(req) {
     row = db.prepare("SELECT key_value FROM api_keys WHERE provider='bfl' AND scope='system' LIMIT 1").get();
   }
 
-  if (row?.key_value) return row.key_value;
+  if (row?.key_value) {
+    console.log('[bfl] Using API key from server database');
+    return row.key_value;
+  }
 
-  // Fall back to env var
+  // 3. Fall back to env var
   const envKey = process.env.BFL_API_KEY;
-  if (envKey) return envKey;
+  if (envKey) {
+    console.log('[bfl] Using API key from environment variable');
+    return envKey;
+  }
   
+  console.warn('[bfl] No API key found in headers, DB, or environment');
   return null;
 }
 
@@ -111,7 +125,9 @@ async function buildMaskPng(width, height, bgFill, rectFill, rect) {
 }
 
 async function bflSubmit(apiKey, endpoint, payload) {
-  const resp = await fetch(BFL_API_BASE + endpoint, {
+  const url = BFL_API_BASE + endpoint;
+  console.log(`[bfl] Submitting task to: ${url}`);
+  const resp = await fetch(url, {
     method:  'POST',
     headers: { 'x-key': apiKey, 'Content-Type': 'application/json' },
     body:    JSON.stringify(payload),
@@ -119,17 +135,22 @@ async function bflSubmit(apiKey, endpoint, payload) {
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
+    console.error(`[bfl] Submit failed (${resp.status}):`, text);
     throw Object.assign(new Error(`BFL submit error ${resp.status}: ${text.slice(0, 300)}`), { status: 502 });
   }
   const data = await resp.json();
   const requestId  = data.id || data.request_id;
   const pollingUrl = data.polling_url || `${BFL_API_BASE}/get_result?id=${requestId}`;
+  console.log(`[bfl] Task accepted. ID: ${requestId}, Polling at: ${pollingUrl}`);
   return { requestId, pollingUrl };
 }
 
 async function bflPoll(apiKey, pollingUrl, timeoutMs = 180_000) {
+  console.log(`[bfl] Starting poll loop for result... (timeout ${timeoutMs/1000}s)`);
   const deadline = Date.now() + timeoutMs;
+  let count = 0;
   while (Date.now() < deadline) {
+    count++;
     await new Promise(r => setTimeout(r, 1500));
     const resp = await fetch(pollingUrl, {
       headers: { 'x-key': apiKey },
@@ -137,20 +158,25 @@ async function bflPoll(apiKey, pollingUrl, timeoutMs = 180_000) {
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
+      console.warn(`[bfl] Poll #${count} failed (${resp.status}): ${text}`);
       throw Object.assign(new Error(`BFL poll error ${resp.status}: ${text.slice(0, 300)}`), { status: 502 });
     }
     const data   = await resp.json();
     const status = data.status || '';
+    console.log(`[bfl] Poll #${count}: status="${status}"`);
     if (status === 'Ready') {
       const result = data.result;
       const sample = (result && typeof result === 'object') ? result.sample : data.sample;
       if (!sample) throw Object.assign(new Error('BFL result missing sample URL'), { status: 502 });
+      console.log(`[bfl] Result ready! URL: ${sample.slice(0, 60)}...`);
       return sample;
     }
     if (status === 'Error' || status === 'Failed') {
+      console.error('[bfl] Job reported failure:', data);
       throw Object.assign(new Error(`BFL job failed: ${data.error || status}`), { status: 502 });
     }
   }
+  console.error('[bfl] Job timed out');
   throw Object.assign(new Error('BFL job timed out after 180 seconds'), { status: 504 });
 }
 

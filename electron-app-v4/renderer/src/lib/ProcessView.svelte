@@ -491,9 +491,7 @@
       syncCfg = loadSyncSettings();
       thumb_size_final = syncCfg.thumbSize || 200;
       
-      const modelBase = localMode
-        ? '/ort-wasm'
-        : ((localStorage.getItem('remote_url') || window.location.origin) + '/models');
+      const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
       console.log('[ProcessView] Setting model base URL:', modelBase);
       engine.setModelBaseUrl(modelBase);
     } catch (e) {

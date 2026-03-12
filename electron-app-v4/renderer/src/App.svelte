@@ -288,7 +288,10 @@
         try {
           const { getDB } = await import('./lib/LocalDB.js');
           await getDB();
-          console.log('[App] Standalone engine initialized');
+          const { faceEngineWeb } = await import('./lib/FaceEngineWeb.js');
+          const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
+          faceEngineWeb.setModelBaseUrl(modelBase);
+          console.log('[App] Standalone engine initialized with models from:', modelBase);
           loadAll(); 
         } catch (e) {
           console.error('[App] Standalone engine initialization failed:', e);
