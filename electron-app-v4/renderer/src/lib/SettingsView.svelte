@@ -271,7 +271,7 @@
   // ── Connection state ──────────────────────────────────────────────────────
   let connectionMode = 'local';
   let remoteUrl = '';
-  let localPort = 7865;
+  let localPort = 7861;
   let isStandaloneBroken = false;
   let standaloneError = '';
   let syncRemoteUrl = ''; // Target server for syncing from standalone mode
@@ -670,7 +670,7 @@
   });
 
 
-  import { faceEngineWeb } from './FaceEngineWeb.js';
+  import { faceEngineWeb as _faceEngineWeb } from './FaceEngineWeb.js';
   import { fetchImages, fetchImageAsUrl, fetchThumbnail } from '../api.js';
 
               /** Extremely robust way to get base64 from any URL (blob, data, or remote) */
@@ -758,7 +758,7 @@
       
       if (!b64) throw new Error('Failed to obtain image data');
       
-      browserBenchResults = await faceEngineWeb.runInferenceBenchmark(b64, (msg) => {
+      browserBenchResults = await _faceEngineWeb.runInferenceBenchmark(b64, (msg) => {
         benchProgress = msg;
       });
       benchProgress = '✓ Browser benchmark complete';
@@ -1437,7 +1437,7 @@
         <button class="mode-btn" class:active={dbMode === 'local'} on:click={() => dbMode !== 'local' && switchDbMode('local')}>
           <span class="mode-icon">📱</span>
           <span class="mode-label">Standalone (Local)</span>
-          <span class="mode-desc">On-device SQLite (WASM)</span>
+          <span class="mode-desc">On-device SQLite (WASM), no server required</span>
         </button>
       </div>
       {#if dbMode === 'local'}
@@ -1447,13 +1447,23 @@
             <p style="color:#c08080; font-size:11px; margin-top:4px;">{standaloneError}</p>
             <div style="display:flex; gap:8px; margin-top:10px; flex-wrap: wrap;">
               <button class="small" on:click={() => switchDbMode('server')}>Switch back to Server Mode</button>
-              <button class="small" on:click={runDbDiag} disabled={testingDiag}>{testingDiag ? '...' : $t('settings_db_diag')}</button>
-              <button class="small primary" on:click={doRestartEngine} disabled={restartingEngine}>{restartingEngine ? '...' : '🔄 Restart WASM Engine'}</button>
             </div>
           </div>
         {/if}
         <p class="hint" style="margin-top:10px;color:#a0a060;">{$t('settings_standalone_active')}</p>
         
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap: wrap;">
+          <button class="small" on:click={runDbDiag} disabled={testingDiag}>
+            {testingDiag ? '...' : $t('settings_db_diag') || 'Test Standalone DB Connection'}
+          </button>
+          <button class="small primary" on:click={doRestartEngine} disabled={restartingEngine}>
+            {restartingEngine ? '...' : '🔄 ' + ($t('settings_restart_wasm') || 'Restart WASM Engine')}
+          </button>
+        </div>
+        {#if testDiagMsg}
+          <p style="font-size:11px; margin-top:8px; color: {testDiagMsg.startsWith('✓') ? '#80c080' : '#e08080'}">{testDiagMsg}</p>
+        {/if}
+
         <!-- ONNX model cache status (for standalone WASM inference) -->
         <div class="model-cache-section">
           <div class="model-status-row">
@@ -1860,8 +1870,8 @@
   </section>
   {/if}
 
-  <!-- Users Management (admin only) -->
-  {#if $currentUser?.role === 'admin' && $backendReady}
+  <!-- Users Management (admin only, server mode) -->
+  {#if $currentUser?.role === 'admin' && $backendReady && !isLocalMode()}
   <section class="card">
     <h3>{$t('user_management')}</h3>
     {#if usersLoading}
@@ -1941,8 +1951,10 @@
       {#if usersMsg}<div class="save-msg" class:error-msg={usersMsg.startsWith('✗')}>{usersMsg}</div>{/if}
     {/if}
   </section>
+  {/if}
 
-  <!-- DB Health (admin only) -->
+  <!-- DB Health (admin or local mode) -->
+  {#if (isAdmin && $backendReady) || isLocalMode()}
   <section class="card">
     <h3>{$t('settings_db_health')}</h3>
     {#if dbStatus}
@@ -1966,7 +1978,7 @@
     {/if}
 
     {#if isLocalMode() || (isElectron && connectionMode === 'local')}
-      <div class="field-row" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+      <div class="field-row" style="margin-top: 15px; border-top: 1px solid #2a2a3a; padding-top: 15px;">
         <div class="hint" style="margin-bottom: 8px; width: 100%;">
           <strong>{$t('settings_db_backup_title')}</strong><br/>
           {$t('settings_db_backup_hint')}

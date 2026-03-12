@@ -197,12 +197,12 @@ async function _waitForJeepSqlite() {
   return new Promise((resolve, reject) => {
     console.log('[LocalDB] Waiting for customElements.whenDefined(jeep-sqlite)...');
     
-    // 5 second timeout — standalone mode should be fast or fail fast
+    // 10 second timeout — Standalone WASM can be slow to boot on some systems
     const timeout = setTimeout(() => {
       _initFailed = true;
-      console.error('[LocalDB] jeep-sqlite component TIMEOUT (5s)');
+      console.error('[LocalDB] jeep-sqlite component TIMEOUT (10s)');
       reject(new Error('jeep-sqlite initialization timed out. SQLite WASM failed to load.'));
-    }, 5000);
+    }, 10000);
 
     // Listen for global errors that might indicate WASM LinkError
     const errorListener = (event) => {
@@ -277,8 +277,9 @@ export async function getDB() {
         sqlite = new SQLiteConnection(CapacitorSQLite);
       }
       
-      const isWeb = window.location.protocol !== 'capacitor:';
-      if (isWeb) {
+      // Initialize WebStore for all non-native platforms (Web, PWA, Electron)
+      const isNative = window.location.protocol === 'capacitor:';
+      if (!isNative) {
         console.log('[LocalDB] Step 3: Initializing WebStore (indexedDB)...');
         await sqlite.initWebStore();
         console.log('[LocalDB] WebStore initialized');
