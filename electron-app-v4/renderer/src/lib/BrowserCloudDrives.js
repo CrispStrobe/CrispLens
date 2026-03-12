@@ -251,6 +251,7 @@ export async function internxtBrowse(tokenData, path) {
       name:   (f.plainName || f.name) + (f.type ? '.' + f.type : ''),
       path:   `${path === '/' ? '' : path}/file/${f.uuid}`,
       is_dir: false,
+      is_image: true,
       size:   f.size,
     })),
   ].sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
@@ -369,7 +370,7 @@ export async function filenBrowse(tokenData, path) {
       const name = meta.name || f.uuid;
       const ext  = name.includes('.') ? '.' + name.split('.').pop().toLowerCase() : '';
       if (IMAGE_EXTS.has(ext)) {
-        files.push({ name, uuid: f.uuid, size: meta.size, is_dir: false, path: `${path === '/' ? '' : path}/file/${f.uuid}` });
+        files.push({ name, uuid: f.uuid, size: meta.size, is_dir: false, is_image: true, path: `${path === '/' ? '' : path}/file/${f.uuid}` });
       }
     } catch {}
   }

@@ -21,7 +21,6 @@ export function base64ToBlob(base64, contentType = '', sliceSize = 512) {
 export async function robustFetch(url, options = {}) {
   // 1. Electron Proxy (highest priority for Desktop)
   if (typeof window !== 'undefined' && window.electronAPI?.proxyFetch) {
-    console.log(`[RobustFetch] Electron: using proxyFetch for ${url}`);
     try {
       const res = await window.electronAPI.proxyFetch(url, options);
       if (!res.ok && res.error) throw new Error(res.error);
@@ -48,7 +47,6 @@ export async function robustFetch(url, options = {}) {
 
   // 2. Capacitor Native HTTP (for mobile)
   if (Capacitor.isNativePlatform()) {
-    console.log(`[RobustFetch] Native platform: using CapacitorHttp for ${url}`);
     try {
       const capOpts = {
         url,
@@ -91,30 +89,56 @@ export async function robustFetch(url, options = {}) {
     }
   }
 
-  // 3. Server-side Proxy (for standard browser pointing to a running server)
-  // Check if we are in a browser and NOT on the same domain as the target
-  const isTargetCrossDomain = !url.startsWith('/') && !url.startsWith(window.location.origin);
-  if (typeof window !== 'undefined' && isTargetCrossDomain) {
-    const remoteUrl = localStorage.getItem('remote_url') || '';
-    const base = remoteUrl ? remoteUrl.replace(/\/$/, '') : window.location.origin;
-    const proxyUrl = `${base}/api/proxy-fetch`;
-    
-    console.log(`[RobustFetch] Browser: using server proxy ${proxyUrl} for ${url}`);
+  // 3. Browser Standalone: try direct fetch first, then fallback to proxy
+  const isTargetCrossDomain = typeof window !== 'undefined' && !url.startsWith('/') && !url.startsWith(window.location.origin);
+  
+  if (isTargetCrossDomain) {
+    console.log(`[RobustFetch] Standalone: trying direct fetch for ${url}`);
     try {
-      const res = await fetch(proxyUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, options })
-      });
+      // We set a timeout for the direct fetch attempt to avoid hanging if CORS preflight stalls
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for direct attempt
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
       
-      if (res.ok || res.status < 500) { // If server responded, use it
-        return res;
+      // If we got a response (even a 404/500), we return it. 
+      // If it's a CORS failure, fetch() would have thrown a TypeError.
+      console.log(`[RobustFetch] Direct fetch success (status ${res.status}) for ${url}`);
+      return res;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.warn(`[RobustFetch] Direct fetch timed out for ${url}, falling back to proxy`);
+      } else {
+        console.warn(`[RobustFetch] Direct fetch failed (CORS?) for ${url}, trying server proxy:`, err.message);
       }
-    } catch (e) {
-      console.warn('[RobustFetch] Server proxy failed, falling back to direct fetch:', e.message);
+      
+      const remoteUrl = localStorage.getItem('remote_url') || '';
+      const base = remoteUrl ? remoteUrl.replace(/\/$/, '') : window.location.origin;
+      const proxyUrl = `${base}/api/proxy-fetch`;
+      
+      try {
+        // Sanitize options for JSON serialization
+        const safeOptions = {};
+        if (options.method) safeOptions.method = options.method;
+        if (options.headers) safeOptions.headers = options.headers;
+        if (typeof options.body === 'string') safeOptions.body = options.body;
+
+        const res = await fetch(proxyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, options: safeOptions }),
+          credentials: 'include'
+        });
+        
+        console.log(`[RobustFetch] Server proxy returned status ${res.status} for ${url}`);
+        return res;
+      } catch (proxyErr) {
+        console.error('[RobustFetch] Server proxy critical failure:', proxyErr.message);
+        throw err; // throw the original direct fetch error
+      }
     }
   }
 
-  // 4. Standard fetch (subject to CORS)
+  // 4. Same-origin fetch
   return fetch(url, options);
 }
