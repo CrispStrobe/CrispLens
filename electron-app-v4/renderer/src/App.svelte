@@ -263,6 +263,21 @@
 
   onMount(async () => {
     console.log('[App] onMount start');
+
+    // In Electron: unregister PWA service workers immediately.
+    // Service workers have no benefit in a self-contained Electron app and can
+    // interfere with WASM loading (Workbox CacheFirst may return stale/corrupted
+    // WASM bytes that were cached under an old app version, causing
+    // InferenceSession.create() to hang indefinitely without throwing).
+    if (inElectron && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => {
+          r.unregister();
+          console.log('[App] SW unregistered in Electron:', r.scope);
+        });
+      }).catch(() => {});
+    }
+
     // Restore i18n from session cache immediately (don't wait for backend)
     try {
       const cached = sessionStorage.getItem('i18n_cache');
@@ -277,13 +292,35 @@
       }
     } catch { /* ignore */ }
 
+    // ── In Electron: read settings.json once and sync data_source ───────────────
+    // settings.json (main process) is the authoritative source of mode in Electron.
+    // localStorage can get stale or corrupted across app relaunches (e.g. after a
+    // bad code change writes the wrong value). Always trust settings.json over
+    // localStorage in the Electron context.
+    let _electronSettings = null;
+    if (inElectron) {
+      try {
+        _electronSettings = await window.electronAPI.getSettings();
+        const authoritative = _electronSettings?.dataSource ?? 'server';
+        const current = localStorage.getItem('data_source');
+        if (current !== authoritative) {
+          console.log(`[App] Electron mode sync: localStorage '${current}' → settings.json '${authoritative}'`);
+          setLocalMode(authoritative === 'local');
+        } else {
+          console.log(`[App] Electron mode: data_source='${current}' (in sync with settings.json)`);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to read Electron settings for mode sync:', err.message);
+      }
+    }
+
     // ── Local (standalone) mode: browser WASM SQLite for image/face data ────────
     if (isLocalMode()) {
       console.log('[App] Standalone mode — initializing local WASM engine...');
       backendReady.set(true);
       modelReady.set(true);
       sessionChecked = true;
-      
+
       setTimeout(async () => {
         try {
           const { getDB } = await import('./lib/LocalDB.js');
@@ -292,7 +329,7 @@
           const modelBase = (localStorage.getItem('remote_url') || window.location.origin) + '/models';
           faceEngineWeb.setModelBaseUrl(modelBase);
           console.log('[App] Standalone engine initialized with models from:', modelBase);
-          loadAll(); 
+          loadAll();
         } catch (e) {
           console.error('[App] Standalone engine initialization failed:', e);
           loadAll(); // try anyway
@@ -305,26 +342,22 @@
     console.log('[App] Server mode, checking backend connectivity...');
     // Configure remote base URL (Electron or browser/PWA)
     if (inElectron) {
-      console.log('[App] Running in Electron');
-      try {
-        const s = await window.electronAPI.getSettings();
-        if (s?.remoteUrl) {
-          console.log(`[App] Connecting to remote: ${s.remoteUrl}`);
-          applyServerUrl(s.remoteUrl);
-        } else {
-          // Local mode — get the actual port assigned to the internal Node.js server
-          try {
-            const port = await window.electronAPI.getPort();
-            console.log(`[App] Local server port: ${port}`);
-            applyServerUrl(port ? `http://127.0.0.1:${port}` : '');
-          } catch { 
-            console.warn('[App] Failed to get port via IPC');
-            applyServerUrl(''); 
-          }
+      console.log('[App] Running in Electron (server mode)');
+      // Reuse _electronSettings already fetched above — avoid a second IPC round-trip
+      const s = _electronSettings;
+      if (s?.remoteUrl) {
+        console.log(`[App] Connecting to remote: ${s.remoteUrl}`);
+        applyServerUrl(s.remoteUrl);
+      } else {
+        // Local embedded server — get the actual port assigned by findFreePort()
+        try {
+          const port = await window.electronAPI.getPort();
+          console.log(`[App] Local server port: ${port}`);
+          applyServerUrl(port ? `http://127.0.0.1:${port}` : '');
+        } catch {
+          console.warn('[App] Failed to get port via IPC');
+          applyServerUrl('');
         }
-      } catch (err) { 
-        console.error('[App] Failed to get settings via IPC:', err);
-        applyServerUrl(''); 
       }
     } else {
       // Browser / PWA — restore saved remote URL (empty = same origin)

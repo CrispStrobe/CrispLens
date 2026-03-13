@@ -816,6 +816,8 @@
         console.error('[FSView] Failed to init engine:', err);
         addErrorList = [...addErrorList, { name: 'Engine Init', error: err.message }];
         adding = false;
+        addDone = true;
+        backgroundTask.set(null);
         return;
       }
     }

@@ -36,10 +36,15 @@
     error   = '';
     lines   = [];
 
-    // In standalone/local mode, show captured browser console log
-    if (isLocalMode()) {
+    // In standalone mode OR in Electron: show captured renderer console.
+    // In Electron the renderer (FaceEngineWeb, API layer, UI) runs in a separate
+    // V8 process from the Node.js server — server SSE logs never contain renderer
+    // errors. ConsoleCapture always records renderer console regardless of mode.
+    if (isLocalMode() || isElectron) {
       lines = getCapturedLines(lineCount);
-      logPath = 'browser console (standalone mode)';
+      logPath = isElectron
+        ? 'renderer console (Electron — switch transport for server logs)'
+        : 'browser console (standalone mode)';
       loading = false;
       return;
     }
