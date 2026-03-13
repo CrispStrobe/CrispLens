@@ -47,11 +47,11 @@ A self-hosted face recognition and photo management system. Ships as a high-perf
 - **Privacy Mode** — `local_infer`: ONNX runs on your device, only 512D vectors + thumbnail sent to remote. Full images never leave your machine.
 - **Hybrid Ingest Modes** — direct upload, server-side folder scan, or `import-processed` (pre-computed vectors from any client).
 - **AI Image Enrichment** — 9 VLM providers (Anthropic, OpenAI, Nebius, Scaleway, OpenRouter, Mistral, Groq, Poe, Ollama); scene type, description, auto-tags. Works directly from the browser in Standalone mode.
-- **Offline-First (Standalone)** — browser-side WASM SQLite + HNSW index (Voy). True offline operation: Service Worker (PWA) caches all logic and WASM binaries so the app works even when the Node server is stopped.
+- **Offline-First (Standalone)** — browser-side WASM SQLite + HNSW index (Voy). True offline operation: Service Worker (PWA) caches all logic and WASM binaries. The app remains fully functional (face detection, search, VLM, and **BFL AI generation**) even when the Node server is stopped.
 - **Direct Cloud Ingest** — Direct browser-to-cloud downloads for Internxt and Filen, bypassing the Node server for maximum performance and privacy.
 - **Role-based Access Control** — admin / mediamanager / user roles; image visibility (shared/private).
 - **Settings Persistence** — key settings survive hard reset via SQLite `pref_*` keys and preserved `localStorage` config keys.
-- **Image Editing** — EXIF-preserving rotate, free-draw crop, canvas resize, BFL AI editing (Flux Kontext/Fill).
+- **Image Editing** — EXIF-preserving rotate, free-draw crop, canvas resize, **BFL AI editing** (Flux Kontext/Fill).
 
 ---
 
@@ -72,8 +72,8 @@ Login: **admin / admin**
 The app runs entirely in the browser using WASM SQLite and WASM ONNX.
 - **Database**: Browser IndexedDB (WASM SQLite).
 - **Inference**: SCRFD + ArcFace (WASM) + optional MediaPipe (GPU).
-- **True Offline**: Service Worker (PWA) caches all Javascript bundles and WASM runtimes. The app remains fully functional (face detection, search, VLM) even if the Node server is stopped.
-- **Direct Ingest**: Browser downloads and decrypts cloud files (Internxt/Filen) directly, bypassing any server proxy.
+- **True Offline**: Service Worker (PWA) caches all Javascript bundles and WASM runtimes. The app remains fully functional (face detection, search, VLM, and BFL generation) even if the Node server is stopped.
+- **Direct Access**: Browser calls cloud providers directly for downloads (Internxt/Filen), VLM enrichment, and BFL generation, bypassing the Node proxy whenever possible.
 - **Offline Sync**: Processed results queue locally and push to a remote server on reconnect.
 
 ### Desktop App (Electron)
@@ -218,6 +218,7 @@ docker run -d -p 7861:7861 -v crisp-data:/data --name crisplens crisplens
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| "ABI mismatch" during start | Node version conflict | Run `electron-builder install-app-deps` in v4 dir |
 | "No images shown" in Electron | `db_mode` defaulted to `local` | Fixed automatically; check Settings → Storage Mode |
 | Port 7861 in use | Another process | Electron auto-picks next free port (7862–7881) |
 | "No faces found" | Image too small / threshold too high | Lower `detection_threshold`; increase storage resolution in Standalone mode |

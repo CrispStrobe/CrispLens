@@ -22,8 +22,8 @@ The app runs entirely within your web browser. Ideal for zero-install usage and 
 - **Database**: WASM SQLite (`@capacitor-community/sqlite`) stored in IndexedDB.
 - **Inference**: SCRFD + ArcFace via `onnxruntime-web` + optional MediaPipe (GPU-accelerated).
 - **True Offline**: Service Worker (PWA) caches all logic and WASM binaries. Once loaded, the app works entirely without the Node server (including Face Detection, Search, and VLM).
-- **Direct Cloud Access**: Cloud downloads (Internxt/Filen) and VLM API calls go direct from browser to provider, bypassing the Node proxy whenever possible.
-- **Storage Resolution**: Adjustable from 200px to 1200px via **Settings → Offline Cache**.
+- **Direct Cloud Access**: Cloud downloads (Internxt/Filen), VLM (9 providers), and **BFL AI Generation** (Flux Kontext/Fill) go direct from browser to provider, bypassing the Node proxy whenever possible.
+- **Storage Resolution**: Adjustable from 200px to 1200px via **Settings → Offline Cache**. Generated images are automatically synced to local storage at your preferred resolution.
 - **Offline Sync**: Processed embeddings queue locally and push to a remote server on reconnect.
 
 ### 3. Desktop App (Electron)
@@ -31,6 +31,18 @@ Self-contained desktop app for macOS, Windows, and Linux. Bundles the Express se
 - **DB Management**: Choose an existing `.db` file, create a new one, or reset to the default location
 - **Port**: Automatically finds a free port starting at 7861 (no crash if port is taken)
 - **Local File Access**: `localfile://` protocol for serving original full-resolution images securely
+
+---
+
+## Troubleshooting Native Modules (Electron)
+
+If you see an **ABI mismatch** error during startup (e.g., `better-sqlite3` or `usearch` compiled against a different Node.js version), run the following in the `electron-app-v4` directory:
+
+```bash
+./node_modules/.bin/electron-builder install-app-deps
+```
+
+This rebuilds native dependencies to match the Electron runtime version.
 
 ---
 

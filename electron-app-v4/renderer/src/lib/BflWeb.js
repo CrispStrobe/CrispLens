@@ -94,11 +94,10 @@ export class BflClientWeb {
     return res.json();
   }
 
-  async _poll(id) {
-    const url = `${BFL_API_BASE}/get_result?id=${id}`;
+  async _poll(pollingUrl) {
     const start = Date.now();
     while (Date.now() - start < 180000) {
-      const res = await robustFetch(url, { headers: { 'x-key': this.apiKey } });
+      const res = await robustFetch(pollingUrl, { headers: { 'x-key': this.apiKey } });
       if (!res.ok) throw new Error(`BFL poll error ${res.status}`);
       const data = await res.json();
       if (data.status === 'Ready') return data.result.sample || data.result.image;
@@ -126,9 +125,9 @@ export class BflClientWeb {
       payload.aspect_ratio = aspect_ratio || '1:1';
     }
 
-    const task = await this._submit(endpoint, payload);
-    const imageUrl = await this._poll(task.id);
-    return imageUrl;
+    const data = await this._submit(endpoint, payload);
+    const pollingUrl = data.polling_url || `${BFL_API_BASE}/get_result?id=${data.id || data.request_id}`;
+    return await this._poll(pollingUrl);
   }
 
   async outpaint(params) {
@@ -146,7 +145,7 @@ export class BflClientWeb {
     const origW = img.width;
     const origH = img.height;
     const newW = Math.round((origW + (add_left|0) + (add_right|0)) / 16) * 16;
-    const newH = Math.round((origH + (add_top|0) + (add_bottom|0)) / 16) * 16;
+    const newH = Math.round((origH + (add_top|0)  + (add_bottom|0)) / 16) * 16;
 
     const canvas = document.createElement('canvas');
     canvas.width = newW;
@@ -167,8 +166,9 @@ export class BflClientWeb {
       output_format: 'jpeg'
     };
 
-    const task = await this._submit(FILL_ENDPOINT, payload);
-    return await this._poll(task.id);
+    const data = await this._submit(FILL_ENDPOINT, payload);
+    const pollingUrl = data.polling_url || `${BFL_API_BASE}/get_result?id=${data.id || data.request_id}`;
+    return await this._poll(pollingUrl);
   }
 
   async inpaint(params) {
@@ -191,8 +191,9 @@ export class BflClientWeb {
       output_format: 'jpeg'
     };
 
-    const task = await this._submit(FILL_ENDPOINT, payload);
-    return await this._poll(task.id);
+    const data = await this._submit(FILL_ENDPOINT, payload);
+    const pollingUrl = data.polling_url || `${BFL_API_BASE}/get_result?id=${data.id || data.request_id}`;
+    return await this._poll(pollingUrl);
   }
 
   async edit(params) {
@@ -208,8 +209,9 @@ export class BflClientWeb {
       output_format: 'jpeg'
     };
 
-    const task = await this._submit(endpoint, payload);
-    return await this._poll(task.id);
+    const data = await this._submit(endpoint, payload);
+    const pollingUrl = data.polling_url || `${BFL_API_BASE}/get_result?id=${data.id || data.request_id}`;
+    return await this._poll(pollingUrl);
   }
 }
 

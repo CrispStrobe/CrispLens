@@ -1205,9 +1205,13 @@ async function _syncToLocalWasm(filepath, width, height) {
   if (!_localMode) return;
   console.log('[api] Standalone mode: syncing generated file to local WASM DB...', filepath);
   try {
-    const previewUrl = bflPreviewUrl(filepath);
-    const resp = await fetch(previewUrl, { credentials: 'include' });
-    if (!resp.ok) throw new Error(`Preview fetch failed: ${resp.status}`);
+    const isUrl = filepath.startsWith('http');
+    // If it's a URL, fetch it directly (bypassing server proxy if possible).
+    // If it's a local path, use the server's preview endpoint.
+    const fetchUrl = isUrl ? filepath : bflPreviewUrl(filepath);
+    
+    const resp = await robustFetch(fetchUrl, { credentials: 'include' });
+    if (!resp.ok) throw new Error(`Fetch failed (${resp.status}) for ${fetchUrl}`);
     
     const blob = await resp.blob();
     
@@ -1221,9 +1225,9 @@ async function _syncToLocalWasm(filepath, width, height) {
     const { b64, w: origW, h: origH } = await _reduceImage(blob, maxDim);
 
     // Robust filename extraction (handles / and \)
-    const filename = filepath.split(/[/\\]/).pop();
+    const filename = filepath.split(/[/\\]/).pop().split('?')[0];
 
-    await localAdapter.importProcessed({
+    const res = await localAdapter.importProcessed({
       filepath:      filepath, 
       filename:      filename,
       width:         width  || origW,
@@ -1233,9 +1237,11 @@ async function _syncToLocalWasm(filepath, width, height) {
       faces:         [],
       duplicate_mode: 'skip',
     });
-    console.log('[api] Standalone mode: local registration OK');
+    console.log('[api] Standalone mode: local registration OK', res);
+    return res;
   } catch (e) {
     console.warn('[api] Standalone mode: failed to register file locally:', e);
+    throw e;
   }
 }
 
@@ -1250,11 +1256,33 @@ export async function canvasSizeImage(params) {
 export function bflPreviewUrl(filepath) { return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`; }
 
 export async function registerBflFile(filepath) {
-  const reg = await postD('/bfl/register', { filepath });
-  if (_localMode && reg.ok) {
-    await _syncToLocalWasm(filepath, reg.width, reg.height);
+  let serverReg = { ok: false };
+  // Only attempt server registration if it looks like a local path (not a CDN URL)
+  // because the server's /register endpoint ONLY works for local disk files.
+  if (!filepath.startsWith('http')) {
+    try {
+      serverReg = await postD('/bfl/register', { filepath });
+    } catch (e) {
+      console.warn('[api] Server registration failed (expected if server is down):', e.message);
+    }
   }
-  return reg;
+
+  if (_localMode) {
+    try {
+      const localRes = await _syncToLocalWasm(filepath, serverReg.width, serverReg.height);
+      // Return a merged result so the UI thinks everything is OK
+      return { 
+        ok: true, 
+        new_image_id: localRes.image_id || serverReg.new_image_id, 
+        width: serverReg.width || localRes.width, 
+        height: serverReg.height || localRes.height 
+      };
+    } catch (e) {
+      if (!serverReg.ok) throw e; // Both failed
+    }
+  }
+  
+  return serverReg;
 }
 export async function downloadBflFile(filepath, filename) {
   const url = bflPreviewUrl(filepath);
