@@ -89,8 +89,13 @@
 
   // ── Browser ONNX provider prefs (localStorage, standalone/browser only) ────
   const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
+  const _inElectron = typeof window !== 'undefined' && !!window.electronAPI;
   let ortUseSIMD   = _ls?.getItem('pref_ort_use_simd')   === 'true';
-  let ortUseWebGL  = _ls?.getItem('pref_ort_use_webgl')  !== 'false'; // default true
+  // In Electron: default WebGL OFF (unreliable in embedded Chromium — use WASM which is stable).
+  // User can enable it here; the .jsep.wasm file is included in the app bundle for this purpose.
+  // In browser/PWA: default WebGL ON.
+  const _webglStored = _ls?.getItem('pref_ort_use_webgl');
+  let ortUseWebGL  = _webglStored !== null ? _webglStored !== 'false' : !_inElectron;
   let ortUseWebGPU = _ls?.getItem('pref_ort_use_webgpu') === 'true';
 
   function saveOrtPrefs() {
@@ -1609,13 +1614,23 @@
         <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('processing_backend_section')}</span>
       </div>
       {#if dbMode === 'local'}
-        <p class="hint">Standalone: always <strong>Browser WASM</strong> (onnxruntime-web).</p>
+        <p class="hint">
+          Standalone: uses <strong>Browser WASM</strong> (onnxruntime-web).
+          {#if _inElectron}
+            WebGL is <strong>off by default</strong> in Electron — more stable. Enable below to use GPU acceleration (requires app restart).
+          {:else}
+            WebGL is on by default. Enable WebGPU for best GPU performance (experimental).
+          {/if}
+        </p>
         <div class="form-grid" style="margin-top:8px;">
           <label>{$t('ort_use_webgl')}</label>
           <input type="checkbox" bind:checked={ortUseWebGL} on:change={saveOrtPrefs} />
           <label>{$t('ort_use_webgpu')}</label>
           <input type="checkbox" bind:checked={ortUseWebGPU} on:change={saveOrtPrefs} />
         </div>
+        {#if (ortUseWebGL || ortUseWebGPU)}
+          <p class="hint" style="color:#c08040;margin-top:4px;">⚠ GPU mode uses a larger WASM runtime (~24 MB). Restart/reload after changing.</p>
+        {/if}
       {:else if isAdmin && $backendReady}
         <div class="form-grid">
           <label>{$t('processing_backend_section')}</label>

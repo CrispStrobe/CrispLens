@@ -82,7 +82,6 @@
         "filter": [
           "**/*",
           "!models/**",
-          "!ort-wasm/*.jsep.wasm",
           "!ort-wasm/*.jspi.wasm",
           "!ort-wasm/*.asyncify.wasm",
           "!assets/ort-wasm-simd-threaded*.wasm"
