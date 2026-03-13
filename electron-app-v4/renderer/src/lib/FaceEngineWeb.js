@@ -20,9 +20,12 @@ if (typeof ort.env.webgpu !== 'undefined') {
 }
 
 const _ls = typeof localStorage !== 'undefined' ? localStorage : null;
+// In Electron the WebGL EP is unreliable (often "backend not found") due to the embedded
+// Chromium context — default to WASM-only so we don't waste time on a doomed WebGL attempt.
+const _inElectron = typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined';
 const _ortPrefs = {
   simd:   _ls?.getItem('pref_ort_use_simd')   === 'true',
-  webgl:  _ls?.getItem('pref_ort_use_webgl')  !== 'false', // default true
+  webgl:  !_inElectron && _ls?.getItem('pref_ort_use_webgl')  !== 'false', // default true in browser, off in Electron
   webgpu: _ls?.getItem('pref_ort_use_webgpu') === 'true',
 };
 ort.env.wasm.simd = _ortPrefs.simd;

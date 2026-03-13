@@ -1113,18 +1113,15 @@ export async function generateImage(params) {
 }
 
 /** Internal helper to attach BFL key from WASM DB to server requests.
- *  In server mode the server reads the key from its own api_keys table,
- *  but if the key was saved while in standalone mode it only exists in
- *  LocalAdapter — so always check LocalAdapter as a fallback. */
+ *  The BFL key is stored in the WASM SQLite (LocalAdapter) under 'vlm_key_bfl'.
+ *  In server mode the key is ALSO in the server's api_keys table — but in standalone
+ *  mode it's only in LocalAdapter. Always send it as a header so the server-side
+ *  getBflKey() can use it regardless of which DB it looks at. */
 async function _bflHeaders() {
-  // In server mode the server handles the key itself; only send the header
-  // if LocalAdapter actually has one (covers the "saved-in-standalone" scenario).
   try {
-    const keys = await localAdapter.getKeyStatus();
-    if (keys.bfl?.has_user_key || keys.bfl?.has_system_key) {
-      const keyObj = await localAdapter.getApiKey('bfl', keys.bfl.has_user_key ? 'user' : 'system');
-      if (keyObj?.key_value) return { 'X-BFL-API-Key': keyObj.key_value };
-    }
+    const keys = await localAdapter.getVlmKeys();
+    const bflKey = keys['bfl'];
+    if (bflKey) return { 'X-BFL-API-Key': bflKey };
   } catch {}
   return {};
 }
