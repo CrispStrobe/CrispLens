@@ -11,6 +11,7 @@
 import syncManager from './lib/SyncManager.js';
 import { localAdapter, fileCache, thumbCache, toWebUrl } from './lib/LocalAdapter.js';
 import { localThumb } from './lib/LocalThumbnailCache.js';
+import { bflClientWeb } from './lib/BflWeb.js';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { robustFetch, base64ToBlob } from './lib/RobustFetch.js';
 
@@ -1084,18 +1085,64 @@ export function cloneImageMetadata(sourceId, targetId) {
 // ── BFL AI Image Editing ──────────────────────────────────────────────────────
 
 export async function outpaintImage(params) {
+  if (_localMode) {
+    const keys = await localAdapter.getVlmKeys();
+    bflClientWeb.setKey(keys['bfl']);
+    // For outpaint, we might need to fetch the blob if only image_id was provided
+    let blob = params.image_blob;
+    if (!blob && params.image_id) {
+      const url = thumbnailUrl(params.image_id, 1024); // fetch high-res thumb as base
+      const resp = await fetch(url, { credentials: 'include' });
+      if (resp.ok) blob = await resp.blob();
+    }
+    const resultUrl = await bflClientWeb.outpaint({ ...params, image_blob: blob });
+    return { ok: true, filepath: resultUrl }; // resultUrl is direct from BFL CDN
+  }
   const h = await _bflHeaders();
   return _fetchDirect('POST', '/bfl/outpaint', { register_in_db: false, ...params }, h);
 }
+
 export async function inpaintImage(params) {
+  if (_localMode) {
+    const keys = await localAdapter.getVlmKeys();
+    bflClientWeb.setKey(keys['bfl']);
+    let blob = params.image_blob;
+    if (!blob && params.image_id) {
+      const url = thumbnailUrl(params.image_id, 1024);
+      const resp = await fetch(url, { credentials: 'include' });
+      if (resp.ok) blob = await resp.blob();
+    }
+    const resultUrl = await bflClientWeb.inpaint({ ...params, image_blob: blob });
+    return { ok: true, filepath: resultUrl };
+  }
   const h = await _bflHeaders();
   return _fetchDirect('POST', '/bfl/inpaint', { register_in_db: false, ...params }, h);
 }
+
 export async function aiEditImage(params) {
+  if (_localMode) {
+    const keys = await localAdapter.getVlmKeys();
+    bflClientWeb.setKey(keys['bfl']);
+    let blob = params.image_blob;
+    if (!blob && params.image_id) {
+      const url = thumbnailUrl(params.image_id, 1024);
+      const resp = await fetch(url, { credentials: 'include' });
+      if (resp.ok) blob = await resp.blob();
+    }
+    const resultUrl = await bflClientWeb.edit({ ...params, image_blob: blob });
+    return { ok: true, filepath: resultUrl };
+  }
   const h = await _bflHeaders();
   return _fetchDirect('POST', '/bfl/edit', { register_in_db: false, ...params }, h);
 }
+
 export async function generateImage(params) {
+  if (_localMode) {
+    const keys = await localAdapter.getVlmKeys();
+    bflClientWeb.setKey(keys['bfl']);
+    const resultUrl = await bflClientWeb.generate(params);
+    return { ok: true, filepath: resultUrl };
+  }
   const headers = await _bflHeaders();
   const fullUrl = BASE + '/bfl/generate';
   console.log(`[api] generateImage: POST ${fullUrl}`);
@@ -1126,9 +1173,89 @@ async function _bflHeaders() {
   return {};
 }
 
-export function canvasSizeImage(params) { return post('/edit/canvas-size', params); }
+/** Internal helper to reduce an image to a target size using Canvas. */
+async function _reduceImage(blob, maxDim = 600) {
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = URL.createObjectURL(blob);
+  });
+
+  const canvas = document.createElement('canvas');
+  let w = img.width;
+  let h = img.height;
+  if (w > h) {
+    if (w > maxDim) { h *= maxDim / w; w = maxDim; }
+  } else {
+    if (h > maxDim) { w *= maxDim / h; h = maxDim; }
+  }
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  
+  const b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+  URL.revokeObjectURL(img.src);
+  return { b64, w: img.width, h: img.height };
+}
+
+/** Internal helper to register a server-side generated file into the local WASM DB. */
+async function _syncToLocalWasm(filepath, width, height) {
+  if (!_localMode) return;
+  console.log('[api] Standalone mode: syncing generated file to local WASM DB...', filepath);
+  try {
+    const previewUrl = bflPreviewUrl(filepath);
+    const resp = await fetch(previewUrl, { credentials: 'include' });
+    if (!resp.ok) throw new Error(`Preview fetch failed: ${resp.status}`);
+    
+    const blob = await resp.blob();
+    
+    // Use configured storage size from sync settings
+    let maxDim = 600;
+    try {
+      const s = JSON.parse(localStorage.getItem('crisplens_sync_settings') || '{}');
+      if (s.thumbSize) maxDim = parseInt(s.thumbSize);
+    } catch {}
+
+    const { b64, w: origW, h: origH } = await _reduceImage(blob, maxDim);
+
+    // Robust filename extraction (handles / and \)
+    const filename = filepath.split(/[/\\]/).pop();
+
+    await localAdapter.importProcessed({
+      filepath:      filepath, 
+      filename:      filename,
+      width:         width  || origW,
+      height:        height || origH,
+      file_size:     blob.size,
+      thumbnail_b64: b64,
+      faces:         [],
+      duplicate_mode: 'skip',
+    });
+    console.log('[api] Standalone mode: local registration OK');
+  } catch (e) {
+    console.warn('[api] Standalone mode: failed to register file locally:', e);
+  }
+}
+
+export async function canvasSizeImage(params) {
+  const reg = await post('/edit/canvas-size', params);
+  if (_localMode && reg.ok && reg.new_image_id && reg.filepath) {
+    await _syncToLocalWasm(reg.filepath, reg.width, reg.height);
+  }
+  return reg;
+}
+
 export function bflPreviewUrl(filepath) { return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`; }
-export function registerBflFile(filepath) { return postD('/bfl/register', { filepath }); }
+
+export async function registerBflFile(filepath) {
+  const reg = await postD('/bfl/register', { filepath });
+  if (_localMode && reg.ok) {
+    await _syncToLocalWasm(filepath, reg.width, reg.height);
+  }
+  return reg;
+}
 export async function downloadBflFile(filepath, filename) {
   const url = bflPreviewUrl(filepath);
   const resp = await fetch(url, { credentials: 'include' });
