@@ -26,13 +26,28 @@ function _cacheSet(key, buf) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function resolveImagePath(filepath) {
-  if (!filepath) return null;
-  if (fs.existsSync(filepath)) return filepath;
-  // Try relative to DB file location
+function resolveImagePath(row) {
+  if (!row) return null;
+  
+  // 1. Try primary filepath
+  if (row.filepath && fs.existsSync(row.filepath)) return row.filepath;
+  
+  // 2. Try local_path (metadata for browser-ingested files in Electron)
+  if (row.local_path && fs.existsSync(row.local_path)) return row.local_path;
+
+  // 3. Try relative to DB file location (legacy or relative paths)
   const dbDir = path.dirname(process.env.DB_PATH || path.join(__dirname, '..', '..', '..', 'face_recognition.db'));
-  const rel = path.join(dbDir, filepath);
-  if (fs.existsSync(rel)) return rel;
+  
+  if (row.filepath) {
+    const rel = path.join(dbDir, row.filepath);
+    if (fs.existsSync(rel)) return rel;
+  }
+  
+  if (row.local_path) {
+    const relLocal = path.join(dbDir, row.local_path);
+    if (fs.existsSync(relLocal)) return relLocal;
+  }
+
   return null;
 }
 
@@ -236,7 +251,7 @@ router.get('/:id/thumbnail', requireAuth, async (req, res) => {
     return res.send(_thumbCache.get(cKey));
   }
 
-  const row = db.prepare('SELECT filepath, thumbnail_blob FROM images WHERE id = ?').get(id);
+  const row = db.prepare('SELECT filepath, local_path, thumbnail_blob FROM images WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ detail: 'Not found' });
 
   try {
@@ -244,7 +259,7 @@ router.get('/:id/thumbnail', requireAuth, async (req, res) => {
     if (row.thumbnail_blob) {
       src = Buffer.from(row.thumbnail_blob);
     } else {
-      const p = resolveImagePath(row.filepath);
+      const p = resolveImagePath(row);
       if (!p) return res.status(404).json({ detail: 'Image file not found' });
       src = p;
     }
@@ -262,9 +277,9 @@ router.get('/:id/thumbnail', requireAuth, async (req, res) => {
 
 router.get('/:id/full', requireAuth, (req, res) => {
   const db  = getDb();
-  const row = db.prepare('SELECT filepath FROM images WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT filepath, local_path FROM images WHERE id = ?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  const p = resolveImagePath(row.filepath);
+  const p = resolveImagePath(row);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
   res.sendFile(p);
 });
@@ -273,9 +288,9 @@ router.get('/:id/full', requireAuth, (req, res) => {
 
 router.get('/:id/preview', requireAuth, async (req, res) => {
   const db  = getDb();
-  const row = db.prepare('SELECT filepath FROM images WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT filepath, local_path FROM images WHERE id = ?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  const p = resolveImagePath(row.filepath);
+  const p = resolveImagePath(row);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
   try {
     const buf = await sharp(p).rotate().resize(1200, 1200, { fit: 'inside' }).jpeg({ quality: 90 }).toBuffer();
@@ -290,9 +305,9 @@ router.get('/:id/preview', requireAuth, async (req, res) => {
 
 router.get('/:id/download', requireAuth, (req, res) => {
   const db  = getDb();
-  const row = db.prepare('SELECT filepath, filename FROM images WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT filepath, local_path, filename FROM images WHERE id = ?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  const p = resolveImagePath(row.filepath);
+  const p = resolveImagePath(row);
   if (!p) return res.status(404).json({ detail: 'Image file not found' });
   res.setHeader('Content-Disposition', `attachment; filename="${row.filename}"`);
   res.sendFile(p);
@@ -441,7 +456,7 @@ router.post('/:id/re-detect', requireAuth, (req, res) => {
   } catch {}
 
   // Try filepath first, fall back to local_path (original source path)
-  const p = resolveImagePath(row.filepath) || resolveImagePath(row.local_path);
+  const p = resolveImagePath(row);
   if (!p) {
     console.warn(`[re-detect] Image ${id} not found on disk. filepath=${row.filepath} local_path=${row.local_path}`);
     return res.status(404).json({ detail: 'Image file not found on disk' });
@@ -571,9 +586,9 @@ router.post('/:id/open', requireAuth, (req, res) => {
   // Only works in desktop mode
   const { exec } = require('child_process');
   const db  = getDb();
-  const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(req.params.id));
+  const row = db.prepare('SELECT filepath, local_path FROM images WHERE id=?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  const p = resolveImagePath(row.filepath);
+  const p = resolveImagePath(row);
   if (!p) return res.status(200).json({ ok: false, headless: true, path: row.filepath });
 
   const cmd = process.platform === 'darwin' ? `open "${p}"` : `xdg-open "${p}"`;
@@ -586,9 +601,9 @@ router.post('/:id/open', requireAuth, (req, res) => {
 router.post('/:id/open-folder', requireAuth, (req, res) => {
   const { exec } = require('child_process');
   const db  = getDb();
-  const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(Number(req.params.id));
+  const row = db.prepare('SELECT filepath, local_path FROM images WHERE id=?').get(Number(req.params.id));
   if (!row) return res.status(404).json({ detail: 'Not found' });
-  const p = resolveImagePath(row.filepath);
+  const p = resolveImagePath(row);
   const dir = p ? path.dirname(p) : path.dirname(row.filepath);
 
   if (process.platform === 'darwin') exec(`open "${dir}"`);
@@ -604,18 +619,27 @@ router.post('/:id/rename', requireAuth, (req, res) => {
   const { new_filename } = req.body || {};
   if (!new_filename) return res.status(400).json({ detail: 'new_filename required' });
 
-  const row = db.prepare('SELECT filepath FROM images WHERE id=?').get(id);
+  const row = db.prepare('SELECT filepath, local_path FROM images WHERE id=?').get(id);
   if (!row) return res.status(404).json({ detail: 'Not found' });
 
-  const dir     = path.dirname(row.filepath);
+  const p = resolveImagePath(row);
+  if (!p) return res.status(404).json({ detail: 'File not found' });
+
+  const dir     = path.dirname(p);
   const newPath = path.join(dir, new_filename);
   try {
-    fs.renameSync(row.filepath, newPath);
-    db.prepare('UPDATE images SET filepath=?, filename=? WHERE id=?').run(newPath, new_filename, id);
+    fs.renameSync(p, newPath);
+    // If we renamed the real file, we should update both filepath (if it was the real one) and local_path
+    if (row.filepath === p) {
+      db.prepare('UPDATE images SET filepath=?, filename=? WHERE id=?').run(newPath, new_filename, id);
+    } else {
+      db.prepare('UPDATE images SET local_path=?, filename=? WHERE id=?').run(newPath, new_filename, id);
+    }
     res.json({ ok: true, filepath: newPath });
   } catch (err) {
     res.status(500).json({ detail: err.message });
   }
 });
+
 
 module.exports = router;
