@@ -42,7 +42,7 @@
 
   async function loadPreviewBlob(filepath) {
     try {
-      const resp = await fetch(bflPreviewUrl(filepath), { credentials: 'include' });
+      const resp = await robustFetch(bflPreviewUrl(filepath), { credentials: 'include' });
       if (!resp.ok) return;
       const blob = await resp.blob();
       previewBlob = URL.createObjectURL(blob);

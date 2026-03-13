@@ -332,7 +332,7 @@
   async function loadPreviewBlob(filepath) {
     console.log('[AIEditModal] loadPreviewBlob | filepath=%s', filepath);
     try {
-      const resp = await fetch(bflPreviewUrl(filepath), { credentials: 'include' });
+      const resp = await robustFetch(bflPreviewUrl(filepath), { credentials: 'include' });
       if (!resp.ok) throw new Error(`preview ${resp.status}`);
       const blob = await resp.blob();
       previewBlob = URL.createObjectURL(blob);

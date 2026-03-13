@@ -1253,7 +1253,11 @@ export async function canvasSizeImage(params) {
   return reg;
 }
 
-export function bflPreviewUrl(filepath) { return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`; }
+export function bflPreviewUrl(filepath) {
+  if (!filepath) return '';
+  if (filepath.startsWith('http') || filepath.startsWith('blob:') || filepath.startsWith('data:')) return filepath;
+  return `${BASE}/bfl/preview?path=${encodeURIComponent(filepath)}`;
+}
 
 export async function registerBflFile(filepath) {
   let serverReg = { ok: false };
