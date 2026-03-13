@@ -186,6 +186,7 @@ export class FaceEngineWeb {
     }
     console.log(`[FaceEngineWeb] Cache API not available, fetching ${filename} directly...`);
     const resp = await fetch(fetchUrl);
+    if (!resp.ok) throw new Error(`Fetch failed for ${filename}: ${resp.status} ${resp.statusText}`);
     return resp.arrayBuffer();
   }
 
@@ -220,6 +221,21 @@ export class FaceEngineWeb {
     return { det_10g:ks.some(k=>k.includes('det_10g')), w600k_r50:ks.some(k=>k.includes('w600k_r50')) };
   }
 
+  /** Create an InferenceSession with a timeout.
+   *  InferenceSession.create() can silently hang if WASM compilation fails or
+   *  the ORT runtime is unavailable — wrap it so we always get an error. */
+  async _createSession(buf, opts, label) {
+    const TIMEOUT_MS = 180_000; // 3 min — WASM JIT can be slow on first run
+    const create = ort.InferenceSession.create(buf, opts);
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(
+        `${label}: InferenceSession.create timed out after ${TIMEOUT_MS/1000}s. ` +
+        'Check that /ort-wasm/ WASM files are served correctly (DevTools → Network).'
+      )), TIMEOUT_MS)
+    );
+    return Promise.race([create, timeout]);
+  }
+
   async _initDetector(forceProvider = null) {
     if(this._detSession) return;
     this._progress('Loading SCRFD detector…');
@@ -227,7 +243,8 @@ export class FaceEngineWeb {
     // det_10g.onnx is WebGPU-incompatible (AveragePool ceil_mode=1). Always uses WASM/WebGL.
     const providers = _buildProviders(forceProvider, true);
     console.log(`[FaceEngineWeb] Initializing Detector | providers=${providers}`);
-    this._detSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
+    this._progress('Compiling detector (first run: ~30–120s)…');
+    this._detSession=await this._createSession(buf, { executionProviders:providers, graphOptimizationLevel:'all' }, 'det_10g');
     this._detEp = providers[0];
     this._progress('Detector ready');
   }
@@ -239,7 +256,8 @@ export class FaceEngineWeb {
     // w600k_r50.onnx (ResNet50 ArcFace) works on WebGPU with NHWC layout (set globally above).
     const providers = _buildProviders(forceProvider, false);
     console.log(`[FaceEngineWeb] Initializing Recognizer | providers=${providers}`);
-    this._recSession=await ort.InferenceSession.create(buf, { executionProviders:providers, graphOptimizationLevel:'all' });
+    this._progress('Compiling recognizer (first run: ~30–120s)…');
+    this._recSession=await this._createSession(buf, { executionProviders:providers, graphOptimizationLevel:'all' }, 'w600k_r50');
     this._recEp = providers[0];
     this._progress('Recognizer ready');
   }

@@ -451,6 +451,14 @@ app.whenReady().then(async () => {
     try {
       await startServer(dbPath);
       console.log(`[main] Server ready on port ${PORT}`);
+      // Kick off model download in background — needed for standalone ONNX inference
+      // in FaceEngineWeb. Non-fatal: server starts regardless; /models/ returns 503 until ready.
+      const { ensureModels } = require('./core/model-downloader');
+      ensureModels().then(dir => {
+        console.log(`[main] ONNX models ready at: ${dir}`);
+      }).catch(err => {
+        console.warn('[main] ONNX model download failed (non-fatal):', err.message);
+      });
     } catch (err) {
       console.error('[main] Server failed to start:', err);
       const btn = dialog.showMessageBoxSync({

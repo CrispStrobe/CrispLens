@@ -250,22 +250,27 @@ app.use('/api',               miscRouter);
 // GET /models/det_10g.onnx  → SCRFD detector  (~16 MB)
 // GET /models/w600k_r50.onnx → ArcFace embedder (~166 MB)
 // The browser FaceEngineWeb.js fetches these once and stores them in Cache API.
+// Route is ALWAYS registered; model dir is resolved dynamically per request so
+// models downloaded after server start are immediately available.
 {
   const { findModelDir } = require('./core/face-engine');
+  const _modelsAllowed = ['det_10g.onnx', 'det_10g_int8.onnx', 'w600k_r50.onnx', 'w600k_r50_int8.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task'];
+  app.use('/models', (req, res) => {
+    const filename = path.basename(req.path);
+    if (!_modelsAllowed.includes(filename)) return res.status(404).json({ error: 'Unknown model' });
+    const modelDir = findModelDir();
+    if (!modelDir) return res.status(503).json({ error: 'ONNX models not downloaded yet. Please wait for initial model download to complete.' });
+    const filePath = path.join(modelDir, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Model not found', path: filePath });
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.sendFile(filePath);
+  });
   const modelDir = findModelDir();
   if (modelDir) {
-    app.use('/models', (req, res, next) => {
-      // Only serve the two known model files — no directory traversal
-      const allowed = ['det_10g.onnx', 'det_10g_int8.onnx', 'w600k_r50.onnx', 'w600k_r50_int8.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task'];
-      const filename = path.basename(req.path);
-      if (!allowed.includes(filename)) return res.status(404).json({ error: 'Unknown model' });
-      const filePath = path.join(modelDir, filename);
-      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Model not found' });
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.sendFile(filePath);
-    });
     console.log(`[server] ONNX models served at /models/ from: ${modelDir}`);
+  } else {
+    console.log('[server] ONNX models not yet downloaded — /models/ will return 503 until download completes');
   }
 }
 
