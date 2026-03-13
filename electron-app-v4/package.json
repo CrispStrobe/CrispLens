@@ -63,6 +63,13 @@
     "directories": {
       "output": "dist-electron"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "CrispStrobe",
+        "repo": "CrispLens"
+      }
+    ],
     "files": [
       "electron-main.js",
       "preload.js",
