@@ -37,7 +37,11 @@
   // Clear filters when explicitly clicking Browse so stale tag/folder filters don't persist
   function handleNavClick(id) {
     if (id === 'all') {
-      filters.set({ person: '', tag: '', scene: '', folder: '', path: '', dateFrom: '', dateTo: '' });
+      filters.set({
+        person: '', tag: '', scene: '', folder: '', path: '',
+        dateFrom: '', dateTo: '', creator: '',
+        searchFields: 'filename,path,description'
+      });
     }
     sidebarView.set(id);
   }

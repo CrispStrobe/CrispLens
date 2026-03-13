@@ -1433,6 +1433,16 @@
         <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('settings_storage_mode')}</span>
       </div>
       <p class="hint" style="margin-bottom:10px;">{$t('settings_storage_mode_hint')}</p>
+      
+      <div style="background: rgba(192, 160, 64, 0.1); border: 1px solid rgba(192, 160, 64, 0.2); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; gap: 10px; align-items: flex-start;">
+        <span style="font-size: 16px; margin-top: -2px;">💡</span>
+        <div style="font-size: 11px; line-height: 1.4; color: #d0c080;">
+          <strong>Data Isolation:</strong> Server and Standalone modes use <strong>separate</strong> databases. 
+          The local <code>.db</code> file is only used in Server mode. In Standalone mode, data is stored 
+          exclusively in your browser's IndexedDB (WASM).
+        </div>
+      </div>
+
       <div class="mode-selector">
         <button class="mode-btn" class:active={dbMode === 'server'} on:click={() => dbMode !== 'server' && switchDbMode('server')}>
           <span class="mode-icon">☁</span>

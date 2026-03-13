@@ -1322,9 +1322,11 @@ export const processingBackend = writable(
 );
 
 // ── Derived ───────────────────────────────────────────────────────────────────
-export const activeFilterCount = derived(filters, $f =>
-  Object.values($f).filter(v => v && v.trim()).length
-);
+export const activeFilterCount = derived(filters, $f => {
+  return Object.entries($f)
+    .filter(([key, val]) => key !== 'searchFields' && val && typeof val === 'string' && val.trim())
+    .length;
+});
 
 // True when the app is in standalone (local WASM) mode but the v4 server is
 // reachable yet has no valid session — cloud drives / filesystem need a login.
