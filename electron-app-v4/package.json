@@ -20,6 +20,7 @@
     "proto": "node proto-test.js",
     "self-test": "node proto-selfcontained.js",
     "self-test:db": "node proto-selfcontained.js ../face_recognition.db",
+    "licenses:gen": "node scripts/generate-licenses.js",
     "download-models": "node core/model-downloader.js",
     "mobile:setup:ios": "cd renderer && npm install && npx cap add ios",
     "mobile:setup:android": "cd renderer && npm install && npx cap add android",
@@ -48,7 +49,8 @@
   },
   "devDependencies": {
     "electron": "^33.4.11",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "license-report": "^6.5.0"
   },
   "build": {
     "appId": "com.crisplens.v4",

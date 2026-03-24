@@ -84,6 +84,13 @@ npm run start:electron  # launch Electron
 ```
 The Electron app embeds the Express server in-process — no separate terminal needed. It automatically finds a free port (starting at 7861) and offers full database file management (open existing, create new, reset to default).
 
+#### Automated Releases (v4)
+The project includes scripts to build, tag, and publish releases directly to GitHub:
+- **macOS (DMG)**: Run `./release-v4.sh`
+- **Windows (EXE)**: Run `powershell ./release-v4.ps1` (requires PowerShell)
+
+Both scripts require the [GitHub CLI (gh)](https://cli.github.com/) to be installed and authenticated.
+
 ### Mobile (Capacitor)
 Local inference on iOS/Android — full images never leave the device. Only 512D vectors + thumbnails are sent to your configured remote server.
 ```bash

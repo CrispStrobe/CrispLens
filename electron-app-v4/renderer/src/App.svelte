@@ -34,6 +34,8 @@
   import BatchJobsView      from './lib/BatchJobsView.svelte';
   import PwaInstallBanner   from './lib/PwaInstallBanner.svelte';
   import LoginScreen        from './lib/LoginScreen.svelte';
+  import LegalModal         from './lib/LegalModal.svelte';
+  import { showLegalModal } from './stores.js';
 
   let view = 'all';
   sidebarView.subscribe(v => view = v);
@@ -528,7 +530,7 @@
   <SelectionToolbar />
   <KeyboardManager />
   <PwaInstallBanner />
-
+  <LegalModal bind:show={$showLegalModal} />
 </div>
 
 <datalist id="people-list">

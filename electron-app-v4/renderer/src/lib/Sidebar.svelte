@@ -1,5 +1,5 @@
 <script>
-  import { sidebarView, sidebarCollapsed, importCollapsed, allPeople, allTags, allAlbums, stats, t, filters } from '../stores.js';
+  import { sidebarView, sidebarCollapsed, importCollapsed, allPeople, allTags, allAlbums, stats, t, filters, showLegalModal } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags } from '../api.js';
 
   $: navItems = [
@@ -122,6 +122,15 @@
     </div>
   {/if}
 
+  <button
+    class="nav-item legal-nav-item"
+    on:click={() => showLegalModal.set(true)}
+    title={$sidebarCollapsed ? $t('tab_about') : ''}
+  >
+    <span class="icon">ℹ️</span>
+    {#if !$sidebarCollapsed}<span class="label">{$t('tab_about')}</span>{/if}
+  </button>
+
   <!-- Collapse toggle button at the bottom -->
   <button
     class="collapse-btn"
@@ -195,6 +204,8 @@
   }
   .nav-item:hover { background: #22223a; color: #e0e0f0; }
   .nav-item.active { background: #282845; color: #a0c4ff; font-weight: 600; }
+  .legal-nav-item { margin-top: auto; border-top: 1px solid #2a2a3a; padding: 10px 14px; color: #6070a0; }
+  .legal-nav-item:hover { color: #a0b0d0; }
   .icon { font-size: 14px; flex-shrink: 0; }
   .label { flex: 1; }
   .badge {
@@ -226,7 +237,6 @@
 
   /* Collapse toggle — always at the bottom */
   .collapse-btn {
-    margin-top: auto;
     width: 100%;
     background: transparent;
     border: none;

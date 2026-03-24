@@ -74,6 +74,19 @@ cd renderer && npm run dev
 
 ---
 
+## Release & Publishing
+
+Automated scripts are available in the project root to build the UI, tag the current version in Git, and publish signed (or unsigned) binaries to GitHub Releases:
+
+- **macOS**: `./release-v4.sh` (generates `.dmg`)
+- **Windows**: `powershell ./release-v4.ps1` (generates `.exe`)
+
+**Prerequisites:**
+- [GitHub CLI (gh)](https://cli.github.com/) installed and logged in (`gh auth login`).
+- To publish to GitHub, the scripts will use your current `gh` token.
+
+---
+
 ## Platform Targets
 
 | Target | Launch | Notes |

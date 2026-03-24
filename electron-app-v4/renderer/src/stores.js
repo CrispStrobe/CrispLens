@@ -31,6 +31,7 @@ export const thumbSize = writable(200);       // px; drives CSS var + API size p
 export const sidebarView = writable('all');
 export const sidebarCollapsed = writable(false);  // icon-only mode for small screens
 export const importCollapsed  = writable(false);  // collapsable IMPORT section
+export const showLegalModal   = writable(false);  // show legal/imprint modal
 
 // ── Clipboard ───────────────────────────────────────────────────────────────
 // { mode: 'copy' | 'move', items: [ { id, path, filename } ] }
@@ -384,6 +385,9 @@ const EN = {
   tab_ingest: 'Ingest',
   sidebar_expand: 'Expand sidebar',
   sidebar_collapse: 'Collapse sidebar',
+  tab_about: 'About CrispLens',
+  tab_privacy: 'Privacy',
+  legal_imprint: 'Imprint / Legal',
   // Crop / Canvas Size modal
   tab_generate: 'Generate',
   crop_image: 'Crop Image',
@@ -979,6 +983,9 @@ export const TRANSLATIONS = {
     tab_ingest: 'Import',
     sidebar_expand: 'Seitenleiste ausklappen',
     sidebar_collapse: 'Seitenleiste einklappen',
+    tab_about: 'Über CrispLens',
+    tab_privacy: 'Datenschutz',
+    legal_imprint: 'Impressum / Rechtliches',
     // Crop / Canvas Size modal
     tab_generate: 'Generieren',
     crop_image: 'Bild zuschneiden',
