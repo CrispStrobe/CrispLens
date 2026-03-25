@@ -99,6 +99,11 @@ function getDb() {
         processed_at TIMESTAMP,
         FOREIGN KEY(job_id) REFERENCES batch_jobs(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS archive_config (
+        key        TEXT PRIMARY KEY,
+        value      TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     console.log('[db] v4-native tables OK.');
 
@@ -119,6 +124,13 @@ function getDb() {
       ['phash',           'ALTER TABLE images ADD COLUMN phash TEXT'],
       ['creator',         'ALTER TABLE images ADD COLUMN creator TEXT'],
       ['copyright',       'ALTER TABLE images ADD COLUMN copyright TEXT'],
+      ['bildarchiv_path',      'ALTER TABLE images ADD COLUMN bildarchiv_path TEXT'],
+      ['bildauswahl_path',     'ALTER TABLE images ADD COLUMN bildauswahl_path TEXT'],
+      ['fachbereich',          'ALTER TABLE images ADD COLUMN fachbereich TEXT'],
+      ['veranstaltungsnummer', 'ALTER TABLE images ADD COLUMN veranstaltungsnummer TEXT'],
+      ['veranstaltungstitel',  'ALTER TABLE images ADD COLUMN veranstaltungstitel TEXT'],
+      ['urheber',              'ALTER TABLE images ADD COLUMN urheber TEXT'],
+      ['datum_event',          'ALTER TABLE images ADD COLUMN datum_event DATE'],
     ];
     for (const [col, sql] of imgMigrations) {
       if (!imgCols.has(col)) {
