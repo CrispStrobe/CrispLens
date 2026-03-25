@@ -7,7 +7,7 @@
            downloadCloudFile, downloadCloudFileBlob, importProcessed, isLocalMode,
            downloadImage, openInOs, openFolderInOs,
            batchEditImages, fetchCreators, fetchCopyrights, fetchTags, deleteImage,
-           copyFilesystem, moveFilesystem } from '../api.js';
+           copyFilesystem, moveFilesystem, fetchSettings } from '../api.js';
 
   const hasElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const hasFSA      = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -714,9 +714,11 @@
     addProgress = { total: filePaths.length, done: 0, errors: 0, skipped: 0, current: '', faces: 0 };
     backgroundTask.set({ label: 'Processing from cloud', done: 0, total: filePaths.length });
 
-    let engine, vlmKeys = {};
+    let engine, vlmKeys = {}, vlmCfg = {};
     try {
       engine = await _getWebEngine();
+      const settings = await fetchSettings().catch(() => null);
+      vlmCfg = settings?.vlm || {};
       const { localAdapter } = await import('./LocalAdapter.js');
       vlmKeys = await localAdapter.getVlmKeys();
     } catch (e) {
@@ -747,7 +749,7 @@
           det_model:     ingestDetParams.det_model,
           max_size:      ingestDetParams.max_size || undefined,
           vlm_enabled:   !ingestSkipVlm,
-          vlm_provider:  vlmProvider,
+          vlm_provider:  vlmCfg.provider,
           vlm_keys:      vlmKeys,
         });
 
@@ -1348,7 +1350,7 @@
                     {#if cloudMode}
                       <div class="db-badge {cls}">
                         {isCloudImageFile(entry) ? $t('fs_image_label') : $t('fs_file_label')}
-                        {#if entry.size}{' · '}{(entry.size/1024).toFixed(0)} KB{/if}
+                        {#if entry.size} · {(entry.size/1024).toFixed(0)} KB{/if}
                       </div>
                     {:else if localMode}
                       <div class="db-badge {entry.is_image ? 'local-img' : 'not-db'}">{entry.is_image ? $t('fs_image_label') : $t('fs_file_label')}</div>

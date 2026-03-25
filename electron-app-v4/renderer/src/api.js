@@ -22,7 +22,7 @@ export { localThumb, robustFetch };
 // Capacitor's built-in native HTTP bypasses this.
 
 /** Specific helper for multipart uploads on mobile */
-async function robustUpload(url, formData, options = {}) {
+async function _robustUpload(url, formData, options = {}) {
   if (Capacitor.isNativePlatform()) {
     console.log(`[api] Native platform: using CapacitorHttp.upload for ${url}`);
     
@@ -74,10 +74,10 @@ async function robustUpload(url, formData, options = {}) {
     } catch (err) {
       const errMsg = err.message || JSON.stringify(err);
       console.error('[api] CapacitorHttp.upload fatal error:', errMsg);
-      throw new Error(errMsg);
+      throw new Error(errMsg, { cause: err });
     }
   }
-  
+
   return fetch(url, { ...options, method: 'POST', body: formData });
 }
 
@@ -247,7 +247,7 @@ async function _fetchDirect(method, path, body, extraHeaders = {}) {
   } catch (err) {
     const errMsg = err.message || JSON.stringify(err);
     console.error(`[api] ${method} ${path} error:`, errMsg);
-    throw new Error(errMsg);
+    throw new Error(errMsg, { cause: err });
   }
 }
 
@@ -269,7 +269,7 @@ async function _fetchDirectMultipart(method, path, formData, extraHeaders = {}) 
     const ct = res.headers.get('content-type') || '';
     return ct.includes('application/json') ? res.json() : res.text();
   } catch (err) {
-    throw new Error(err.message);
+    throw new Error(err.message, { cause: err });
   }
 }
 
@@ -850,7 +850,7 @@ export async function downloadCleanupScript(files, format = 'bash', action = 'tr
     body:         JSON.stringify({ files, format, action }),
   });
   if (!resp.ok) {
-    const text = await res.text().catch(() => res.statusText);
+    const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`cleanup-script → ${resp.status}: ${text}`);
   }
   const blob = await resp.blob();
@@ -1169,7 +1169,7 @@ async function _bflHeaders() {
     const keys = await localAdapter.getVlmKeys();
     const bflKey = keys['bfl'];
     if (bflKey) return { 'X-BFL-API-Key': bflKey };
-  } catch {}
+  } catch { /* no local VLM keys — skip header */ }
   return {};
 }
 
@@ -1220,7 +1220,7 @@ async function _syncToLocalWasm(filepath, width, height) {
     try {
       const s = JSON.parse(localStorage.getItem('crisplens_sync_settings') || '{}');
       if (s.thumbSize) maxDim = parseInt(s.thumbSize);
-    } catch {}
+    } catch { /* use default maxDim */ }
 
     const { b64, w: origW, h: origH } = await _reduceImage(blob, maxDim);
 
@@ -1452,4 +1452,99 @@ export async function fetchThumbnail(id) {
   if (isLocalMode()) return localAdapter.fetchThumbnail(id);
   const res = await get(`/images/${id}/thumbnail`);
   return res.thumbnail_blob || res;
+}
+
+// ── Archive / Bildarchiv ──────────────────────────────────────────────────────
+
+export async function fetchArchiveConfig() {
+  console.log('[api] fetchArchiveConfig');
+  const res = await robustFetch(BASE + '/archive/config', { credentials: 'include' });
+  if (!res.ok) throw new Error(`fetchArchiveConfig failed: ${res.status}`);
+  return (await res.json()).config;
+}
+
+export async function saveArchiveConfig(config) {
+  console.log('[api] saveArchiveConfig keys:', Object.keys(config));
+  const res = await robustFetch(BASE + '/archive/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `saveArchiveConfig failed: ${res.status}`); }
+  return (await res.json()).config;
+}
+
+export async function fetchArchiveChoices() {
+  console.log('[api] fetchArchiveChoices');
+  const res = await robustFetch(BASE + '/archive/choices', { credentials: 'include' });
+  if (!res.ok) throw new Error(`fetchArchiveChoices failed: ${res.status}`);
+  return (await res.json()).choices || {};
+}
+
+/**
+ * Organize images to Bildarchiv or Bildauswahl.
+ * @param {number[]} imageIds
+ * @param {object} meta  — { fachbereich, veranstaltungsnummer, veranstaltungstitel, urheber, datum }
+ * @param {string} action — 'copy' | 'move' | 'leave'
+ * @param {string} archiveType — 'bildarchiv' | 'bildauswahl'
+ * @param {boolean} writeExif
+ */
+export async function organizeToArchive(imageIds, meta, action, archiveType = 'bildarchiv', writeExif = false) {
+  console.log(`[api] organizeToArchive ids=${JSON.stringify(imageIds)} action=${action} type=${archiveType}`);
+  const res = await robustFetch(BASE + '/archive/organize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ image_ids: imageIds, meta, action, archive_type: archiveType, write_exif: writeExif }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `organizeToArchive failed: ${res.status}`); }
+  return res.json();
+}
+
+/** Save selection to Bildauswahl. */
+export async function saveToBildauswahl(imageIds, meta, action = 'copy', writeExif = false) {
+  console.log(`[api] saveToBildauswahl ids=${JSON.stringify(imageIds)} action=${action}`);
+  const res = await robustFetch(BASE + '/archive/bildauswahl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ image_ids: imageIds, meta, action, write_exif: writeExif }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `saveToBildauswahl failed: ${res.status}`); }
+  return res.json();
+}
+
+/** Rename/resort batch of already-archived images. */
+export async function renameBatchArchive(imageIds, meta, archiveType = 'bildarchiv', renameFile = false) {
+  console.log(`[api] renameBatchArchive ids=${JSON.stringify(imageIds)} type=${archiveType}`);
+  const res = await robustFetch(BASE + '/archive/rename-batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ image_ids: imageIds, meta, archive_type: archiveType, rename_file: renameFile }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `renameBatchArchive failed: ${res.status}`); }
+  return res.json();
+}
+
+/** Write EXIF metadata to the best available path for each image. */
+export async function writeArchiveExif(imageIds, fields) {
+  console.log(`[api] writeArchiveExif ids=${JSON.stringify(imageIds)}`);
+  const res = await robustFetch(BASE + '/archive/write-exif', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ image_ids: imageIds, fields }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `writeArchiveExif failed: ${res.status}`); }
+  return res.json();
+}
+
+export async function fetchExiftoolStatus() {
+  try {
+    const res = await robustFetch(BASE + '/archive/exiftool-status', { credentials: 'include' });
+    if (!res.ok) return { available: false };
+    return res.json();
+  } catch { return { available: false }; }
 }

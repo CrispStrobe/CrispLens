@@ -1,5 +1,5 @@
 <script>
-  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob, isLocalMode, fetchSettings, fetchCreators, fetchCopyrights } from '../api.js';
+  import { streamBatchFiles, streamBatch, scanFolder, thumbnailUrl, fetchStats, fetchPeople, fetchTags, fetchAlbums, importProcessed, uploadLocal, createBatchJob, uploadBatchFile, addFileToBatchJob, isLocalMode, fetchSettings, fetchCreators, fetchCopyrights, fetchArchiveChoices, fetchExiftoolStatus, organizeToArchive } from '../api.js';
   import { t, stats, allPeople, allTags, allAlbums, processingMode, localModel, galleryRefreshTick, sidebarView, processingBackend } from '../stores.js';
   import { onMount } from 'svelte';
   import ServerDirPicker from './ServerDirPicker.svelte';
@@ -339,10 +339,12 @@
     }
 
     // Load tags + albums + creators + copyrights for pickers
-    try { allTags.set(await fetchTags()); } catch {}
-    try { allAlbums.set(await fetchAlbums()); } catch {}
-    try { allCreators   = await fetchCreators(); }   catch {}
-    try { allCopyrights = await fetchCopyrights(); } catch {}
+    try { allTags.set(await fetchTags()); } catch { /* ignore */ }
+    try { allAlbums.set(await fetchAlbums()); } catch { /* ignore */ }
+    try { allCreators   = await fetchCreators(); }   catch { /* ignore */ }
+    try { allCopyrights = await fetchCopyrights(); } catch { /* ignore */ }
+    try { archiveChoices = await fetchArchiveChoices(); } catch (e) { console.warn('[ProcessView] fetchArchiveChoices failed:', e); }
+    try { const es = await fetchExiftoolStatus(); archiveExiftoolOk = es?.available ?? false; } catch { /* ignore */ }
 
     // Initialize VLM toggle from global settings
     try {
@@ -352,6 +354,8 @@
     } catch (e) {
       console.warn('[ProcessView] Failed to fetch settings for VLM toggle init:', e);
     }
+
+    if (localMode) checkVlmStatus();
   });
 
   // ── Detection settings ─────────────────────────────────────────────────────
@@ -363,6 +367,53 @@
   let skipFaces    = false;
   let skipVlm      = false;
   let showDetParams = false;
+
+  // ── Archive metadata panel ─────────────────────────────────────────────────
+  let showArchiveMeta      = false;
+  let archiveFachbereich   = '';
+  let archiveVNummer       = '';
+  let archiveDatum         = '';
+  let archiveVTitel        = '';
+  let archiveUrheber       = '';
+  let archiveAction        = 'leave';   // 'leave' | 'copy' | 'move'
+  let archiveWriteExif     = false;
+  let archiveExiftoolOk    = false;
+  let amDropdownOpen       = '';        // id of open autocomplete dropdown
+  let archiveChoices       = {};
+
+  const FACHBEREICH_OPTS = ['DIR', 'ÖFA', 'GES', 'GUS', 'HOH', 'INZ', 'IRD', 'MMN', 'NUT', 'KUN', 'RSP', 'SUG'];
+
+  $: archivePathPreview = (() => {
+    if (!archiveFachbereich && !archiveVTitel) return '';
+    const d    = archiveDatum ? new Date(archiveDatum) : new Date();
+    const year = String(isNaN(d.getTime()) ? new Date().getFullYear() : d.getFullYear());
+    const mon  = String(isNaN(d.getTime()) ? new Date().getMonth()+1 : d.getMonth()+1).padStart(2,'0');
+    const san  = s => s ? s.replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').replace(/__+/g,'_') : '';
+    return `/mnt/bildarchiv/${san(archiveFachbereich)}/${year}/${san(archiveVTitel)}/${san(archiveFachbereich)}_${san(archiveVNummer)}_${year}_${mon}_‹Namen›_001.{ext}`;
+  })();
+
+  async function archiveAfterProcessing() {
+    if (archiveAction === 'leave') return;
+    const ids = queue.filter(q => q.status === 'done' && q.imageId).map(q => q.imageId);
+    if (!ids.length) {
+      console.log('[ProcessView] archiveAfterProcessing: no done images with IDs, skipping');
+      return;
+    }
+    const meta = {
+      fachbereich:         archiveFachbereich,
+      veranstaltungsnummer: archiveVNummer,
+      datum:               archiveDatum,
+      veranstaltungstitel: archiveVTitel,
+      urheber:             archiveUrheber,
+    };
+    try {
+      console.log(`[ProcessView] archiveAfterProcessing: action=${archiveAction}, ids=${ids.length}, writeExif=${archiveWriteExif}`);
+      const result = await organizeToArchive(ids, meta, archiveAction, 'bildarchiv', archiveWriteExif);
+      console.log(`[ProcessView] archiveAfterProcessing done: success=${result.success_count}, errors=${result.error_count}`);
+    } catch (e) {
+      console.error('[ProcessView] archiveAfterProcessing failed:', e);
+    }
+  }
 
   const LOCAL_DET_MODELS = [
     { value: 'auto',  label: 'det_model_auto'  },
@@ -384,29 +435,26 @@
   // ── Standalone VLM Status ──
   let vlmStatusMsg = '';
   let vlmKeys = {}; // track available keys locally for status check
-  $: {
-    if (localMode) {
-      fetchSettings().then(s => {
-        if (!s?.vlm?.enabled) {
-          vlmStatusMsg = 'AI Enrichment (VLM) is currently disabled in Settings.';
-        } else {
-          // Also check if we have a key for the provider
-          const provider = s?.vlm?.provider || 'anthropic';
-          const { localAdapter } = import('./LocalAdapter.js').then(la => {
-            la.localAdapter.getVlmKeys().then(keys => {
-              vlmKeys = keys;
-              if (!keys[provider]) {
-                vlmStatusMsg = `⚠ VLM is enabled but no API key found for ${provider} in Settings.`;
-              } else {
-                vlmStatusMsg = '';
-              }
-            });
+  async function checkVlmStatus() {
+    fetchSettings().then(s => {
+      if (!s?.vlm?.enabled) {
+        vlmStatusMsg = 'AI Enrichment (VLM) is currently disabled in Settings.';
+      } else {
+        // Also check if we have a key for the provider
+        const provider = s?.vlm?.provider || 'anthropic';
+        import('./LocalAdapter.js').then(la => {
+          la.localAdapter.getVlmKeys().then(keys => {
+            vlmKeys = keys;
+            if (!keys[provider]) {
+              vlmStatusMsg = `⚠ VLM is enabled but no API key found for ${provider} in Settings.`;
+            } else {
+              vlmStatusMsg = '';
+            }
           });
-        }
-      }).catch(() => {});
-    }
+        });
+      }
+    }).catch(() => {});
   }
-
   $: detParams = {
     det_thresh:    detThresh,
     min_face_size: minFaceSize,
@@ -462,11 +510,9 @@
     errorCount = 0; queuedCount = 0; doneCount = 0; dupSkippedCount = 0; totalCount = pending.length;
 
     let engine;
-    let vlmCfg = {};
+    let vlmCfg, syncCfg;
     let vlmKeys = {};
-    let syncCfg = {};
-    let detRetries = 1;
-    let thumb_size_final = 200;
+    let detRetries, thumb_size_final;
 
     try {
       console.log('[ProcessView] Initializing web engine...');
@@ -545,6 +591,7 @@
         continue;
       }
             queue = queue.map(q => q.id === item.id ? { ...q, status: 'processing' } : q);
+            let faceData = null;
             try {
               // ── Duplicate pre-check for 'skip' mode ────────────────────────
               // Compute file hash cheaply before running expensive ONNX inference.
@@ -572,7 +619,7 @@
               const vlmEnabledFinal = !detParams.skip_vlm;
               console.log(`[ProcessView] VLM skip toggle value: ${detParams.skip_vlm}, vlmEnabledFinal: ${vlmEnabledFinal}, provider: ${vlmCfg.provider}`);
 
-              const faceData = await engine.processFile(fileObj, {
+              faceData = await engine.processFile(fileObj, {
                 det_thresh:    detParams.det_thresh,
                 min_face_size: detParams.min_face_size,
                 det_model:     detParams.det_model,
@@ -634,7 +681,7 @@
               await new Promise(r => setTimeout(r, 300));
       } catch (e) {
         console.error(`[ProcessView] Processing failed for ${item.name}:`, e);
-        if (!navigator.onLine || /fetch|network|Failed/i.test(e.message)) {
+        if (faceData && (!navigator.onLine || /fetch|network|Failed/i.test(e.message))) {
           console.warn('[ProcessView] Offline, queuing for push later');
           // Offline — queue payload locally; push to server on next reconnect
           await syncManager.queueForPush(faceData).catch(() => {});
@@ -652,6 +699,7 @@
     webInferMsg = '';
     running = false; finished = true;
     console.log('[ProcessView] startWebLocalInfer() finished');
+    archiveAfterProcessing();
     
     // Release ONNX models immediately after batch — they hold ~200 MB of WASM heap.
     // Keeping them alive for even a few seconds after the batch risks an OOM kill
@@ -728,6 +776,7 @@
       doneCount++;
     }
     running = false; finished = true;
+    archiveAfterProcessing();
     refreshGlobalData();
   }
 
@@ -783,6 +832,7 @@
       removeListener();
     }
     running = false; finished = true;
+    archiveAfterProcessing();
     refreshGlobalData();
   }
 
@@ -798,6 +848,7 @@
       batchSource = null;
       // Mark any remaining processing item as done (edge case)
       queue = queue.map(q => q.status === 'processing' ? { ...q, status: 'done' } : q);
+      archiveAfterProcessing();
       refreshGlobalData();
       return;
     }
@@ -922,10 +973,10 @@
   }
 
   async function refreshGlobalData() {
-    try { stats.set(await fetchStats()); } catch {}
-    try { allPeople.set(await fetchPeople()); } catch {}
-    try { allTags.set(await fetchTags()); } catch {}
-    try { allAlbums.set(await fetchAlbums()); } catch {}
+    try { stats.set(await fetchStats()); } catch { /* ignore */ }
+    try { allPeople.set(await fetchPeople()); } catch { /* ignore */ }
+    try { allTags.set(await fetchTags()); } catch { /* ignore */ }
+    try { allAlbums.set(await fetchAlbums()); } catch { /* ignore */ }
     galleryRefreshTick.update(n => n + 1);
   }
 
@@ -1058,7 +1109,7 @@
       <div class="picker-group">
         <label class="picker-label">{$t('pv_tags_label')}</label>
         <div class="picker-chips">
-          {#each selectedTags as tag}
+          {#each selectedTags as tag (tag.name)}
             <span class="chip">{tag.name}{#if tag.id === null} <em>+</em>{/if}
               <button class="chip-remove" on:click={() => removeTag(tag.name)}>✕</button>
             </span>
@@ -1075,7 +1126,7 @@
             />
             {#if tagDropdownOpen && tagInput.trim()}
               <div class="picker-dropdown">
-                {#each filteredTags as tag}
+                {#each filteredTags as tag (tag.name)}
                   <button class="picker-option" on:mousedown|preventDefault={() => addTag(tag)}>{tag.name}</button>
                 {/each}
                 {#if !filteredTags.find(tag => tag.name.toLowerCase() === tagInput.trim().toLowerCase())}
@@ -1110,7 +1161,7 @@
               />
               {#if albumDropdownOpen && albumInput.trim()}
                 <div class="picker-dropdown">
-                  {#each filteredAlbums as album}
+                  {#each filteredAlbums as album (album.name)}
                     <button class="picker-option" on:mousedown|preventDefault={() => selectAlbum(album)}>{album.name}</button>
                   {/each}
                   {#if !filteredAlbums.find(a => a.name.toLowerCase() === albumInput.trim().toLowerCase())}
@@ -1141,7 +1192,7 @@
           />
           {#if creatorDropdownOpen && filteredCreators.length}
             <div class="picker-dropdown">
-              {#each filteredCreators as c}
+              {#each filteredCreators as c (c)}
                 <button class="picker-option" on:mousedown|preventDefault={() => { creatorInput = c; creatorDropdownOpen = false; }}>{c}</button>
               {/each}
             </div>
@@ -1163,7 +1214,7 @@
           />
           {#if copyrightDropdownOpen && filteredCopyrights.length}
             <div class="picker-dropdown">
-              {#each filteredCopyrights as c}
+              {#each filteredCopyrights as c (c)}
                 <button class="picker-option" on:mousedown|preventDefault={() => { copyrightInput = c; copyrightDropdownOpen = false; }}>{c}</button>
               {/each}
             </div>
@@ -1171,6 +1222,106 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ─── Archive Metadata Panel ──────────────────────────────────────────── -->
+  <div class="archive-meta-panel">
+    <button class="section-toggle" on:click={() => showArchiveMeta = !showArchiveMeta}>
+      🗂 Archiv-Metadaten
+      {#if archiveFachbereich || archiveVTitel}
+        <span class="meta-summary-chip">{[archiveFachbereich, archiveVTitel].filter(Boolean).join(' · ')}</span>
+      {/if}
+      <span class="toggle-chevron">{showArchiveMeta ? '▲' : '▼'}</span>
+    </button>
+
+    {#if showArchiveMeta}
+      <div class="archive-meta-body">
+        <div class="am-grid">
+          <!-- Fachbereich -->
+          <div class="am-field">
+            <label class="am-label">Fachbereich</label>
+            <select class="am-input" bind:value={archiveFachbereich}>
+              <option value="">— wählen —</option>
+              {#each FACHBEREICH_OPTS as fb (fb)}<option value={fb}>{fb}</option>{/each}
+            </select>
+          </div>
+          <!-- Veranstaltungsnummer -->
+          <div class="am-field">
+            <label class="am-label">Veranstaltungsnummer</label>
+            <div class="am-ac" on:click|stopPropagation>
+              <input type="text" class="am-input" bind:value={archiveVNummer} placeholder="z.B. 54321"
+                on:focus={() => amDropdownOpen = 'vnr'} on:blur={() => setTimeout(() => amDropdownOpen = '', 150)} />
+              {#if amDropdownOpen === 'vnr' && (archiveChoices.veranstaltungsnummer||[]).filter(c => !archiveVNummer || c.includes(archiveVNummer)).length}
+                <div class="am-dd">
+                  {#each (archiveChoices.veranstaltungsnummer||[]).filter(c => !archiveVNummer || c.includes(archiveVNummer)).slice(0,8) as c (c)}
+                    <button class="am-opt" on:mousedown|preventDefault={() => { archiveVNummer = c; amDropdownOpen = ''; }}>{c}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <!-- Datum -->
+          <div class="am-field">
+            <label class="am-label">Datum</label>
+            <input type="date" class="am-input" bind:value={archiveDatum} />
+          </div>
+          <!-- Veranstaltungstitel -->
+          <div class="am-field">
+            <label class="am-label">Veranstaltungstitel</label>
+            <div class="am-ac" on:click|stopPropagation>
+              <input type="text" class="am-input" bind:value={archiveVTitel} placeholder="z.B. Theologisches Forum"
+                on:focus={() => amDropdownOpen = 'vtit'} on:blur={() => setTimeout(() => amDropdownOpen = '', 150)} />
+              {#if amDropdownOpen === 'vtit' && (archiveChoices.veranstaltungstitel||[]).filter(c => !archiveVTitel || c.toLowerCase().includes(archiveVTitel.toLowerCase())).length}
+                <div class="am-dd">
+                  {#each (archiveChoices.veranstaltungstitel||[]).filter(c => !archiveVTitel || c.toLowerCase().includes(archiveVTitel.toLowerCase())).slice(0,8) as c (c)}
+                    <button class="am-opt" on:mousedown|preventDefault={() => { archiveVTitel = c; amDropdownOpen = ''; }}>{c}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <!-- Urheber -->
+          <div class="am-field">
+            <label class="am-label">Urheber</label>
+            <div class="am-ac" on:click|stopPropagation>
+              <input type="text" class="am-input" bind:value={archiveUrheber} placeholder="z.B. Akademie RS"
+                on:focus={() => amDropdownOpen = 'urh'} on:blur={() => setTimeout(() => amDropdownOpen = '', 150)} />
+              {#if amDropdownOpen === 'urh' && (archiveChoices.urheber||[]).filter(c => !archiveUrheber || c.toLowerCase().includes(archiveUrheber.toLowerCase())).length}
+                <div class="am-dd">
+                  {#each (archiveChoices.urheber||[]).filter(c => !archiveUrheber || c.toLowerCase().includes(archiveUrheber.toLowerCase())).slice(0,8) as c (c)}
+                    <button class="am-opt" on:mousedown|preventDefault={() => { archiveUrheber = c; amDropdownOpen = ''; }}>{c}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <!-- Dateiaktion -->
+          <div class="am-field">
+            <label class="am-label">Dateiaktion nach Verarbeitung</label>
+            <select class="am-input" bind:value={archiveAction}>
+              <option value="leave">Belassen (nur Metadaten speichern)</option>
+              <option value="copy">Kopieren nach Bildarchiv</option>
+              <option value="move">Verschieben nach Bildarchiv</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- EXIF toggle -->
+        <label class="am-check-row">
+          <input type="checkbox" bind:checked={archiveWriteExif} disabled={!archiveExiftoolOk} />
+          EXIF/XMP-Metadaten schreiben
+          {#if !archiveExiftoolOk}<span class="am-dim"> (exiftool nicht verfügbar)</span>{/if}
+        </label>
+
+        <!-- Path preview -->
+        {#if archivePathPreview}
+          <div class="am-preview">
+            <span class="am-preview-label">Vorschau:</span>
+            <code>{archivePathPreview}</code>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- Detection settings (collapsible) -->
@@ -1223,7 +1374,7 @@
           <div class="det-param-row">
             <label>{$t('detection_model')}</label>
             <select bind:value={detModel} disabled={skipFaces}>
-              {#each DET_MODELS as m}
+              {#each DET_MODELS as m (m.value)}
                 <option value={m.value}>{$t(m.label)}</option>
               {/each}
             </select>
@@ -1795,4 +1946,65 @@
     font-size: 10px;
     padding: 0 2px;
   }
+
+  /* ── Archive metadata panel ── */
+  .archive-meta-panel {
+    margin-top: 8px;
+    border: 1px solid #3a3a5a;
+    border-radius: 8px;
+    overflow: visible;
+  }
+  .section-toggle {
+    width: 100%; text-align: left; background: #22223a;
+    border: none; color: #c0c0e0; padding: 8px 12px; font-size: 12px;
+    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    border-radius: 7px;
+  }
+  .section-toggle:hover { background: #2a2a4a; }
+  .meta-summary-chip { color: #a0c4ff; font-size: 11px; flex: 1; }
+  .toggle-chevron { color: #606080; margin-left: auto; font-size: 10px; }
+
+  .archive-meta-body {
+    padding: 10px 12px 12px;
+    background: #1a1a2e;
+    border-top: 1px solid #3a3a5a;
+    border-radius: 0 0 7px 7px;
+  }
+  .am-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .am-field { display: flex; flex-direction: column; gap: 3px; }
+  .am-label { font-size: 10px; color: #8080a0; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+  .am-input {
+    background: #252538; border: 1px solid #4a4a6a; border-radius: 5px;
+    color: #e0e0f0; padding: 5px 8px; font-size: 12px; width: 100%; box-sizing: border-box;
+  }
+  .am-input:focus { outline: none; border-color: #6a8fff; }
+  select.am-input { cursor: pointer; }
+  .am-ac { position: relative; }
+  .am-dd {
+    position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 60;
+    background: #252538; border: 1px solid #4a4a6a; border-radius: 5px;
+    max-height: 130px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .am-opt {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    color: #d0d0e0; padding: 5px 8px; font-size: 11px; cursor: pointer;
+  }
+  .am-opt:hover { background: #3a3a5a; color: #a0c4ff; }
+  .am-check-row {
+    display: flex; align-items: center; gap: 6px; font-size: 11px; color: #b0b0c8;
+    cursor: pointer; margin-bottom: 6px;
+  }
+  .am-check-row input { accent-color: #6a8fff; }
+  .am-dim { color: #505070; font-size: 10px; }
+  .am-preview {
+    background: #141420; border: 1px solid #3a3a5a; border-radius: 4px;
+    padding: 6px 8px; font-size: 10px; word-break: break-all; margin-top: 4px;
+  }
+  .am-preview-label { color: #606080; margin-right: 4px; }
+  code { color: #a0c4ff; font-family: monospace; font-size: 10px; }
 </style>

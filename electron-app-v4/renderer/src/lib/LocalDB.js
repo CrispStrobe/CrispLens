@@ -588,7 +588,7 @@ export async function clearDatabase() {
       DELETE FROM images;
       DELETE FROM people;
     `);
-    await saveToStore().catch(() => {});
+    await sqlite.saveToStore(DB_NAME).catch(() => {});
     console.log('[LocalDB] clearDatabase done — settings table untouched.');
     return { ok: true };
   } catch (err) {

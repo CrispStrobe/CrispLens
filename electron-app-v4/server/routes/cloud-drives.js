@@ -754,7 +754,7 @@ async function internxtDownloadFile(tokenData, fileUuid, destPath) {
   try {
     meta = await apiGet(`${DRIVE_API_URL}/files/${fileUuid}/meta`, auth);
   } catch (e) {
-    throw new Error(`Internxt metadata fetch failed: ${e.message}`);
+    throw new Error(`Internxt metadata fetch failed: ${e.message}`, { cause: e });
   }
   const bucketId = meta.bucket;
   const fileId   = meta.fileId;
@@ -776,7 +776,7 @@ async function internxtDownloadFile(tokenData, fileUuid, destPath) {
       auth:    { user: bridgeUser, pass: bridgePass },
     });
   } catch (e) {
-    throw new Error(`Internxt network info failed: ${e.message}`);
+    throw new Error(`Internxt network info failed: ${e.message}`, { cause: e });
   }
   const downloadUrl = linkInfo?.shards?.[0]?.url;
   const indexHex    = linkInfo?.index;
@@ -999,7 +999,7 @@ router.get('/:id/download-file', requireAuth, async (req, res) => {
   // Download to a temp file, then stream it to the client
   const os     = require('os');
   const tmpPath = path.join(os.tmpdir(), `cloud_dl_${Date.now()}_${fileUuid}`);
-  let downloadedName = fileUuid;
+  let downloadedName;
 
   try {
     if (drive.type === 'internxt') {

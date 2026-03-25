@@ -45,7 +45,7 @@ if (uiDist) {
   express.static.mime.define({ 'application/javascript': ['mjs'], 'application/wasm': ['wasm'] });
 
   // MANUAL ROUTE for WASM/MJS/Assets to guarantee MIME types and avoid any catch-all interference
-  app.get(['/ort-wasm/:file', '/wasm/:file', '/assets/:file'], (req, res, next) => {
+  app.get(['/ort-wasm/:file', '/wasm/:file', '/assets/:file'], (req, res, _next) => {
     const fileName = req.params.file;
     const ext = path.extname(fileName).toLowerCase();
     
@@ -212,6 +212,7 @@ const benchmarkRouter    = require('./server/routes/benchmark');
 const bflRouter          = require('./server/routes/bfl');
 const editingRouter      = require('./server/routes/editing');
 const cloudDrivesRouter  = require('./server/routes/cloud-drives');
+const archiveRouter      = require('./server/routes/archive');
 
 // Health (no auth required) — model_ready checked lazily
 app.get('/api/health', (req, res) => {
@@ -220,7 +221,7 @@ app.get('/api/health', (req, res) => {
   let appVersion = '4.0.0-unknown';
   try {
     appVersion = fs.readFileSync(path.join(__dirname, 'app_version.txt'), 'utf8').trim();
-  } catch (e) {}
+  } catch { /* app_version.txt absent — use default */ }
   res.json({ 
     ok: true, 
     version: appVersion, 
@@ -242,6 +243,7 @@ app.use('/api/benchmark',     benchmarkRouter);
 app.use('/api/bfl',           bflRouter);
 app.use('/api/edit',          editingRouter);
 app.use('/api/cloud-drives',  cloudDrivesRouter);
+app.use('/api/archive',       archiveRouter);
 
 // Misc routes (tags, albums, events, watchfolders, filesystem, duplicates, batch-jobs, etc.)
 app.use('/api',               miscRouter);

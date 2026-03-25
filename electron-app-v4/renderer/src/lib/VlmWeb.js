@@ -288,7 +288,7 @@ export class VlmClientWeb {
       try {
         base64 = typeof image === 'string' ? image.replace(/^data:[^;]+;base64,/, '') : await this._toBase64(image);
       } catch (inner) {
-        throw new Error(`Image conversion failed: ${err.message}`);
+        throw new Error(`Image conversion failed: ${err.message}`, { cause: inner });
       }
     }
 
@@ -311,7 +311,7 @@ export class VlmClientWeb {
     } catch (err) {
       console.error(`[VlmWeb] enrichImage CRITICAL ERROR (${provider}):`, err);
       // Re-throw with more context
-      throw new Error(`VLM Provider Error (${provider}): ${err.message}`);
+      throw new Error(`VLM Provider Error (${provider}): ${err.message}`, { cause: err });
     }
   }
 

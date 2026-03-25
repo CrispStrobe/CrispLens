@@ -3,6 +3,7 @@
   import { deleteImage, processSingle, addToAlbum, createAlbum, fetchAlbums, downloadImage } from '../api.js';
   import BatchEditModal from './BatchEditModal.svelte';
   import ConvertModal from './ConvertModal.svelte';
+  import ArchiveMetadataModal from './ArchiveMetadataModal.svelte';
 
   $: count = $selectedItems.size;
   // Allow delete only for admin/mediamanager, or if all selected images are owned by current user
@@ -16,10 +17,14 @@
 
   let showEditModal = false;
   let showConvertModal = false;
+  let showArchiveModal = false;
+  let archiveModalMode = 'bildarchiv';  // 'bildarchiv' | 'bildauswahl' | 'rename'
+  let showBildauswahlDropdown = false;
   let isProcessing = false;
   let progressIdx = 0;
   let showAlbumDropdown = false;
   let showRescanDropdown = false;
+  let archiveMsg = '';
 
   function clearSelection() {
     selectedItems.set(new Set());
@@ -81,6 +86,14 @@
   function handleWindowClick() {
     showAlbumDropdown = false;
     showRescanDropdown = false;
+    showBildauswahlDropdown = false;
+  }
+
+  function openArchiveModal(mode) {
+    console.log('[SelectionToolbar] openArchiveModal:', mode, 'ids:', $selectedItems.size);
+    archiveModalMode = mode;
+    showArchiveModal = true;
+    showBildauswahlDropdown = false;
   }
 </script>
 
@@ -120,7 +133,7 @@
             {#if $allAlbums.length === 0}
               <div class="no-albums">No albums yet</div>
             {:else}
-              {#each $allAlbums as album}
+              {#each $allAlbums as album (album.id)}
                 <button class="dropdown-opt" on:click={() => addToAlbumAction(album.id)}>
                   {album.name} <span class="dim">({album.image_count})</span>
                 </button>
@@ -131,6 +144,26 @@
           </div>
         {/if}
       </div>
+
+      <!-- Als Unterauswahl ablegen + Bildarchiv -->
+      <div class="dropdown-wrap" on:click|stopPropagation>
+        <button class="bildauswahl-btn" on:click={() => openArchiveModal('bildauswahl')} title="Als Unterauswahl ablegen (Bildauswahl)">
+          📂 Unterauswahl
+        </button>
+        <button class="dropdown-arrow bildauswahl-arr" on:click={() => showBildauswahlDropdown = !showBildauswahlDropdown}>▾</button>
+        {#if showBildauswahlDropdown}
+          <div class="dropdown-menu">
+            <button class="dropdown-opt" on:click={() => openArchiveModal('bildauswahl')}>📂 Als Unterauswahl ablegen…</button>
+            <button class="dropdown-opt" on:click={() => openArchiveModal('bildarchiv')}>🗂 In Bildarchiv ablegen…</button>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-opt" on:click={() => openArchiveModal('rename')}>✏️ Umbenennen/Neu sortieren…</button>
+          </div>
+        {/if}
+      </div>
+
+      {#if archiveMsg}
+        <span class="archive-msg">{archiveMsg}</span>
+      {/if}
 
       {#if canDelete}
         <button class="danger" on:click={batchDelete}>🗑 {$t('delete')}</button>
@@ -154,6 +187,20 @@
     imageIds={Array.from($selectedItems)}
     on:close={() => showConvertModal = false}
     on:converted={() => showConvertModal = false}
+  />
+{/if}
+
+{#if showArchiveModal}
+  <ArchiveMetadataModal
+    imageIds={Array.from($selectedItems)}
+    mode={archiveModalMode}
+    on:close={() => showArchiveModal = false}
+    on:done={e => {
+      showArchiveModal = false;
+      const r = e.detail?.results;
+      archiveMsg = `✓ ${r?.success_count ?? '?'} erledigt`;
+      setTimeout(() => archiveMsg = '', 4000);
+    }}
   />
 {/if}
 
@@ -245,4 +292,18 @@
   }
 
   .dim { color: #505070; font-size: 10px; }
+
+  .bildauswahl-btn {
+    border-radius: 16px 0 0 16px;
+    border-right: 1px solid #3a3a5a;
+    background: #1e3020;
+    color: #80d090;
+  }
+  .bildauswahl-btn:hover { background: #2a4030; color: #a0e0a0; }
+  .bildauswahl-arr { border-radius: 0 16px 16px 0; }
+
+  .archive-msg {
+    font-size: 11px; color: #80d090; background: #0a2a1a;
+    padding: 3px 8px; border-radius: 10px; border: 1px solid #2a6a3a;
+  }
 </style>

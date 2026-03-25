@@ -9,7 +9,8 @@
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
-    isLocalMode, setLocalMode, exportDB, importDB, clearDB, hardResetApp
+    isLocalMode, setLocalMode, exportDB, importDB, clearDB, hardResetApp,
+    fetchArchiveConfig, saveArchiveConfig, fetchExiftoolStatus,
   } from '../api.js';
   import { currentUser, t, processingMode, localModel, backendReady, stats, allPeople, allTags, allAlbums, translations, lang, TRANSLATIONS, processingBackend } from '../stores.js';
   import syncManager, { loadSyncSettings, saveSyncSettings } from './SyncManager.js';
@@ -59,6 +60,58 @@
 
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
+
+  // ── Archive config (admin) ────────────────────────────────────────────────
+  let archiveCfg       = null;
+  let archiveSaving    = false;
+  let archiveSaveMsg   = '';
+  let archiveExiftoolOk = false;
+  const FACHBEREICH_DEFAULT = ['DIR', 'ÖFA', 'GES', 'GUS', 'HOH', 'INZ', 'IRD', 'MMN', 'NUT', 'KUN', 'RSP', 'SUG'];
+
+  async function loadArchiveConfig() {
+    try {
+      archiveCfg = await fetchArchiveConfig();
+      console.log('[SettingsView] archiveCfg loaded:', archiveCfg?.version);
+    } catch (e) {
+      console.warn('[SettingsView] loadArchiveConfig failed:', e);
+    }
+    try { const es = await fetchExiftoolStatus(); archiveExiftoolOk = es?.available ?? false; } catch {}
+  }
+
+  async function saveArchiveCfg() {
+    if (!archiveCfg) return;
+    archiveSaving = true; archiveSaveMsg = '';
+    try {
+      archiveCfg = await saveArchiveConfig(archiveCfg);
+      archiveSaveMsg = $t('archive_config_saved');
+      setTimeout(() => archiveSaveMsg = '', 3000);
+    } catch (e) {
+      archiveSaveMsg = '✗ ' + e.message;
+    } finally {
+      archiveSaving = false;
+    }
+  }
+
+  function addArchiveField() {
+    if (!archiveCfg) return;
+    if ((archiveCfg.fields?.length || 0) >= 10) { alert('Maximal 10 Felder erlaubt.'); return; }
+    const newField = {
+      id: 'field_' + Date.now(), label: 'Neues Feld', type: 'text',
+      choices: [], allow_custom: true, required: false,
+      order: (archiveCfg.fields?.length || 0) + 1,
+    };
+    archiveCfg = { ...archiveCfg, fields: [...(archiveCfg.fields || []), newField] };
+  }
+
+  function removeArchiveField(idx) {
+    if (!archiveCfg?.fields) return;
+    archiveCfg = { ...archiveCfg, fields: archiveCfg.fields.filter((_, i) => i !== idx) };
+  }
+
+  function updateArchiveSection(key, subKey, value) {
+    if (!archiveCfg) return;
+    archiveCfg = { ...archiveCfg, [key]: { ...archiveCfg[key], [subKey]: value } };
+  }
   let globalDetModelHint = null; // for non-admin hint
 
   const BACKENDS   = ['insightface', 'dlib_hog', 'dlib_cnn'];
@@ -646,6 +699,8 @@
           ortUseDirectML = cfg?.inference?.ort_use_directml ?? false;
           processingBackend.set(procBackend);
           localStorage.setItem('crisp_processing_backend', procBackend);
+          // Load archive config for admin
+          await loadArchiveConfig();
         }
       } catch (e) {
         console.error('[SettingsView] onMount: settings fetch error:', e);
@@ -2421,6 +2476,125 @@
       </div>
     {/each}
   </section>
+
+  <!-- ─── Archive Configuration (Admin only) ─────────────────────────────── -->
+  {#if isAdmin && archiveCfg}
+  <section class="card">
+    <h3>🗂 {$t('archive_config_title')}</h3>
+    {#if !archiveExiftoolOk}
+      <div class="hint-row" style="color:#d0a030;margin-bottom:8px;">⚠ {$t('archive_exiftool_missing')}</div>
+    {:else}
+      <div class="hint-row" style="color:#60d060;margin-bottom:8px;">✓ {$t('archive_exiftool_available')}</div>
+    {/if}
+
+    <!-- Custom Fields -->
+    <h4 style="font-size:12px;color:#8080a0;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">{$t('archive_config_fields')}</h4>
+    {#each (archiveCfg.fields || []).sort((a,b)=>a.order-b.order) as field, idx}
+      <div class="archive-field-row">
+        <input class="small-input" type="text" bind:value={field.label} placeholder="Bezeichnung" title="Label" />
+        <select class="small-input" bind:value={field.type}>
+          <option value="text">Text</option>
+          <option value="select">Auswahl</option>
+          <option value="date">Datum</option>
+        </select>
+        <label class="inline-check" title="{$t('archive_field_allow_custom')}">
+          <input type="checkbox" bind:checked={field.allow_custom} /> Frei
+        </label>
+        <label class="inline-check" title="{$t('archive_field_required')}">
+          <input type="checkbox" bind:checked={field.required} /> Pflicht
+        </label>
+        {#if field.type === 'select'}
+          <input class="small-input" style="flex:2" type="text"
+            value={(field.choices||[]).join(', ')}
+            on:change={e => { field.choices = e.target.value.split(',').map(s=>s.trim()).filter(Boolean); archiveCfg = archiveCfg; }}
+            placeholder="Optionen, kommagetrennt" />
+        {/if}
+        <button class="small danger-sm" on:click={() => removeArchiveField(idx)} title="{$t('archive_field_remove')}">✕</button>
+      </div>
+    {/each}
+    <button class="small" on:click={addArchiveField} style="margin-top:4px;">{$t('archive_field_add')}</button>
+
+    <!-- Bildarchiv section -->
+    <h4 style="font-size:12px;color:#8080a0;text-transform:uppercase;letter-spacing:.05em;margin-top:14px;margin-bottom:6px;">
+      🗂 {$t('archive_config_bildarchiv')}
+    </h4>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_base_path')}</label>
+      <input class="input" type="text" value={archiveCfg.bildarchiv?.base_path || ''}
+        on:change={e => updateArchiveSection('bildarchiv','base_path',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_folder_tpl')}</label>
+      <input class="input" type="text" value={archiveCfg.bildarchiv?.folder_template || ''}
+        on:change={e => updateArchiveSection('bildarchiv','folder_template',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_filename_tpl')}</label>
+      <input class="input" type="text" value={archiveCfg.bildarchiv?.filename_template || ''}
+        on:change={e => updateArchiveSection('bildarchiv','filename_template',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_default_action')}</label>
+      <select class="input" value={archiveCfg.bildarchiv?.default_action || 'copy'}
+        on:change={e => updateArchiveSection('bildarchiv','default_action',e.target.value)}>
+        <option value="copy">Kopieren</option>
+        <option value="move">Verschieben</option>
+        <option value="leave">Belassen</option>
+      </select>
+    </div>
+    <label class="checkbox-row" style="margin-top:4px;">
+      <input type="checkbox" checked={archiveCfg.bildarchiv?.create_jpg}
+        on:change={e => updateArchiveSection('bildarchiv','create_jpg',e.target.checked)} />
+      {$t('archive_config_create_jpg')}
+    </label>
+
+    <!-- Bildauswahl section -->
+    <h4 style="font-size:12px;color:#8080a0;text-transform:uppercase;letter-spacing:.05em;margin-top:14px;margin-bottom:6px;">
+      📂 {$t('archive_config_bildauswahl')}
+    </h4>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_base_path')}</label>
+      <input class="input" type="text" value={archiveCfg.bildauswahl?.base_path || ''}
+        on:change={e => updateArchiveSection('bildauswahl','base_path',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_folder_tpl')}</label>
+      <input class="input" type="text" value={archiveCfg.bildauswahl?.folder_template || ''}
+        on:change={e => updateArchiveSection('bildauswahl','folder_template',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_filename_tpl')}</label>
+      <input class="input" type="text" value={archiveCfg.bildauswahl?.filename_template || ''}
+        on:change={e => updateArchiveSection('bildauswahl','filename_template',e.target.value)} />
+    </div>
+    <div class="field-row">
+      <label class="label">{$t('archive_config_default_action')}</label>
+      <select class="input" value={archiveCfg.bildauswahl?.default_action || 'copy'}
+        on:change={e => updateArchiveSection('bildauswahl','default_action',e.target.value)}>
+        <option value="copy">Kopieren</option>
+        <option value="move">Verschieben</option>
+        <option value="leave">Belassen</option>
+      </select>
+    </div>
+    <label class="checkbox-row" style="margin-top:4px;">
+      <input type="checkbox" checked={archiveCfg.bildauswahl?.create_jpg}
+        on:change={e => updateArchiveSection('bildauswahl','create_jpg',e.target.checked)} />
+      {$t('archive_config_create_jpg')}
+    </label>
+
+    <!-- Template variables hint -->
+    <div class="hint-row" style="margin-top:10px;">{$t('archive_tpl_vars_hint')}</div>
+
+    <!-- Save button -->
+    <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+      <button class="primary small" on:click={saveArchiveCfg} disabled={archiveSaving}>
+        {archiveSaving ? '…' : $t('archive_config_save')}
+      </button>
+      {#if archiveSaveMsg}<span class="save-msg">{archiveSaveMsg}</span>{/if}
+    </div>
+  </section>
+  {/if}
+
 </div>
 
 <ServerUpdateModal bind:show={showUpdateModal} {fixDbPath} />
@@ -2466,6 +2640,25 @@
   .save-btn { align-self: flex-start; padding: 8px 20px; }
   .save-msg { font-size: 12px; color: #80c080; }
   .error-msg { font-size: 12px; color: #e08080; }
+
+  /* Archive config fields */
+  .archive-field-row {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 4px 0; border-bottom: 1px solid #2a2a3a;
+  }
+  .small-input {
+    background: #252538; border: 1px solid #4a4a6a; border-radius: 4px;
+    color: #e0e0f0; padding: 4px 7px; font-size: 11px; flex: 1; min-width: 80px;
+  }
+  .small-input:focus { outline: none; border-color: #6a8fff; }
+  .inline-check { display: flex; align-items: center; gap: 3px; font-size: 11px; color: #9090b8; cursor: pointer; white-space: nowrap; }
+  .inline-check input { accent-color: #6a8fff; }
+  .danger-sm {
+    background: #3a1a1a; border: 1px solid #6a3a3a; color: #d08080;
+    border-radius: 4px; padding: 3px 7px; font-size: 11px; cursor: pointer;
+  }
+  .danger-sm:hover { background: #4a2020; }
+  .hint-row { font-size: 10px; color: #606080; font-style: italic; }
 
   /* Server presets */
   .preset-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }

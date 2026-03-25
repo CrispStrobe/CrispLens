@@ -1,6 +1,6 @@
 <script>
   import { t, sidebarView, selectedId, galleryRefreshTick } from '../stores.js';
-  import { generateImage, thumbnailUrl, bflPreviewUrl, registerBflFile, downloadBflFile } from '../api.js';
+  import { generateImage, thumbnailUrl, bflPreviewUrl, registerBflFile, downloadBflFile, robustFetch } from '../api.js';
 
   const ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:4', '9:16', '2:3', '3:2', '21:9'];
   const GEN_MODELS = [

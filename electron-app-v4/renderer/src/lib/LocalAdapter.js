@@ -355,10 +355,6 @@ async function _insertFacesForImage(imageId, faces, tags, description, scene_typ
 console.log("%c[LocalAdapter] Module Loaded | Version: v4.0.260308.2300", "color: #e07030; font-weight: bold");
 export const localAdapter = {
 
-  health() {
-    return { ok: true, version: 'local', backend: 'capacitor-sqlite', model_ready: true };
-  },
-
   /** Check if an image already exists in the DB by hash or filepath. Returns image_id or null. */
   async checkDuplicate(file_hash, filepath) {
     if (file_hash) {
@@ -370,10 +366,6 @@ export const localAdapter = {
       if (rows.length > 0) { console.log(`[LocalAdapter] checkDuplicate: filepath match → imageId=${rows[0].id}`); return rows[0].id; }
     }
     return null;
-  },
-
-  me() {
-    return { username: 'local', role: 'admin' };
   },
 
   async getFaceCrop(imageId, faceId, size = 128) {

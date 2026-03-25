@@ -14,7 +14,6 @@ Environment variables:
 """
 import logging
 import os
-import sys
 
 _DATA_DIR        = os.environ.get('FACE_REC_DATA_DIR', '')
 _DB_PATH_OVERRIDE = os.environ.get('FACE_REC_DB_PATH', '')   # absolute path; overrides config.yaml
@@ -401,51 +400,32 @@ def startup():
                         "PRAGMA table_info(images)"
                     ).fetchall()]
                     _cols_sql = ', '.join(_cols)
+                    # Derive images_fix DDL dynamically so ALTERed columns are included
+                    import re as _mig_re
+                    _orig_ddl = _mig_conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='images'"
+                    ).fetchone()[0]
+                    _fix_ddl = _orig_ddl.replace('CREATE TABLE images', 'CREATE TABLE images_fix', 1)
+                    # Strip column-level UNIQUE from file_hash (preserve the rest of the line)
+                    _fix_ddl = _mig_re.sub(
+                        r'(?i)\bfile_hash(\s+TEXT)\s+UNIQUE\b', r'file_hash\1', _fix_ddl
+                    )
+                    # Save dependent views so we can recreate them after renaming
+                    _dep_views = _mig_conn.execute(
+                        "SELECT name, sql FROM sqlite_master WHERE type='view' AND sql LIKE '%images%'"
+                    ).fetchall()
+                    _drop_views_sql = '\n'.join(
+                        f"DROP VIEW IF EXISTS {r[0]};" for r in _dep_views
+                    )
+                    _recreate_views_sql = '\n'.join(
+                        f"{r[1]};" for r in _dep_views if r[1]
+                    )
                     # Recreate table without the column-level UNIQUE on file_hash
                     _mig_conn.executescript(f"""
                         PRAGMA foreign_keys = OFF;
                         BEGIN;
-                        CREATE TABLE images_fix (
-                            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                            filepath         TEXT NOT NULL UNIQUE,
-                            filename         TEXT NOT NULL,
-                            file_hash        TEXT,
-                            file_size        INTEGER,
-                            width            INTEGER,
-                            height           INTEGER,
-                            format           TEXT,
-                            local_path       TEXT,
-                            image_blob       BLOB,
-                            thumbnail_blob   BLOB,
-                            taken_at         TIMESTAMP,
-                            location_lat     REAL,
-                            location_lng     REAL,
-                            location_name    TEXT,
-                            camera_make      TEXT,
-                            camera_model     TEXT,
-                            iso              INTEGER,
-                            aperture         REAL,
-                            shutter_speed    TEXT,
-                            focal_length     REAL,
-                            ai_description   TEXT,
-                            ai_scene_type    TEXT,
-                            ai_tags          TEXT,
-                            ai_confidence    REAL,
-                            ai_provider      TEXT,
-                            processed        INTEGER DEFAULT 0,
-                            processing_error TEXT,
-                            face_count       INTEGER DEFAULT 0,
-                            metadata_written INTEGER DEFAULT 0,
-                            rating           INTEGER DEFAULT 0,
-                            flag             TEXT,
-                            description      TEXT,
-                            phash            TEXT,
-                            owner_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                            visibility       TEXT DEFAULT 'shared',
-                            created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            processed_at     TIMESTAMP
-                        );
+                        {_drop_views_sql}
+                        {_fix_ddl};
                         INSERT INTO images_fix ({_cols_sql})
                             SELECT {_cols_sql} FROM images;
                         DROP TABLE images;
@@ -467,6 +447,7 @@ def startup():
                         CREATE UNIQUE INDEX idx_images_file_hash_owner
                             ON images(file_hash, owner_id)
                             WHERE file_hash IS NOT NULL;
+                        {_recreate_views_sql}
                         COMMIT;
                         PRAGMA foreign_keys = ON;
                     """)
@@ -597,6 +578,8 @@ app.include_router(ingest.router,       prefix="/api/ingest",        tags=["inge
 app.include_router(cloud_drives.router, prefix="/api/cloud-drives",  tags=["cloud-drives"])
 app.include_router(bfl_edit.router,    prefix="/api/bfl",            tags=["bfl"])
 app.include_router(batch_jobs.router,  prefix="/api/batch-jobs",     tags=["batch-jobs"])
+from routers import archive as archive_router
+app.include_router(archive_router.router, prefix="/api/archive", tags=["archive"])
 
 # ─── Tags & stats convenience routes ─────────────────────────────────────────
 
@@ -689,7 +672,6 @@ def list_dates_stats():
 def list_folders_stats(user=Depends(get_current_user)):
     import sqlite3
     from pathlib import Path
-    from routers.deps import can_access_image
     conn = sqlite3.connect(state.db_path)
     conn.row_factory = sqlite3.Row
     if user.role == 'admin':

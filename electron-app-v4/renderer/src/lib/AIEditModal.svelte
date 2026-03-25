@@ -8,7 +8,7 @@
   import { t } from '../stores.js';
   import { thumbnailUrl, downloadImage,
            outpaintImage, inpaintImage, aiEditImage, generateImage,
-           bflPreviewUrl, registerBflFile, downloadBflFile } from '../api.js';
+           bflPreviewUrl, registerBflFile, downloadBflFile, robustFetch } from '../api.js';
 
   export let imageId       = null;
   export let imageFilename = '';

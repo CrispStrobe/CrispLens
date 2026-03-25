@@ -834,8 +834,8 @@ router.post('/duplicates/scan-phash', requireAuth, async (req, res) => {
 });
 
 router.post('/duplicates/cleanup-script', requireAuth, (req, res) => {
-  const { files = [], format = 'bash', action = 'trash' } = req.body || {};
-  let content = '';
+  const { files = [], format = 'bash', action: _action = 'trash' } = req.body || {};
+  let content;
   if (format === 'json') {
     content = JSON.stringify(files, null, 2);
     res.setHeader('Content-Type', 'application/json');
