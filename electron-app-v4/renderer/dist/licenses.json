@@ -1,0 +1,162 @@
+[
+  {
+    "name": "@capacitor-community/sqlite",
+    "version": "7.0.3",
+    "license": "MIT",
+    "author": "Robin Genz <mail@robingenz.dev>",
+    "link": "https://www.npmjs.com/package/@capacitor-community/sqlite",
+    "source": "Frontend"
+  },
+  {
+    "name": "@capacitor/camera",
+    "version": "7.0.4",
+    "license": "MIT",
+    "author": "Ionic <hi@ionicframework.com>",
+    "link": "https://www.npmjs.com/package/@capacitor/camera",
+    "source": "Frontend"
+  },
+  {
+    "name": "@capacitor/core",
+    "version": "7.5.0",
+    "license": "MIT",
+    "author": "Ionic Team <hi@ionic.io> (https://ionic.io)",
+    "link": "https://www.npmjs.com/package/@capacitor/core",
+    "source": "Frontend"
+  },
+  {
+    "name": "@capacitor/filesystem",
+    "version": "7.1.8",
+    "license": "MIT",
+    "author": "Outsystems",
+    "link": "https://www.npmjs.com/package/@capacitor/filesystem",
+    "source": "Frontend"
+  },
+  {
+    "name": "@mediapipe/tasks-vision",
+    "version": "0.10.32",
+    "license": "Apache-2.0",
+    "author": "mediapipe@google.com",
+    "link": "https://www.npmjs.com/package/@mediapipe/tasks-vision",
+    "source": "Frontend"
+  },
+  {
+    "name": "adm-zip",
+    "version": "0.5.16",
+    "license": "MIT",
+    "author": "Nasca Iacob <sy@another-d-mention.ro> (https://github.com/cthackers)",
+    "link": "https://www.npmjs.com/package/adm-zip",
+    "source": "Backend"
+  },
+  {
+    "name": "better-sqlite3",
+    "version": "11.10.0",
+    "license": "MIT",
+    "author": "Joshua Wise <joshuathomaswise@gmail.com>",
+    "link": "https://www.npmjs.com/package/better-sqlite3",
+    "source": "Backend"
+  },
+  {
+    "name": "cookie-parser",
+    "version": "1.4.7",
+    "license": "MIT",
+    "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)",
+    "link": "https://www.npmjs.com/package/cookie-parser",
+    "source": "Backend"
+  },
+  {
+    "name": "cors",
+    "version": "2.8.6",
+    "license": "MIT",
+    "author": "Troy Goode <troygoode@gmail.com> (https://github.com/troygoode/)",
+    "link": "https://www.npmjs.com/package/cors",
+    "source": "Backend"
+  },
+  {
+    "name": "express",
+    "version": "4.22.1",
+    "license": "MIT",
+    "author": "TJ Holowaychuk <tj@vision-media.ca>",
+    "link": "https://www.npmjs.com/package/express",
+    "source": "Backend"
+  },
+  {
+    "name": "http-proxy-middleware",
+    "version": "3.0.5",
+    "license": "MIT",
+    "author": "Steven Chim",
+    "link": "https://www.npmjs.com/package/http-proxy-middleware",
+    "source": "Backend"
+  },
+  {
+    "name": "multer",
+    "version": "1.4.5-lts.2",
+    "license": "MIT",
+    "author": "n/a",
+    "link": "https://www.npmjs.com/package/multer",
+    "source": "Backend"
+  },
+  {
+    "name": "node-fetch",
+    "version": "2.7.0",
+    "license": "MIT",
+    "author": "David Frank",
+    "link": "https://www.npmjs.com/package/node-fetch",
+    "source": "Backend"
+  },
+  {
+    "name": "onnxruntime-node",
+    "version": "1.24.2",
+    "license": "MIT",
+    "author": "fs-eire",
+    "link": "https://www.npmjs.com/package/onnxruntime-node",
+    "source": "Backend"
+  },
+  {
+    "name": "onnxruntime-web",
+    "version": "1.24.2",
+    "license": "MIT",
+    "author": "fs-eire",
+    "link": "https://www.npmjs.com/package/onnxruntime-web",
+    "source": "Frontend"
+  },
+  {
+    "name": "sharp",
+    "version": "0.33.5",
+    "license": "Apache-2.0",
+    "author": "Lovell Fuller <npm@lovell.info>",
+    "link": "https://www.npmjs.com/package/sharp",
+    "source": "Backend"
+  },
+  {
+    "name": "sql.js",
+    "version": "1.11.0",
+    "license": "MIT",
+    "author": "n/a",
+    "link": "https://www.npmjs.com/package/sql.js",
+    "source": "Frontend"
+  },
+  {
+    "name": "usearch",
+    "version": "2.21.4",
+    "license": "Apache 2.0",
+    "author": "Ash Vardanian (https://ashvardanian.com/)",
+    "link": "https://www.npmjs.com/package/usearch",
+    "source": "Backend"
+  },
+  {
+    "name": "uuid",
+    "version": "11.1.0",
+    "license": "MIT",
+    "author": "n/a",
+    "link": "https://www.npmjs.com/package/uuid",
+    "source": "Backend"
+  },
+  {
+    "name": "voy-search",
+    "version": "0.6.3",
+    "license": "MIT OR Apache 2.0",
+    "author": "n/a",
+    "link": "https://www.npmjs.com/package/voy-search",
+    "source": "Frontend"
+  }
+]

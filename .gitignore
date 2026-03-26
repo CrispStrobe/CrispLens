@@ -29,8 +29,12 @@ eggs/
 /lib/
 /lib64/
 !electron-app-v2/renderer/src/lib/
-# Svelte compiled frontend — include in git so VPS deployment works without Node
+# Svelte compiled frontends — include in git so VPS deployment works without Node
 !electron-app-v2/renderer/dist/
+!electron-app-v4/renderer/dist/
+# But exclude very large binary assets from v4 dist that can't go on GitHub
+electron-app-v4/renderer/dist/models/
+electron-app-v4/renderer/dist/ort-wasm/
 parts/
 sdist/
 var/
@@ -46,8 +50,6 @@ electron-app-v4/test-data/
 # ============================================================================
 # Electron installer/app bundle output (DMG, NSIS, AppImage, .app, blockmaps)
 electron-app-v4/dist-electron/
-# Svelte built frontend for v4 (unlike v2 we don't track this in git)
-electron-app-v4/renderer/dist/
 
 # PyInstaller
 *.manifest
