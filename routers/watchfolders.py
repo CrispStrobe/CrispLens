@@ -196,7 +196,7 @@ def update_watch_folder(folder_id: int, body: WatchFolderUpdate, _=Depends(requi
             sets.append("scan_interval_hours=?"); params.append(body.scan_interval_hours)
         if sets:
             params.append(folder_id)
-            conn.execute(f"UPDATE watch_folders SET {', '.join(sets)} WHERE id=?", params)
+            conn.execute(f"UPDATE watch_folders SET {', '.join(sets)} WHERE id=?", params)  # nosec B608 — sets contains only hardcoded column=? literals, never user input
             conn.commit()
         row = conn.execute(
             "SELECT * FROM watch_folders WHERE id=?", (folder_id,)
