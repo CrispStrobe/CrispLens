@@ -191,8 +191,8 @@
     if (key === 'r' || key === 'R') { await doRotate('cw');  return; }
     if (key === 'l' || key === 'L') { await doRotate('ccw'); return; }
 
-    // Crop
-    if (key === 'c' || key === 'C') { showCrop = true; return; }
+    // Crop — only bare 'c'/'C', never with Ctrl/Cmd (would be copy)
+    if ((key === 'c' || key === 'C') && !e.ctrlKey && !e.metaKey) { showCrop = true; return; }
 
     // Adjust
     if (key === 'a' || key === 'A') { showAdjust = true; return; }

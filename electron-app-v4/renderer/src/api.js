@@ -384,8 +384,15 @@ export function downloadImage(id, filename) {
 export function patchMetadata(id, params) {
   const g = _guard('patchMetadata', () => localAdapter.patchMetadata(id, params));
   if (g) return g;
-  const { description='', scene_type='', tags_csv='', creator='', copyright='' } = params;
-  return patch(`/images/${id}/metadata`, { description, scene_type, tags_csv, creator, copyright });
+  const {
+    description='', scene_type='', tags_csv='', creator='', copyright='',
+    fachbereich=null, veranstaltungsnummer=null, veranstaltungstitel=null,
+    urheber=null, datum_event=null,
+  } = params;
+  return patch(`/images/${id}/metadata`, {
+    description, scene_type, tags_csv, creator, copyright,
+    fachbereich, veranstaltungsnummer, veranstaltungstitel, urheber, datum_event,
+  });
 }
 
 export function batchEditImages(ids, changes) {

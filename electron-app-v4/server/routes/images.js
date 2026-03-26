@@ -82,6 +82,14 @@ function rowToApi(row) {
     creator:      row.creator    || null,
     copyright:    row.copyright  || null,
     visibility:   row.visibility || 'shared',
+    // Archive metadata fields
+    fachbereich:          row.fachbereich          || null,
+    veranstaltungsnummer: row.veranstaltungsnummer || null,
+    veranstaltungstitel:  row.veranstaltungstitel  || null,
+    urheber:              row.urheber              || null,
+    datum_event:          row.datum_event          || null,
+    bildarchiv_path:      row.bildarchiv_path      || null,
+    bildauswahl_path:     row.bildauswahl_path     || null,
     faces,
     people: [],
   };
@@ -330,13 +338,27 @@ router.get('/:id/exif', requireAuth, (req, res) => {
 
 router.patch('/:id/metadata', requireAuth, (req, res) => {
   const db = getDb();
-  const { description = '', scene_type = '', tags_csv = '', creator = '', copyright = '' } = req.body || {};
+  const {
+    description = '', scene_type = '', tags_csv = '', creator = '', copyright = '',
+    fachbereich = null, veranstaltungsnummer = null, veranstaltungstitel = null,
+    urheber = null, datum_event = null,
+  } = req.body || {};
   const id = Number(req.params.id);
 
   const tagNames = tags_csv ? tags_csv.split(',').map(t => t.trim()).filter(Boolean) : [];
   db.prepare(`
-    UPDATE images SET ai_description=?, ai_scene_type=?, ai_tags=?, creator=?, copyright=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-  `).run(description || null, scene_type || null, tagNames.length ? tagNames.join(',') : null, creator || null, copyright || null, id);
+    UPDATE images SET
+      ai_description=?, ai_scene_type=?, ai_tags=?, creator=?, copyright=?,
+      fachbereich=?, veranstaltungsnummer=?, veranstaltungstitel=?, urheber=?, datum_event=?,
+      updated_at=CURRENT_TIMESTAMP
+    WHERE id=?
+  `).run(
+    description || null, scene_type || null, tagNames.length ? tagNames.join(',') : null,
+    creator || null, copyright || null,
+    fachbereich || null, veranstaltungsnummer || null, veranstaltungstitel || null,
+    urheber || null, datum_event || null,
+    id
+  );
 
   // Sync tags junction table
   db.prepare('DELETE FROM image_tags WHERE image_id=?').run(id);

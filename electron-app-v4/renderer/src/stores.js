@@ -585,6 +585,14 @@ const EN = {
   pv_submit_batch_job:       'Create batch job',
   pv_follow_symlinks:        'Follow symbolic links',
 
+  // Archive metadata fields (MetaPanel)
+  archive_metadata:            'Archiv-Metadaten',
+  arch_fachbereich:            'Fachbereich',
+  arch_veranstaltungsnummer:   'Veranstaltungsnummer',
+  arch_datum:                  'Datum',
+  arch_veranstaltungstitel:    'Veranstaltungstitel',
+  arch_urheber:                'Urheber',
+
   // Batch Jobs view
   tab_batchjobs:             'Batch Jobs',
   bj_title:                  'Batch Jobs',
@@ -1223,6 +1231,14 @@ export const TRANSLATIONS = {
     pv_copyright_placeholder:  '© 2025 Name…',
     pv_submit_batch_job:       'Stapelauftrag erstellen',
     pv_follow_symlinks:        'Symlinks folgen',
+
+    // Archive metadata fields (MetaPanel)
+    archive_metadata:            'Archiv-Metadaten',
+    arch_fachbereich:            'Fachbereich',
+    arch_veranstaltungsnummer:   'Veranstaltungsnummer',
+    arch_datum:                  'Datum',
+    arch_veranstaltungstitel:    'Veranstaltungstitel',
+    arch_urheber:                'Urheber',
 
     tab_batchjobs:             'Stapelaufträge',
     bj_title:                  'Stapelaufträge',
