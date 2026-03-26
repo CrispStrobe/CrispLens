@@ -494,14 +494,36 @@ step "Checking Python dependencies"
 
 REQ="${INSTALL_DIR}/requirements.txt"
 if [[ -f "$REQ" && -d "$VENV" ]]; then
-    if id "${SVC_USER}" &>/dev/null; then
-        sudo -u "${SVC_USER}" "${VENV}/bin/pip" install -q -r "$REQ" \
-            && info "Dependencies up-to-date" \
-            || warn "pip install reported errors — check output"
+    _pip() { "${VENV}/bin/pip" "$@"; }
+    _pip_as_svc() {
+        if id "${SVC_USER}" &>/dev/null; then
+            sudo -u "${SVC_USER}" "${VENV}/bin/pip" "$@"
+        else
+            "${VENV}/bin/pip" "$@"
+        fi
+    }
+
+    _pip_as_svc install -q -r "$REQ" \
+        && info "Dependencies up-to-date" \
+        || warn "pip install reported errors — check output"
+
+    # ── Auto-upgrade onnxruntime → onnxruntime-gpu when NVIDIA GPU present ────
+    # onnxruntime (CPU-only) will silently fall back to CPU even when ctx_id>=0.
+    # onnxruntime-gpu is a drop-in replacement that enables CUDAExecutionProvider.
+    if command -v nvidia-smi &>/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader &>/dev/null 2>&1; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+        info "NVIDIA GPU detected: ${GPU_NAME}"
+        INSTALLED_ORT=$("${VENV}/bin/pip" show onnxruntime 2>/dev/null | grep -i "^Name:" | awk '{print $2}' || true)
+        if [[ "$INSTALLED_ORT" == "onnxruntime" ]]; then
+            info "Upgrading onnxruntime → onnxruntime-gpu for CUDA support"
+            _pip_as_svc install -q --upgrade onnxruntime-gpu \
+                && info "onnxruntime-gpu installed — CUDAExecutionProvider now available" \
+                || warn "onnxruntime-gpu install failed — staying on CPU onnxruntime"
+        elif [[ "$INSTALLED_ORT" == "onnxruntime-gpu" ]] || "${VENV}/bin/pip" show onnxruntime-gpu &>/dev/null 2>&1; then
+            info "onnxruntime-gpu already installed"
+        fi
     else
-        "${VENV}/bin/pip" install -q -r "$REQ" \
-            && info "Dependencies up-to-date" \
-            || warn "pip install reported errors"
+        info "No NVIDIA GPU detected — using CPU onnxruntime"
     fi
 else
     warn "venv or requirements.txt not found — skipping pip"

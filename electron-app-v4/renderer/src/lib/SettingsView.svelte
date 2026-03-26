@@ -1705,8 +1705,31 @@
             <option value="remote_v4">{$t('backend_remote_v4')}</option>
           </select>
         </div>
-        <!-- (Rest of Axis 3 engine params: remote v2 creds, server GPU toggles etc) -->
-        {#if procBackend === 'remote_v2' || procBackend === 'remote_v4'}
+        {#if procBackend === 'local'}
+          <!-- Server-side ONNX execution provider toggles -->
+          <div style="margin-top:10px;padding:10px;background:#0e1420;border-radius:6px;border:1px solid #1e2a3a;">
+            <div style="font-size:11px;font-weight:700;color:#4a6080;margin-bottom:8px;letter-spacing:0.05em;">ONNX EXECUTION PROVIDERS (Node.js backend)</div>
+            <div class="form-grid">
+              <label>CUDA (Linux/NVIDIA)</label>
+              <input type="checkbox" bind:checked={ortUseCUDA} />
+              <label>CoreML (macOS/Apple Silicon)</label>
+              <input type="checkbox" bind:checked={ortUseCoreML} />
+              <label>DirectML (Windows)</label>
+              <input type="checkbox" bind:checked={ortUseDirectML} />
+            </div>
+            <p class="hint" style="margin-top:6px;">
+              ⚠ <strong>Note:</strong> the standard <code>onnxruntime-node</code> npm package is <strong>CPU-only</strong>.
+              CUDA/CoreML/DirectML settings are stored and passed to ORT but will silently fall back to CPU
+              unless you replace <code>onnxruntime-node</code> with a GPU-enabled build.
+              For GPU inference, use the <strong>Python FastAPI backend</strong> with <code>onnxruntime-gpu</code>
+              (fix_db.sh auto-installs it when NVIDIA GPU is detected).
+              Save Settings then Reload Engine after changing.
+            </p>
+            <button class="btn-sm" style="margin-top:6px;" on:click={async () => { await reloadEngine(); alert('Engine reloaded'); }}>
+              ↺ Reload Engine
+            </button>
+          </div>
+        {:else if procBackend === 'remote_v2' || procBackend === 'remote_v4'}
           <div class="form-grid" style="margin-top:10px;">
             <label>Remote URL</label>
             <input type="text" bind:value={remoteV2Url} placeholder="https://..." />

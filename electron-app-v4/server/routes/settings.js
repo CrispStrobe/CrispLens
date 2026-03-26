@@ -316,16 +316,21 @@ router.get('/engine-status', requireAuth, async (req, res) => {
       mediapipe_local: { available: true, model_exists: fs.existsSync(path.join(modelDir, 'face_landmarker.task')),               model_size_kb: _kbSize(path.join(modelDir, 'face_landmarker.task')) },
     } : undefined;
     const flat = loadFlat();
+    // Report configured providers + ORT version
+    const ort = require('onnxruntime-node');
+    const ortVersion = ort.env?.versions?.ort || null;
     res.json({
-      ok:        !!modelDir,
-      ready:     !!modelDir,
-      model_dir: modelDir || null,
-      model:     modelName,
-      backend:   'onnxruntime-node',
+      ok:          !!modelDir,
+      ready:       !!modelDir,
+      model_dir:   modelDir || null,
+      model:       modelName,
+      backend:     'onnxruntime-node',
+      ort_version: ortVersion,
       providers: {
         coreml:   flat.ort_use_coreml   || false,
         cuda:     flat.ort_use_cuda     || false,
         directml: flat.ort_use_directml || false,
+        cpu:      true,
       },
       detectors,
     });
