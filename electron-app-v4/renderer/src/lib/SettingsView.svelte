@@ -1478,36 +1478,34 @@
   <h2>⚙ {$t('settings_title')}</h2>
   <!-- ── Three-Axis Panel (Unified for Electron & Web) ──────────────────────── -->
   <section class="card">
-    <h3>Connection &amp; Inference</h3>
-    <p class="hint" style="margin-bottom:16px;">Three independent settings control how CrispLens operates.</p>
+    <h3>{$t('axis_title')}</h3>
+    <p class="hint" style="margin-bottom:16px;">{$t('axis_subtitle')}</p>
 
     <!-- ── Axis 1: Storage Mode (Data Source) ───────────────────────────── -->
     <div style="padding-bottom:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">AXIS 1</span>
-        <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('settings_storage_mode')}</span>
+        <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('axis_1_label')}</span>
       </div>
-      <p class="hint" style="margin-bottom:10px;">{$t('settings_storage_mode_hint')}</p>
+      <p class="hint" style="margin-bottom:10px;">{$t('axis_1_hint')}</p>
       
       <div style="background: rgba(192, 160, 64, 0.1); border: 1px solid rgba(192, 160, 64, 0.2); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; gap: 10px; align-items: flex-start;">
         <span style="font-size: 16px; margin-top: -2px;">💡</span>
         <div style="font-size: 11px; line-height: 1.4; color: #d0c080;">
-          <strong>Data Isolation:</strong> Server and Standalone modes use <strong>separate</strong> databases. 
-          The local <code>.db</code> file is only used in Server mode. In Standalone mode, data is stored 
-          exclusively in your browser's IndexedDB (WASM).
+          {$t('axis_1_isolation')}
         </div>
       </div>
 
       <div class="mode-selector">
         <button class="mode-btn" class:active={dbMode === 'server'} on:click={() => dbMode !== 'server' && switchDbMode('server')}>
           <span class="mode-icon">☁</span>
-          <span class="mode-label">Server</span>
-          <span class="mode-desc">{isElectron ? 'Internal Node.js or Remote' : 'v4 Node.js or v2 FastAPI'}</span>
+          <span class="mode-label">{$t('axis_1_server')}</span>
+          <span class="mode-desc">{isElectron ? 'Internal Node.js or Remote' : $t('axis_1_server_desc')}</span>
         </button>
         <button class="mode-btn" class:active={dbMode === 'local'} on:click={() => dbMode !== 'local' && switchDbMode('local')}>
           <span class="mode-icon">📱</span>
-          <span class="mode-label">Standalone (Local)</span>
-          <span class="mode-desc">On-device SQLite (WASM), no server required</span>
+          <span class="mode-label">{$t('axis_1_standalone')}</span>
+          <span class="mode-desc">{$t('axis_1_standalone_desc')}</span>
         </button>
       </div>
       {#if dbMode === 'local'}

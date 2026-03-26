@@ -276,7 +276,7 @@
       <div class="no-people">None detected</div>
     {/if}
     <button class="btn-sm full mt-4" on:click={() => showIdentifyModal = true}>
-      Re-identify
+      {$t('identify_persons')}
     </button>
   </details>
 
