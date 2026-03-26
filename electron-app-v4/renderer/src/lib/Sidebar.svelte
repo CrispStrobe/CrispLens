@@ -1,5 +1,5 @@
 <script>
-  import { sidebarView, sidebarCollapsed, importCollapsed, allPeople, allTags, allAlbums, stats, t, filters, showLegalModal } from '../stores.js';
+  import { sidebarView, sidebarCollapsed, navCollapsed, importCollapsed, statsCollapsed, allPeople, allTags, allAlbums, stats, t, filters, showLegalModal } from '../stores.js';
   import { fetchStats, fetchPeople, fetchTags } from '../api.js';
 
   $: navItems = [
@@ -12,7 +12,10 @@
     { id: 'dates',    icon: '📅', label: $t('tab_timeline') },
     { id: 'folders',  icon: '📁', label: $t('tab_folders') },
   ];
+
   $: workItems = [
+    { id: 'process',    icon: '⚙', label: $t('tab_batch') },
+    { id: 'batchjobs',  icon: '📋', label: $t('tab_batchjobs') },
     { id: 'identify',      icon: '🔍', label: $t('tab_identify') },
     { id: 'generate',      icon: '✨', label: $t('tab_generate') },
     { id: 'faceclusters',  icon: '🫂', label: $t('tab_faceclusters') },
@@ -20,13 +23,17 @@
     { id: 'watchfolders',  icon: '📡', label: $t('tab_watchfolders') },
     { id: 'duplicates',    icon: '🔁', label: $t('tab_duplicates') },
     { id: 'clouddrives',   icon: '☁️', label: $t('cloud_drives') },
-    { id: 'process',    icon: '⚙', label: $t('tab_batch') },
-    { id: 'batchjobs',  icon: '📋', label: $t('tab_batchjobs') },
     { id: 'train',      icon: '🎓', label: $t('tab_train') },
   ];
+
   $: toolItems = [
     { id: 'settings',   icon: '⚙', label: $t('tab_settings') },
   ];
+
+  $: browseItem = navItems[0];
+  $: otherNavItems = navItems.slice(1);
+  $: primaryWorkItems = workItems.slice(0, 2);
+  $: secondaryWorkItems = workItems.slice(2);
 
   async function refreshStats() {
     try { stats.set(await fetchStats()); } catch {}
@@ -34,7 +41,6 @@
     try { allTags.set(await fetchTags()); } catch {}
   }
 
-  // Clear filters when explicitly clicking Browse so stale tag/folder filters don't persist
   function handleNavClick(id) {
     if (id === 'all') {
       filters.set({
@@ -48,40 +54,77 @@
 </script>
 
 <aside class="sidebar" class:collapsed={$sidebarCollapsed}>
+  <!-- NAVIGATION SECTION -->
   <div class="section-label">{$sidebarCollapsed ? '' : $t('tab_browse')}</div>
-  {#each navItems as item}
+  
+  <button
+    class="nav-item"
+    class:active={$sidebarView === browseItem.id}
+    on:click={() => handleNavClick(browseItem.id)}
+    title={$sidebarCollapsed ? browseItem.label : ''}
+  >
+    <span class="icon">{browseItem.icon}</span>
+    {#if !$sidebarCollapsed}<span class="label">{browseItem.label}</span>{/if}
+  </button>
+
+  {#if !$sidebarCollapsed}
+    <div class="section-label-collapsable" on:click={() => navCollapsed.update(v => !v)}>
+      <span>{$t('filter_options')}</span>
+      <span class="chevron">{$navCollapsed ? '▸' : '▾'}</span>
+    </div>
+  {/if}
+
+  {#if !$navCollapsed || $sidebarCollapsed}
+    {#each otherNavItems as item}
+      <button
+        class="nav-item"
+        class:active={$sidebarView === item.id}
+        on:click={() => handleNavClick(item.id)}
+        title={$sidebarCollapsed ? item.label : ''}
+      >
+        <span class="icon">{item.icon}</span>
+        {#if !$sidebarCollapsed}
+          <span class="label">{item.label}</span>
+          {#if item.id === 'albums' && $allAlbums.length}
+            <span class="badge">{$allAlbums.length}</span>
+          {/if}
+          {#if item.id === 'people' && $allPeople.length}
+            <span class="badge">{$allPeople.length}</span>
+          {/if}
+          {#if item.id === 'tags' && $allTags.length}
+            <span class="badge">{$allTags.length}</span>
+          {/if}
+        {/if}
+      </button>
+    {/each}
+  {/if}
+
+  <div class="divider"></div>
+
+  <!-- IMPORT / TOOLS SECTION -->
+  {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_ingest')}</div>{/if}
+  
+  {#each primaryWorkItems as item}
     <button
       class="nav-item"
       class:active={$sidebarView === item.id}
-      on:click={() => handleNavClick(item.id)}
+      on:click={() => sidebarView.set(item.id)}
       title={$sidebarCollapsed ? item.label : ''}
     >
       <span class="icon">{item.icon}</span>
-      {#if !$sidebarCollapsed}
-        <span class="label">{item.label}</span>
-        {#if item.id === 'albums' && $allAlbums.length}
-          <span class="badge">{$allAlbums.length}</span>
-        {/if}
-        {#if item.id === 'people' && $allPeople.length}
-          <span class="badge">{$allPeople.length}</span>
-        {/if}
-        {#if item.id === 'tags' && $allTags.length}
-          <span class="badge">{$allTags.length}</span>
-        {/if}
-      {/if}
+      {#if !$sidebarCollapsed}<span class="label">{item.label}</span>{/if}
     </button>
   {/each}
 
-  <div class="divider"></div>
   {#if !$sidebarCollapsed}
     <div class="section-label-collapsable" on:click={() => importCollapsed.update(v => !v)}>
-      <span>{$t('tab_ingest')}</span>
+      <span>{$t('fields')}</span>
       <span class="chevron">{$importCollapsed ? '▸' : '▾'}</span>
     </div>
   {/if}
 
   {#if !$importCollapsed || $sidebarCollapsed}
-    {#each workItems as item}
+    {#each secondaryWorkItems as item}
       <button
         class="nav-item"
         class:active={$sidebarView === item.id}
@@ -95,8 +138,9 @@
   {/if}
 
   <div class="divider"></div>
-  {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_settings')}</div>{/if}
 
+  <!-- SETTINGS -->
+  {#if !$sidebarCollapsed}<div class="section-label">{$t('tab_settings')}</div>{/if}
   {#each toolItems as item}
     <button
       class="nav-item"
@@ -109,16 +153,26 @@
     </button>
   {/each}
 
+  <!-- STATS SECTION -->
   {#if !$sidebarCollapsed}
     <div class="divider"></div>
     <div class="stat-block">
-      <div class="stat-header">
-        <span class="section-label">{$t('stats_overview')}</span>
-        <button class="refresh-mini" on:click={refreshStats} title={$t('refresh')}>🔄</button>
+      <div class="stat-header" on:click={() => statsCollapsed.update(v => !v)} style="cursor: pointer;">
+        <span class="section-label">
+          {$t('stats_overview')} 
+          <small>({$stats.total_images ?? 0}|{$stats.total_people ?? 0}|{$stats.total_faces ?? 0})</small>
+        </span>
+        <span class="chevron">{$statsCollapsed ? '▸' : '▾'}</span>
       </div>
-      <div class="stat"><span>{$stats.total_images ?? '—'}</span> {$t('stats_total_images')}</div>
-      <div class="stat"><span>{$stats.total_people ?? '—'}</span> {$t('stats_total_people')}</div>
-      <div class="stat"><span>{$stats.total_faces ?? '—'}</span> {$t('stats_total_faces')}</div>
+      
+      {#if !$statsCollapsed}
+        <div class="stat-content">
+          <div class="stat"><span>{$stats.total_images ?? '—'}</span> {$t('stats_total_images')}</div>
+          <div class="stat"><span>{$stats.total_people ?? '—'}</span> {$t('stats_total_people')}</div>
+          <div class="stat"><span>{$stats.total_faces ?? '—'}</span> {$t('stats_total_faces')}</div>
+          <button class="refresh-mini" on:click|stopPropagation={refreshStats} title={$t('refresh')}>{$t('refresh')} 🔄</button>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -168,6 +222,12 @@
     padding: 8px 12px 4px;
     white-space: nowrap;
     overflow: hidden;
+  }
+  .section-label small {
+    text-transform: none;
+    letter-spacing: normal;
+    opacity: 0.7;
+    margin-left: 4px;
   }
   .section-label-collapsable {
     font-size: 10px;
@@ -225,9 +285,22 @@
     padding: 4px 14px;
   }
   .stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-  .stat-header .section-label { padding: 0; }
-  .refresh-mini { background: transparent; padding: 2px; font-size: 10px; opacity: 0.5; }
-  .refresh-mini:hover { opacity: 1; background: #2a2a42; }
+  .stat-header .section-label { padding: 0; flex: 1; }
+  .stat-content {
+    margin-top: 4px;
+    padding-left: 4px;
+  }
+  .refresh-mini { 
+    background: transparent; 
+    border: 1px solid #2a2a3a;
+    color: #505070;
+    margin-top: 6px;
+    padding: 2px 6px; 
+    font-size: 9px; 
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .refresh-mini:hover { color: #8090b8; border-color: #404060; background: #1e1e2e; }
   .stat {
     font-size: 11px;
     color: #505070;

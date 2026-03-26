@@ -30,7 +30,9 @@ export const thumbSize = writable(200);       // px; drives CSS var + API size p
 // 'all' | 'people' | 'tags' | 'dates' | 'process' | 'train' | 'settings'
 export const sidebarView = writable('all');
 export const sidebarCollapsed = writable(false);  // icon-only mode for small screens
+export const navCollapsed     = writable(false);  // collapsable NAVIGATION section
 export const importCollapsed  = writable(false);  // collapsable IMPORT section
+export const statsCollapsed   = writable(false);  // collapsable STATS section
 export const showLegalModal   = writable(false);  // show legal/imprint modal
 
 // ── Clipboard ───────────────────────────────────────────────────────────────
