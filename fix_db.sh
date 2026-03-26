@@ -247,6 +247,20 @@ else
         apply_migration "images.star_rating"  "ALTER TABLE images ADD COLUMN star_rating INTEGER DEFAULT 0;"
         apply_migration "images.color_flag"   "ALTER TABLE images ADD COLUMN color_flag TEXT;"
 
+        # User curation extended columns
+        apply_migration "images.favorite"     "ALTER TABLE images ADD COLUMN favorite BOOLEAN DEFAULT 0;"
+        apply_migration "images.creator"      "ALTER TABLE images ADD COLUMN creator TEXT;"
+        apply_migration "images.copyright"    "ALTER TABLE images ADD COLUMN copyright TEXT;"
+
+        # Archive / Bildarchiv metadata columns (added 2026-03-26)
+        apply_migration "images.bildarchiv_path"      "ALTER TABLE images ADD COLUMN bildarchiv_path TEXT;"
+        apply_migration "images.bildauswahl_path"     "ALTER TABLE images ADD COLUMN bildauswahl_path TEXT;"
+        apply_migration "images.fachbereich"          "ALTER TABLE images ADD COLUMN fachbereich TEXT;"
+        apply_migration "images.veranstaltungsnummer" "ALTER TABLE images ADD COLUMN veranstaltungsnummer TEXT;"
+        apply_migration "images.veranstaltungstitel"  "ALTER TABLE images ADD COLUMN veranstaltungstitel TEXT;"
+        apply_migration "images.urheber"              "ALTER TABLE images ADD COLUMN urheber TEXT;"
+        apply_migration "images.datum_event"          "ALTER TABLE images ADD COLUMN datum_event DATE;"
+
         # Security / access-control columns (added 2026-02-22)
         apply_migration "images.owner_id"     "ALTER TABLE images ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;"
         apply_migration "images.visibility"   "ALTER TABLE images ADD COLUMN visibility TEXT DEFAULT 'shared';"

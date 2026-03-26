@@ -83,6 +83,22 @@ CREATE TABLE IF NOT EXISTS images (
     -- Perceptual hash for visual duplicate detection
     phash TEXT,
 
+    -- User curation extended
+    favorite   BOOLEAN DEFAULT 0,
+    star_rating INTEGER DEFAULT 0,
+    color_flag TEXT,
+    creator    TEXT,
+    copyright  TEXT,
+
+    -- Archive metadata (Bildarchiv workflow)
+    bildarchiv_path      TEXT,
+    bildauswahl_path     TEXT,
+    fachbereich          TEXT,
+    veranstaltungsnummer TEXT,
+    veranstaltungstitel  TEXT,
+    urheber              TEXT,
+    datum_event          DATE,
+
     -- Ownership and visibility (access control)
     owner_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
     visibility TEXT DEFAULT 'shared' CHECK(visibility IN ('shared', 'private')),

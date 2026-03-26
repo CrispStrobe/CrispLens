@@ -797,14 +797,20 @@ def get_events(gap_hours: float = 4.0, limit: int = 200):
     return events[:limit]
 
 # ─── Serve Svelte static build in production ─────────────────────────────────
-# In packaged app:  extraResources puts renderer/dist at {resources}/app/renderer/dist
-#                   → __file__ is {resources}/app/fastapi_app.py
-# In dev (npm start or uvicorn direct): renderer/dist lives inside electron-app-v2/
-_svelte_dist = Path(__file__).parent / "renderer" / "dist"          # packaged
+# Search order (first match wins):
+#   1. renderer/dist          — packaged layout (extraResources / symlink)
+#   2. electron-app-v4/renderer/dist — v4 monorepo layout (preferred for VPS)
+#   3. electron-app-v2/renderer/dist — v2 monorepo layout (legacy fallback)
+_svelte_dist = Path(__file__).parent / "renderer" / "dist"
 if not _svelte_dist.exists():
-    _svelte_dist = Path(__file__).parent / "electron-app-v2" / "renderer" / "dist"  # dev
+    _svelte_dist = Path(__file__).parent / "electron-app-v4" / "renderer" / "dist"
+if not _svelte_dist.exists():
+    _svelte_dist = Path(__file__).parent / "electron-app-v2" / "renderer" / "dist"
 if _svelte_dist.exists():
+    logger.info("Serving Svelte frontend from: %s", _svelte_dist)
     app.mount("/", StaticFiles(directory=str(_svelte_dist), html=True), name="static")
+else:
+    logger.warning("Svelte dist not found — UI will not be served")
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
