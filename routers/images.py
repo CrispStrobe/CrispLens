@@ -117,9 +117,16 @@ def _check_modify(image_id: int, user, db_path: str):
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class MetadataPatch(BaseModel):
-    description: str = ''
-    scene_type:  str = ''
-    tags_csv:    str = ''
+    description:          str            = ''
+    scene_type:           str            = ''
+    tags_csv:             str            = ''
+    creator:              str            = ''
+    copyright:            str            = ''
+    fachbereich:          Optional[str]  = None
+    veranstaltungsnummer: Optional[str]  = None
+    veranstaltungstitel:  Optional[str]  = None
+    urheber:              Optional[str]  = None
+    datum_event:          Optional[str]  = None
 
 class RenameRequest(BaseModel):
     new_filename: str
@@ -419,6 +426,13 @@ def patch_metadata(image_id: int, body: MetadataPatch, user=Depends(get_current_
         description=body.description,
         scene_type=body.scene_type,
         tags_csv=body.tags_csv,
+        creator=body.creator,
+        copyright=body.copyright,
+        fachbereich=body.fachbereich,
+        veranstaltungsnummer=body.veranstaltungsnummer,
+        veranstaltungstitel=body.veranstaltungstitel,
+        urheber=body.urheber,
+        datum_event=body.datum_event,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

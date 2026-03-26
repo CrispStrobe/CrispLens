@@ -249,6 +249,9 @@ def get_image_record(db_path: str, image_id: int) -> Optional[Dict[str, Any]]:
             "ai_provider", "processed", "processing_error", "face_count",
             "metadata_written", "created_at", "updated_at", "processed_at",
             "local_path", "owner_id", "visibility",
+            "description", "creator", "copyright",
+            "fachbereich", "veranstaltungsnummer", "veranstaltungstitel",
+            "urheber", "datum_event", "bildarchiv_path", "bildauswahl_path",
         ]
         col_str = ", ".join(columns)
         row = conn.execute(f"SELECT {col_str} FROM images WHERE id = ?", (image_id,)).fetchone()
@@ -379,9 +382,16 @@ def update_image_metadata(
     description: str,
     scene_type: str,
     tags_csv: str,
+    creator: str = '',
+    copyright: str = '',
+    fachbereich: Optional[str] = None,
+    veranstaltungsnummer: Optional[str] = None,
+    veranstaltungstitel: Optional[str] = None,
+    urheber: Optional[str] = None,
+    datum_event: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
-    Persist description, scene type, and tags for an image.
+    Persist description, scene type, tags, creator/copyright, and archive metadata for an image.
     Tags are written to both images.ai_tags (JSON) and the image_tags table.
 
     Phase-B API: PATCH /api/images/{image_id}/metadata
@@ -391,15 +401,29 @@ def update_image_metadata(
         conn = _connect(db_path, timeout=10.0)
         conn.execute("""
             UPDATE images
-            SET ai_description = ?,
-                ai_scene_type  = ?,
-                ai_tags        = ?,
-                updated_at     = CURRENT_TIMESTAMP
+            SET ai_description      = ?,
+                ai_scene_type       = ?,
+                ai_tags             = ?,
+                creator             = ?,
+                copyright           = ?,
+                fachbereich         = ?,
+                veranstaltungsnummer = ?,
+                veranstaltungstitel = ?,
+                urheber             = ?,
+                datum_event         = ?,
+                updated_at          = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (
             description.strip() or None,
             scene_type.strip() or None,
             json.dumps(tags),
+            creator.strip() or None,
+            copyright.strip() or None,
+            fachbereich or None,
+            veranstaltungsnummer or None,
+            veranstaltungstitel or None,
+            urheber or None,
+            datum_event or None,
             image_id,
         ))
         _sync_tags_to_table(conn, image_id, tags, source='manual')
