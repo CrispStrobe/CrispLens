@@ -85,7 +85,7 @@ def get_new_image_paths(db_path: str, folder_path: str, recursive: bool) -> List
         placeholders = ','.join('?' * len(all_paths))
         already_done = set(
             row[0] for row in conn.execute(
-                f"SELECT filepath FROM images WHERE filepath IN ({placeholders}) AND processed=1",
+                f"SELECT filepath FROM images WHERE filepath IN ({placeholders}) AND processed=1",  # nosec B608 — placeholders is only '?'*n, values are parameterised
                 all_paths
             ).fetchall()
         )
