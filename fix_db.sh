@@ -135,6 +135,17 @@ fi
 step "Updating repository  (git pull)  ${REPO_DIR}"
 
 if git -C "$REPO_DIR" rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+    # Remove untracked files in dirs that are now tracked by git (e.g. renderer/dist
+    # was previously gitignored on the server but is now committed).  Without this,
+    # git pull aborts with "untracked working tree files would be overwritten".
+    for _dist_dir in electron-app-v4/renderer/dist electron-app-v2/renderer/dist; do
+        _abs="${REPO_DIR}/${_dist_dir}"
+        if [[ -d "$_abs" ]] && ! git -C "$REPO_DIR" ls-files --error-unmatch "${_dist_dir}/index.html" &>/dev/null 2>&1; then
+            info "Clearing previously-untracked dist dir: ${_dist_dir}"
+            rm -rf "$_abs"
+        fi
+    done
+
     if git -C "$REPO_DIR" pull 2>&1; then
         info "Repository updated"
     else
