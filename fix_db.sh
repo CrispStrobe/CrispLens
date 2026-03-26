@@ -470,13 +470,51 @@ else
 fi
 
 # =============================================================================
-# STEP 3b — Sync pre-built Svelte frontend (renderer/dist/)
+# STEP 3b — Build or sync Svelte frontend (renderer/dist/)
 # =============================================================================
-step "Syncing Svelte frontend (renderer/dist/)"
+step "Building/syncing Svelte frontend (renderer/dist/)"
 
-# Prefer v4 renderer if it exists (v4 Node.js backend), fall back to v2
-if [[ -d "${REPO_DIR}/electron-app-v4/renderer/dist" ]]; then
-    DIST_SRC="${REPO_DIR}/electron-app-v4/renderer/dist"
+# Find node binary (nvm, volta, system)
+_find_node() {
+    command -v node 2>/dev/null && return
+    for _n in \
+        "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/node" \
+        "$(ls /root/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" \
+        /usr/local/bin/node /usr/bin/node; do
+        [[ -x "$_n" ]] && { echo "$_n"; return; }
+    done
+    # Source nvm as last resort
+    local _nvm="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+    if [[ -f "$_nvm" ]]; then
+        # shellcheck disable=SC1090
+        source "$_nvm" --no-use 2>/dev/null
+        nvm use --lts 2>/dev/null || nvm use node 2>/dev/null || true
+        command -v node 2>/dev/null
+    fi
+}
+NODE_BIN="$(_find_node)"
+
+V4_RENDERER="${REPO_DIR}/electron-app-v4/renderer"
+V4_DIST="${V4_RENDERER}/dist"
+
+if [[ -n "$NODE_BIN" && -f "${V4_RENDERER}/package.json" ]]; then
+    info "node found: $NODE_BIN  ($("$NODE_BIN" --version))"
+    NPM_BIN="$(dirname "$NODE_BIN")/npm"
+    # Install deps only if node_modules is absent or package.json changed
+    if [[ ! -d "${V4_RENDERER}/node_modules" ]]; then
+        info "Installing renderer dependencies..."
+        (cd "$V4_RENDERER" && "$NPM_BIN" ci --prefer-offline --no-audit 2>&1) \
+            && info "npm ci done" || warn "npm ci failed"
+    fi
+    info "Building v4 renderer..."
+    (cd "$V4_RENDERER" && "$NPM_BIN" run build 2>&1) \
+        && info "v4 renderer built → ${V4_DIST}" \
+        || warn "npm run build failed — falling back to git-committed dist"
+fi
+
+# Fall back to git-committed dist if build didn't produce output
+if [[ -d "$V4_DIST" ]]; then
+    DIST_SRC="$V4_DIST"
     DIST_DST="${INSTALL_DIR}/electron-app-v4/renderer/dist"
 elif [[ -d "${REPO_DIR}/electron-app-v2/renderer/dist" ]]; then
     DIST_SRC="${REPO_DIR}/electron-app-v2/renderer/dist"
@@ -491,7 +529,7 @@ if [[ -n "$DIST_SRC" ]]; then
     if id "${SVC_USER}" &>/dev/null; then
         chown -R "${SVC_USER}:${SVC_USER}" "$(dirname "$DIST_DST")"
     fi
-    info "Frontend dist synced from ${DIST_SRC}"
+    info "Frontend dist ready at ${DIST_DST}"
 else
     warn "renderer/dist/ not found in repo — build it first:"
     warn "  v4: cd electron-app-v4/renderer && npm run build"

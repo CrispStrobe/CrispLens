@@ -33,4 +33,37 @@ echo "==> Starting server with DEBUG=1 ..."
 echo ""
 
 cd "$SCRIPT_DIR"
-exec env DEBUG=1 PORT="$PORT" DB_PATH="$DB_PATH" node server.js
+
+# ── Locate node (works for nvm, volta, system installs) ──────────────────────
+NODE_BIN=""
+for _try in \
+    "$(command -v node 2>/dev/null)" \
+    "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/node" \
+    "/usr/local/bin/node" \
+    "/usr/bin/node" \
+    "$(ls /root/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" \
+    "$(ls /home/*/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)"; do
+    if [[ -x "$_try" ]]; then
+        NODE_BIN="$_try"
+        break
+    fi
+done
+
+if [[ -z "$NODE_BIN" ]]; then
+    # Last resort: source nvm and retry
+    NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+    if [[ -f "$NVM_SH" ]]; then
+        # shellcheck disable=SC1090
+        source "$NVM_SH" --no-use 2>/dev/null
+        nvm use --lts 2>/dev/null || nvm use node 2>/dev/null || true
+        NODE_BIN="$(command -v node 2>/dev/null)"
+    fi
+fi
+
+if [[ -z "$NODE_BIN" ]]; then
+    echo "ERROR: node not found. Install Node.js or ensure nvm is set up for this user."
+    exit 1
+fi
+
+echo "==> Using node: $NODE_BIN  ($(\"$NODE_BIN\" --version))"
+exec env DEBUG=1 PORT="$PORT" DB_PATH="$DB_PATH" "$NODE_BIN" server.js
