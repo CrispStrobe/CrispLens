@@ -132,7 +132,6 @@ def list_drives(user=Depends(get_current_user)) -> List[Dict[str, Any]]:
             conn.close()
     result = []
     for row in rows:
-        d = _row_to_dict(row)
         if _user_can_see(dict(row), user):
             result.append(get_drive_status(dict(row)))
     # Strip config from output (get_drive_status already clears it)

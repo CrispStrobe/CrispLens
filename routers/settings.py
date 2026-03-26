@@ -443,9 +443,6 @@ _DE: dict = {
     'pv_own_dup_title':          'Bereits von Ihnen hochgeladen',
     'pv_shared_dup_title':       'Gleicher Inhalt bereits von einem anderen Benutzer hochgeladen',
     'pv_remove':                 'Entfernen',
-    'pv_local_base_label':       'Lokaler Basisordner (optional):',
-    'pv_local_base_placeholder': '/Users/alice/Bilder',
-    'pv_local_base_hint':        'Wird Dateinamen vorangestellt, wenn der Browser den vollständigen Pfad nicht anzeigen kann',
     'pv_local_path_notice':      'Lokaler Basisordner wird für Stapelaufträge benötigt',
 
     # Tag + album pickers in ProcessView
