@@ -283,7 +283,7 @@
   <div class="divider"></div>
 
   <!-- Collapsible FIELDS section -->
-  <details class="fields-details" open>
+  <details class="fields-details">
     <summary class="fields-summary">{$t('fields') || 'FIELDS'}</summary>
 
     <!-- Tags -->

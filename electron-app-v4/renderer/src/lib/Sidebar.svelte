@@ -32,8 +32,8 @@
 
   $: browseItem = navItems[0];
   $: otherNavItems = navItems.slice(1);
-  $: primaryWorkItems = workItems.slice(0, 2);
-  $: secondaryWorkItems = workItems.slice(2);
+  $: primaryWorkItems = workItems.slice(0, 1);
+  $: secondaryWorkItems = workItems.slice(1);
 
   async function refreshStats() {
     try { stats.set(await fetchStats()); } catch {}
@@ -118,7 +118,7 @@
 
   {#if !$sidebarCollapsed}
     <div class="section-label-collapsable" on:click={() => importCollapsed.update(v => !v)}>
-      <span>{$t('fields')}</span>
+      <span>{$t('import_options')}</span>
       <span class="chevron">{$importCollapsed ? '▸' : '▾'}</span>
     </div>
   {/if}
