@@ -20,6 +20,7 @@
 #   CRISP_INSTALL_DIR   install directory           (default: /opt/crisp-lens)
 #   CRISP_SVC_NAME      systemd service name        (default: face-rec)
 #   CRISP_SVC_USER      service user                (default: face-rec)
+#   CRISP_SKIP_FRONTEND=1 skip Svelte build         (default: 0)
 #   CRISP_YES=1         skip confirmation prompt
 #
 # =============================================================================
@@ -34,6 +35,16 @@ step()  { echo -e "\n${BOLD}${BLUE}▶  $*${NC}"; }
 die()   { echo -e "  ${RED}✘${NC}  $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Run as root:  sudo bash fix_db.sh"
+
+# ── Argument Parsing ──────────────────────────────────────────────────────────
+SKIP_FRONTEND="${CRISP_SKIP_FRONTEND:-0}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-frontend) SKIP_FRONTEND=1; shift ;;
+        --yes|-y)        export CRISP_YES=1; shift ;;
+        *)               shift ;;
+    esac
+done
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +65,7 @@ echo -e "  Repo dir    : ${REPO_DIR}"
 echo -e "  Install dir : ${INSTALL_DIR}"
 echo -e "  Service     : ${SVC_NAME}  (user: ${SVC_USER})"
 echo -e "  Database    : ${DB}"
+[[ "$SKIP_FRONTEND" == "1" ]] && echo -e "  Frontend    : SKIP BUILD"
 echo
 
 [[ -d "$REPO_DIR"    ]] || die "Repo dir not found: ${REPO_DIR}"
@@ -497,25 +509,39 @@ NODE_BIN="$(_find_node)"
 V4_RENDERER="${REPO_DIR}/electron-app-v4/renderer"
 V4_DIST="${V4_RENDERER}/dist"
 
-if [[ -n "$NODE_BIN" && -f "${V4_RENDERER}/package.json" ]]; then
+if [[ "$SKIP_FRONTEND" == "1" ]]; then
+    info "Skipping frontend build (requested)"
+elif [[ -n "$NODE_BIN" && -f "${V4_RENDERER}/package.json" ]]; then
     info "node found: $NODE_BIN  ($("$NODE_BIN" --version))"
     NPM_BIN="$(dirname "$NODE_BIN")/npm"
-    # Install deps only if node_modules is absent or package.json changed
-    if [[ ! -d "${V4_RENDERER}/node_modules" ]]; then
-        info "Installing renderer dependencies..."
-        (cd "$V4_RENDERER" && "$NPM_BIN" ci --prefer-offline --no-audit 2>&1) \
-            && info "npm ci done" || warn "npm ci failed"
+    
+    # Check if vite is available (either in node_modules or globally)
+    VITE_BIN="${V4_RENDERER}/node_modules/.bin/vite"
+    if [[ ! -x "$VITE_BIN" ]] && ! command -v vite &>/dev/null; then
+        info "Vite not found — attempting to install/repair dependencies..."
+        # Use 'install' instead of 'ci' here to allow repairing an existing node_modules
+        (cd "$V4_RENDERER" && "$NPM_BIN" install --prefer-offline --no-audit --loglevel=error 2>&1) \
+            && info "npm install done" || warn "npm install failed"
     fi
-    info "Building v4 renderer..."
-    (cd "$V4_RENDERER" && "$NPM_BIN" run build 2>&1) \
-        && info "v4 renderer built → ${V4_DIST}" \
-        || warn "npm run build failed — falling back to git-committed dist"
+
+    # Re-check vite after potential npm ci
+    if [[ -x "$VITE_BIN" ]] || command -v vite &>/dev/null; then
+        info "Building v4 renderer..."
+        (cd "$V4_RENDERER" && "$NPM_BIN" run build 2>&1) \
+            && info "v4 renderer built → ${V4_DIST}" \
+            || warn "npm run build failed — falling back to git-committed dist"
+    else
+        warn "vite not found — skipping build, falling back to git-committed dist"
+    fi
 fi
 
 # Fall back to git-committed dist if build didn't produce output
 if [[ -d "$V4_DIST" ]]; then
     DIST_SRC="$V4_DIST"
     DIST_DST="${INSTALL_DIR}/electron-app-v4/renderer/dist"
+    # Clean up legacy paths to prevent serving old frontend
+    rm -rf "${INSTALL_DIR}/renderer/dist"
+    rm -rf "${INSTALL_DIR}/electron-app-v2/renderer/dist"
 elif [[ -d "${REPO_DIR}/electron-app-v2/renderer/dist" ]]; then
     DIST_SRC="${REPO_DIR}/electron-app-v2/renderer/dist"
     DIST_DST="${INSTALL_DIR}/renderer/dist"
@@ -583,8 +609,9 @@ fi
 # =============================================================================
 step "Restarting service: ${SVC_NAME}"
 
-if systemctl list-unit-files "${SVC_NAME}.service" &>/dev/null \
-        && systemctl list-unit-files "${SVC_NAME}.service" | grep -q "${SVC_NAME}"; then
+# Simplified check: just try to restart if the service exists/is-active/is-enabled
+if systemctl is-active --quiet "${SVC_NAME}" || systemctl is-enabled --quiet "${SVC_NAME}" 2>/dev/null; then
+    info "Service '${SVC_NAME}' found — restarting..."
     systemctl restart "${SVC_NAME}"
     sleep 4
     if systemctl is-active --quiet "${SVC_NAME}"; then

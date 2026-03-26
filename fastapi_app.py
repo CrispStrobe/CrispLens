@@ -798,19 +798,29 @@ def get_events(gap_hours: float = 4.0, limit: int = 200):
 
 # ─── Serve Svelte static build in production ─────────────────────────────────
 # Search order (first match wins):
-#   1. renderer/dist          — packaged layout (extraResources / symlink)
-#   2. electron-app-v4/renderer/dist — v4 monorepo layout (preferred for VPS)
+#   1. electron-app-v4/renderer/dist — v4 monorepo layout (preferred for VPS)
+#   2. renderer/dist          — packaged layout (extraResources / symlink)
 #   3. electron-app-v2/renderer/dist — v2 monorepo layout (legacy fallback)
-_svelte_dist = Path(__file__).parent / "renderer" / "dist"
-if not _svelte_dist.exists():
-    _svelte_dist = Path(__file__).parent / "electron-app-v4" / "renderer" / "dist"
-if not _svelte_dist.exists():
-    _svelte_dist = Path(__file__).parent / "electron-app-v2" / "renderer" / "dist"
-if _svelte_dist.exists():
-    logger.info("Serving Svelte frontend from: %s", _svelte_dist)
+_v4_path = Path(__file__).parent / "electron-app-v4" / "renderer" / "dist"
+_legacy_path = Path(__file__).parent / "renderer" / "dist"
+_v2_path = Path(__file__).parent / "electron-app-v2" / "renderer" / "dist"
+
+if _v4_path.exists():
+    _svelte_dist = _v4_path
+    logger.info("Serving MODERN Svelte frontend (v4) from: %s", _svelte_dist)
+elif _legacy_path.exists():
+    _svelte_dist = _legacy_path
+    logger.info("Serving LEGACY Svelte frontend from: %s", _svelte_dist)
+elif _v2_path.exists():
+    _svelte_dist = _v2_path
+    logger.info("Serving V2 Svelte frontend from: %s", _svelte_dist)
+else:
+    _svelte_dist = None
+
+if _svelte_dist:
     app.mount("/", StaticFiles(directory=str(_svelte_dist), html=True), name="static")
 else:
-    logger.warning("Svelte dist not found — UI will not be served")
+    logger.warning("!!! Svelte dist NOT FOUND in any expected location !!!")
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
