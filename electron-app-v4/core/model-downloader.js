@@ -175,6 +175,32 @@ async function ensureSFace(modelDir) {
   return dest;
 }
 
+// ── AuraFace-v1 face recognition model (fal.ai, Apache 2.0) ──────────────────
+// ResNet100 backbone, 512-D ArcFace-style embeddings, commercially permissive.
+// Same preprocessing as buffalo_l ArcFace — drop-in schema-compatible (512-D),
+// but embeddings from different models are NOT interchangeable (different vector
+// spaces). Reprocessing all images is required when switching from buffalo_l.
+// Source: https://huggingface.co/fal/AuraFace-v1
+
+const AURAFACE_URL  = 'https://huggingface.co/fal/AuraFace-v1/resolve/main/glintr100.onnx';
+const AURAFACE_FILE = 'glintr100.onnx';
+
+/**
+ * Download the AuraFace-v1 ONNX model (glintr100.onnx) into modelDir.
+ * No-op if already present. Returns the full path to the model file.
+ * License: Apache 2.0 — commercial use allowed.
+ */
+async function ensureAuraFace(modelDir) {
+  const dest = path.join(modelDir, AURAFACE_FILE);
+  if (fs.existsSync(dest)) return dest;
+
+  console.log('[models] Downloading AuraFace-v1 glintr100.onnx (~250 MB, Apache 2.0)...');
+  fs.mkdirSync(modelDir, { recursive: true });
+  await download(AURAFACE_URL, dest);
+  console.log(`[models] AuraFace-v1 ready at: ${dest}`);
+  return dest;
+}
+
 // ── MediaPipe FaceLandmarker task model ───────────────────────────────────────
 
 const LANDMARKER_URL  = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
@@ -195,7 +221,7 @@ async function ensureFaceLandmarker(modelDir) {
   return dest;
 }
 
-module.exports = { ensureModels, ensureYuNet, ensureSFace, ensureFaceLandmarker, BUFFALO_DIR, NC_LICENSE_TEXT };
+module.exports = { ensureModels, ensureYuNet, ensureSFace, ensureAuraFace, ensureFaceLandmarker, BUFFALO_DIR, NC_LICENSE_TEXT };
 
 if (require.main === module) {
   // CLI usage: node model-downloader.js --accept-nc

@@ -541,7 +541,7 @@
   <ModelLicenseModal
     bind:show={showModelLicense}
     on:accepted={() => { modelPollTimer = setInterval(pollModelReady, 3000); }}
-    on:declined={() => { saveSettings({ embedding_model: 'sface' }).catch(() => {}); }}
+    on:declined={() => { saveSettings({ embedding_model: 'auraface' }).catch(() => {}); }}
   />
 </div>
 

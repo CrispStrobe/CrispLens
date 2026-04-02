@@ -106,8 +106,10 @@
             recognition/embedding. Select "YuNet" in Settings → Detection Model.
             <br>• <strong>dlib</strong> (BSL-1.0 / MIT) — full detection + 128-D recognition,
             commercially permissive. Available in the Python v2 backend.
+            <br>• <strong>AuraFace-v1</strong> (fal.ai, Apache 2.0) — 512-D recognition,
+            commercially permissive, ~2–4% below ArcFace accuracy. Select in Settings → Embedding Model.
             <br>• <strong>SFace</strong> (OpenCV Zoo, Apache 2.0) — 128-D recognition,
-            commercially permissive. Select "SFace" in Settings → Embedding Model.
+            commercially permissive. Select in Settings → Embedding Model.
           </p>
         </section>
 
@@ -140,7 +142,7 @@
 
       <div class="modal-footer">
         <button class="btn-decline" on:click={doDecline} disabled={accepting}>
-          Use Free Models Only (YuNet detection + SFace recognition, Apache 2.0)
+          Use Free Models Only (YuNet + AuraFace-v1, Apache 2.0)
         </button>
         <button
           class="btn-accept"

@@ -229,7 +229,7 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
          recognition_confidence)
       VALUES (?,?,?,?,?,?)
     `).run(faceId, personId, embBuf, face.embedding.length,
-         _embeddingModel === 'sface' ? 'sface' : 'w600k_r50', recConf);
+         _embeddingModel === 'sface' ? 'sface' : _embeddingModel === 'auraface' ? 'glintr100' : 'w600k_r50', recConf);
 
     if (process.env.DEBUG) {
       console.log(`  face ${faceId}: score=${face.score.toFixed(3)}  bbox=[${[x1,y1,x2,y2].map(v=>Math.round(v)).join(',')}]  person=${personId||'?'}  conf=${recConf?.toFixed(2)||'n/a'}`);

@@ -122,9 +122,14 @@
               <span>Detection only (no embedding)</span>
             </div>
             <div class="model-row free">
+              <span>AuraFace-v1 (fal.ai)<br /><small>glintr100.onnx</small></span>
+              <span class="badge-free">Apache 2.0</span>
+              <span>Recognition (512D) — Settings → Embedding Model</span>
+            </div>
+            <div class="model-row free">
               <span>SFace (OpenCV Zoo)<br /><small>face_recognition_sface_2021dec.onnx</small></span>
               <span class="badge-free">Apache 2.0</span>
-              <span>Detection + recognition (128D) — Settings → Embedding Model</span>
+              <span>Recognition (128D) — Settings → Embedding Model</span>
             </div>
             <div class="model-row free">
               <span>MediaPipe FaceLandmarker<br /><small>face_landmarker.task</small></span>

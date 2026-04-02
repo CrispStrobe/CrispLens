@@ -259,7 +259,7 @@ app.use('/api',               miscRouter);
 // models downloaded after server start are immediately available.
 {
   const { findModelDir } = require('./core/face-engine');
-  const _modelsAllowed = ['det_10g.onnx', 'det_10g_int8.onnx', 'w600k_r50.onnx', 'w600k_r50_int8.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task', 'face_recognition_sface_2021dec.onnx'];
+  const _modelsAllowed = ['det_10g.onnx', 'det_10g_int8.onnx', 'w600k_r50.onnx', 'w600k_r50_int8.onnx', 'face_detection_yunet_2023mar.onnx', 'face_landmarker.task', 'face_recognition_sface_2021dec.onnx', 'glintr100.onnx'];
   app.use('/models', (req, res) => {
     const filename = path.basename(req.path);
     if (!_modelsAllowed.includes(filename)) return res.status(404).json({ error: 'Unknown model' });

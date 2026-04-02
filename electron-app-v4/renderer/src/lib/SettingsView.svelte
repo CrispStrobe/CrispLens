@@ -60,7 +60,7 @@
 
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
-  let embeddingModel = 'arcface';  // 'arcface' (512-D, NC license) | 'sface' (128-D, Apache 2.0)
+  let embeddingModel = 'arcface';  // 'arcface' (512-D, NC) | 'auraface' (512-D, Apache 2.0) | 'sface' (128-D, Apache 2.0)
 
   // ── Archive config (admin) ────────────────────────────────────────────────
   let archiveCfg       = null;
@@ -2394,6 +2394,7 @@
         <div>
           <select id="setting-emb-model" bind:value={embeddingModel}>
             <option value="arcface">ArcFace (buffalo_l) — 512-D, non-commercial only</option>
+            <option value="auraface">AuraFace-v1 (fal.ai) — 512-D, Apache 2.0, commercial OK</option>
             <option value="sface">SFace (OpenCV Zoo) — 128-D, Apache 2.0, commercial OK</option>
           </select>
           {#if embeddingModel === 'arcface'}
@@ -2401,10 +2402,15 @@
               ArcFace requires <strong>non-commercial use</strong> (InsightFace buffalo_l license).
               Commercial use requires a separate agreement with InsightFace.
             </p>
+          {:else if embeddingModel === 'auraface'}
+            <p class="hint" style="margin-top:4px; color:#60a060;">
+              AuraFace-v1 is Apache 2.0 — commercially permissible. 512-D ResNet100, ~2–4% below ArcFace accuracy.
+              Downloads ~250 MB on first use. Switching requires re-processing all images to rebuild embeddings.
+            </p>
           {:else}
             <p class="hint" style="margin-top:4px; color:#60a060;">
-              SFace is Apache 2.0 — commercially permissible. 128-D embeddings (vs 512-D ArcFace).
-              Changing this requires re-processing all images to rebuild embeddings.
+              SFace is Apache 2.0 — commercially permissible. 128-D embeddings (lower accuracy than 512-D models).
+              Switching requires re-processing all images to rebuild embeddings.
             </p>
           {/if}
         </div>

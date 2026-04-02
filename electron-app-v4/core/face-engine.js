@@ -24,7 +24,7 @@ const http   = require('http');
 const os     = require('os');
 const crypto = require('crypto');
 const { warpToArcFace }  = require('./face-align');
-const { ensureYuNet, ensureSFace } = require('./model-downloader');
+const { ensureYuNet, ensureSFace, ensureAuraFace } = require('./model-downloader');
 
 sharp.cache(false);
 
@@ -259,6 +259,7 @@ class FaceEngine {
     this.yunetModel       = null;    // YuNet (lazy-loaded on first use)
     this.yunetOutputNames = null;
     this.sfaceModel       = null;    // SFace (lazy-loaded on first use, Apache 2.0)
+    this.auraFaceModel    = null;    // AuraFace-v1 glintr100 (lazy-loaded, Apache 2.0)
     this.initialized      = false;
     this._outputNames     = null;    // cached SCRFD output names
     this.currentProviders = ['cpu'];
@@ -372,6 +373,60 @@ class FaceEngine {
     });
 
     const raw = Float32Array.from(outputs[this.sfaceModel.outputNames[0]].data);
+    return l2Normalize(raw);
+  }
+
+  /**
+   * Lazy-load AuraFace-v1 ONNX model (downloads ~250 MB from HuggingFace if not present).
+   * AuraFace-v1 is Apache 2.0 — commercially permissive, no NC restrictions.
+   */
+  async initAuraFace(providers = null) {
+    if (this.auraFaceModel) return;
+    const { BUFFALO_DIR } = require('./model-downloader');
+    const modelDir  = this.modelDir || BUFFALO_DIR;
+    const modelPath = path.join(modelDir, 'glintr100.onnx');
+    if (!fs.existsSync(modelPath)) await ensureAuraFace(modelDir);
+    this.auraFaceModel = await ort.InferenceSession.create(modelPath, {
+      executionProviders: providers || this.currentProviders || ['cpu'],
+      intraOpNumThreads:  2,
+      interOpNumThreads:  1,
+    });
+    console.log('[FaceEngine] AuraFace-v1 ready (Apache 2.0, 512-D). Input:', this.auraFaceModel.inputNames.join(', '));
+  }
+
+  /**
+   * Compute the AuraFace-v1 512-D embedding for a single detected face.
+   *
+   * Uses identical preprocessing to ArcFace (buffalo_l w600k_r50):
+   *   - 5-point similarity-transform alignment to 112×112 (warpToArcFace)
+   *   - BGR channel order, (pixel - 127.5) / 128.0, NCHW float32
+   *
+   * Embeddings are NOT interchangeable with buffalo_l ArcFace embeddings even
+   * though both are 512-D — they live in different vector spaces.
+   *
+   * @param {string}     imagePath
+   * @param {number[][]} landmarks  5 [x,y] points in original image pixel coords
+   * @param {number}     imageWidth
+   * @param {number}     imageHeight
+   * @returns {Float32Array}  length 512, L2-normalized
+   */
+  async embedFaceAuraFace(imagePath, landmarks, imageWidth, imageHeight) {
+    await this.initAuraFace();
+
+    const srcBuf = await sharp(imagePath)
+      .rotate()
+      .flatten({ background: '#ffffff' })
+      .raw()
+      .toBuffer();
+
+    const aligned = warpToArcFace(srcBuf, imageWidth, imageHeight, landmarks);
+    const f32     = buildArcFaceInput(aligned);  // same preprocessing as buffalo_l
+
+    const outputs = await this.auraFaceModel.run({
+      [this.auraFaceModel.inputNames[0]]: new ort.Tensor('float32', f32, [1, 3, 112, 112]),
+    });
+
+    const raw = Float32Array.from(outputs[this.auraFaceModel.outputNames[0]].data);
     return l2Normalize(raw);
   }
 
@@ -595,7 +650,7 @@ class FaceEngine {
    * @param {string} imagePath
    * @param {object} opts
    * @param {string} [opts.det_model='auto']       'auto'|'scrfd' → SCRFD, 'yunet' → YuNet
-   * @param {string} [opts.embedding_model='arcface'] 'arcface' (512-D, NC) | 'sface' (128-D, Apache 2.0)
+   * @param {string} [opts.embedding_model='arcface'] 'arcface' (512-D, NC) | 'sface' (128-D, Apache 2.0) | 'auraface' (512-D, Apache 2.0)
    * @param {number} [opts.det_thresh=0.5]         Detection confidence threshold
    * @param {number} [opts.min_face_size=0]        Minimum face short-side in px
    * @param {number} [opts.max_size=0]             Pre-downscale long-edge before detection
@@ -615,9 +670,10 @@ class FaceEngine {
 
     const results = [];
     for (const face of faces) {
-      const embedding = embModel === 'sface'
-        ? await this.embedFaceSFace(imagePath, face.landmarks, imageWidth, imageHeight)
-        : await this.embedFace(imagePath, face.landmarks, imageWidth, imageHeight);
+      let embedding;
+      if (embModel === 'sface')        embedding = await this.embedFaceSFace(imagePath, face.landmarks, imageWidth, imageHeight);
+      else if (embModel === 'auraface') embedding = await this.embedFaceAuraFace(imagePath, face.landmarks, imageWidth, imageHeight);
+      else                              embedding = await this.embedFace(imagePath, face.landmarks, imageWidth, imageHeight);
       results.push({ ...face, embedding });
     }
     return results;
@@ -645,9 +701,10 @@ class FaceEngine {
     const embModel = (opts.embedding_model || 'arcface').toLowerCase();
     const facesWithEmb = [];
     for (const face of detFaces) {
-      const embedding = embModel === 'sface'
-        ? await this.embedFaceSFace(imagePath, face.landmarks, W, H)
-        : await this.embedFace(imagePath, face.landmarks, W, H);
+      let embedding;
+      if (embModel === 'sface')        embedding = await this.embedFaceSFace(imagePath, face.landmarks, W, H);
+      else if (embModel === 'auraface') embedding = await this.embedFaceAuraFace(imagePath, face.landmarks, W, H);
+      else                              embedding = await this.embedFace(imagePath, face.landmarks, W, H);
       facesWithEmb.push({ ...face, embedding });
     }
 
@@ -684,7 +741,7 @@ class FaceEngine {
       file_size:     rawBuf.length,
       file_hash,
       thumbnail_b64: thumbBuf.toString('base64'),
-      local_model:   embModel === 'sface' ? 'sface' : 'buffalo_l',
+      local_model:   embModel === 'sface' ? 'sface' : embModel === 'auraface' ? 'auraface' : 'buffalo_l',
       faces,
       visibility:    opts.visibility || 'shared',
     };

@@ -39,7 +39,7 @@ const DEFAULTS = {
   ort_use_directml:    false,
   // License acceptance — buffalo_l (InsightFace) is non-commercial only
   nc_model_accepted:   false,
-  // Embedding model: 'arcface' (512-D, NC license) | 'sface' (128-D, Apache 2.0)
+  // Embedding model: 'arcface' (512-D, NC) | 'auraface' (512-D, Apache 2.0) | 'sface' (128-D, Apache 2.0)
   embedding_model:     'arcface',
 };
 
