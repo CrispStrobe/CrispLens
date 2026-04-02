@@ -37,6 +37,10 @@ const DEFAULTS = {
   ort_use_coreml:      isAppleSilicon,
   ort_use_cuda:        false,
   ort_use_directml:    false,
+  // License acceptance — buffalo_l (InsightFace) is non-commercial only
+  nc_model_accepted:   false,
+  // Embedding model: 'arcface' (512-D, NC license) | 'sface' (128-D, Apache 2.0)
+  embedding_model:     'arcface',
 };
 
 // ── Load flat settings from DB (merged with DEFAULTS) ─────────────────────────
@@ -105,6 +109,12 @@ function flatToNested(f) {
       ort_use_coreml:   f.ort_use_coreml,
       ort_use_cuda:     f.ort_use_cuda,
       ort_use_directml: f.ort_use_directml,
+    },
+    license: {
+      nc_model_accepted: f.nc_model_accepted,
+    },
+    embedding: {
+      model: f.embedding_model,
     },
   };
 }
@@ -357,6 +367,27 @@ router.post('/download-mediapipe', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── POST /settings/accept-nc-license ─────────────────────────────────────────
+// Saves user's acceptance of the InsightFace non-commercial license and
+// triggers the buffalo_l model download in the background.
+// Admin-only: license acceptance is a system-wide decision.
+
+router.post('/accept-nc-license', requireAdmin, async (req, res) => {
+  let db;
+  try { db = getDb(); } catch (e) { return res.status(500).json({ error: e.message }); }
+  const upsert = db.prepare('INSERT OR REPLACE INTO settings(key, value, value_type) VALUES(?,?,?)');
+  upsert.run('nc_model_accepted', 'true', 'bool');
+  console.log('[settings] NC model license accepted by admin — triggering buffalo_l download');
+
+  // Trigger download in background (non-blocking)
+  const { ensureModels } = require('../../core/model-downloader');
+  ensureModels({ ncAccepted: true })
+    .then(dir => console.log(`[settings] buffalo_l ready at: ${dir}`))
+    .catch(err => console.error('[settings] buffalo_l download failed:', err.message));
+
+  res.json({ ok: true, message: 'License accepted. Model download started in background.' });
 });
 
 // ── POST /settings/reload-engine ──────────────────────────────────────────────

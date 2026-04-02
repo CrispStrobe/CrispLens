@@ -669,6 +669,7 @@ export function exportDB()     { const g = _guard('exportDB', () => localAdapter
 export function importDB(json) { const g = _guard('importDB', () => localAdapter.importDB(json)); if (g) return g; return postD('/settings/db-import', { tables: json.tables ?? json }); }
 export function clearDB()      { const g = _guard('clearDB', () => localAdapter.clearDB()); if (g) return g; return postD('/settings/db-clear', {}); }
 export function hardResetApp() { const g = _guard('hardResetApp', () => localAdapter.hardResetApp()); if (g) return g; return postD('/settings/hard-reset', {}); }
+export function acceptNcLicense() { return postD('/settings/accept-nc-license', {}); }
 export function fetchEngineStatus() {
   const g = _guard('fetchEngineStatus', () => ({ ok: true, ready: true, model: 'buffalo_l', backend: 'onnxruntime-web' }));
   if (g) return g;

@@ -248,6 +248,8 @@ def startup():
     # lazy_init=True (set in config): engine object created instantly (DB + FAISS only).
     # The heavy InsightFace model is loaded in the background thread below.
     state.engine = FaceRecognitionEngine(db_path, face_config)
+    # Propagate NC license acceptance so the engine can log the appropriate warning.
+    state.engine._nc_model_accepted = config_dict.get('license', {}).get('nc_model_accepted', False)
     logger.info("Face recognition engine initialized (model load pending)")
 
     # ── DB migrations (idempotent — safe to run on every startup) ────────────
@@ -596,9 +598,11 @@ def health():
         stats = _thumb_mem.stats()
     except Exception:
         stats = {}
+    nc_accepted = (state.config or {}).get('license', {}).get('nc_model_accepted', False) if state else False
     return {
         "ok": True,
         "model_ready": state.engine._backend_ready if state.engine else False,
+        "nc_license_accepted": nc_accepted,
         "thumb_cache": stats,
     }
 

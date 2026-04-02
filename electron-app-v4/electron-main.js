@@ -451,13 +451,19 @@ app.whenReady().then(async () => {
     try {
       await startServer(dbPath);
       console.log(`[main] Server ready on port ${PORT}`);
-      // Kick off model download in background — needed for standalone ONNX inference
-      // in FaceEngineWeb. Non-fatal: server starts regardless; /models/ returns 503 until ready.
+      // Kick off model download only if NC license already accepted (or models already on disk).
+      // If not accepted, the UI will show a license acceptance dialog before download begins.
       const { ensureModels } = require('./core/model-downloader');
-      ensureModels().then(dir => {
+      const { loadFlat } = require('./server/routes/settings');
+      const flat = loadFlat();
+      ensureModels({ ncAccepted: flat.nc_model_accepted === true }).then(dir => {
         console.log(`[main] ONNX models ready at: ${dir}`);
       }).catch(err => {
-        console.warn('[main] ONNX model download failed (non-fatal):', err.message);
+        if (err.code === 'NC_LICENSE_REQUIRED') {
+          console.log('[main] buffalo_l NC license not yet accepted — models will download after user accepts in UI.');
+        } else {
+          console.warn('[main] ONNX model download failed (non-fatal):', err.message);
+        }
       });
     } catch (err) {
       console.error('[main] Server failed to start:', err);

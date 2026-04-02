@@ -95,6 +95,53 @@
 
         <div class="divider"></div>
 
+        <section class="legal-section">
+          <h4>Third-Party AI Models</h4>
+          <p>
+            CrispLens downloads AI model weights at runtime. These models are <strong>not
+            distributed with the application</strong>. By downloading and using them, you
+            agree to their respective licenses:
+          </p>
+          <div class="model-table">
+            <div class="model-row header">
+              <span>Model</span><span>License</span><span>Purpose</span>
+            </div>
+            <div class="model-row nc">
+              <span>InsightFace buffalo_l/m/s/sc<br /><small>det_10g.onnx, w600k_r50.onnx</small></span>
+              <span class="badge-nc">Non-commercial only</span>
+              <span>Detection + recognition (512D)</span>
+            </div>
+            <div class="model-row free">
+              <span>dlib / face_recognition<br /><small>BSL-1.0 + MIT wrapper</small></span>
+              <span class="badge-free">Commercially free</span>
+              <span>Detection + recognition (128D) — v2 only</span>
+            </div>
+            <div class="model-row free">
+              <span>YuNet 2023<br /><small>face_detection_yunet_2023mar.onnx</small></span>
+              <span class="badge-free">Apache 2.0</span>
+              <span>Detection only (no embedding)</span>
+            </div>
+            <div class="model-row free">
+              <span>SFace (OpenCV Zoo)<br /><small>face_recognition_sface_2021dec.onnx</small></span>
+              <span class="badge-free">Apache 2.0</span>
+              <span>Detection + recognition (128D) — Settings → Embedding Model</span>
+            </div>
+            <div class="model-row free">
+              <span>MediaPipe FaceLandmarker<br /><small>face_landmarker.task</small></span>
+              <span class="badge-free">Apache 2.0</span>
+              <span>Landmark detection (optional)</span>
+            </div>
+          </div>
+          <p style="margin-top:8px; font-size:12px; color:#7080a0;">
+            InsightFace buffalo_l is developed by
+            <button class="link-btn" on:click={() => openExternal('https://github.com/deepinsight/insightface')}>deepinsight/insightface</button>.
+            Commercial use requires a separate license from the InsightFace team.
+            The ArcFace algorithm may be subject to patent protection.
+          </p>
+        </section>
+
+        <div class="divider"></div>
+
         <section class="licenses-section">
           <h4>Open Source Licenses</h4>
           <p class="intro">
@@ -199,6 +246,61 @@
   .legal-section a:hover {
     text-decoration: underline;
   }
+
+  .model-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 10px 0 6px;
+    font-size: 12px;
+    border: 1px solid #2a2a3a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .model-row {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr 1.6fr;
+    gap: 10px;
+    padding: 8px 12px;
+    align-items: center;
+    color: #9090b8;
+  }
+  .model-row.header {
+    background: #1e1e30;
+    font-weight: 700;
+    font-size: 11px;
+    color: #6070a0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .model-row.nc { background: #1c1410; }
+  .model-row.free { background: #101810; }
+  .model-row small { color: #5a607a; font-size: 10px; }
+  .badge-nc {
+    background: #4a2800; color: #e0a040;
+    border: 1px solid #6a4010;
+    border-radius: 4px; padding: 2px 7px;
+    font-size: 10px; font-weight: 700;
+    white-space: nowrap;
+  }
+  .badge-free {
+    background: #0a2a0a; color: #60c060;
+    border: 1px solid #1a4a1a;
+    border-radius: 4px; padding: 2px 7px;
+    font-size: 10px; font-weight: 700;
+    white-space: nowrap;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: #5a8ae0;
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+  }
+  .link-btn:hover { color: #80acff; }
 
   .divider {
     height: 1px;

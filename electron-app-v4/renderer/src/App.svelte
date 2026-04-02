@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { sidebarView, currentUser, stats, allTags, allPeople, allAlbums, translations, lang, galleryMode, backendReady, modelReady, TRANSLATIONS, processingBackend, isOffline, galleryImages } from './stores.js';
-  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages, isLocalMode, setLocalMode } from './api.js';
+  import { fetchHealth, fetchMe, fetchStats, fetchTags, fetchPeople, fetchAlbums, fetchTranslations, setRemoteBase, fetchSettings, fetchImages, isLocalMode, setLocalMode, saveSettings } from './api.js';
   import { installConsoleCapture } from './lib/ConsoleCapture.js';
   installConsoleCapture(); // capture console output for in-app log viewer (standalone mode)
   import syncManager from './lib/SyncManager.js';
@@ -35,7 +35,10 @@
   import PwaInstallBanner   from './lib/PwaInstallBanner.svelte';
   import LoginScreen        from './lib/LoginScreen.svelte';
   import LegalModal         from './lib/LegalModal.svelte';
+  import ModelLicenseModal  from './lib/ModelLicenseModal.svelte';
   import { showLegalModal } from './stores.js';
+
+  let showModelLicense = false;
 
   let view = 'all';
   sidebarView.subscribe(v => view = v);
@@ -105,8 +108,12 @@
             fetchImages().then(imgs => galleryImages.set(imgs)).catch(() => {});
           }
         }).catch(() => {});
-        // Start polling for model warm-up completion (every 3s until ready)
-        if (!h.model_ready) {
+        // Show NC license modal if license not yet accepted and models not on disk.
+        // Don't start model polling yet — wait until user accepts (or models already exist).
+        if (h.nc_license_accepted === false && !h.model_ready) {
+          showModelLicense = true;
+        } else if (!h.model_ready) {
+          // License already accepted (or models already on disk) — poll for warm-up
           modelPollTimer = setInterval(pollModelReady, 3000);
         } else {
           modelReady.set(true);
@@ -531,6 +538,11 @@
   <KeyboardManager />
   <PwaInstallBanner />
   <LegalModal bind:show={$showLegalModal} />
+  <ModelLicenseModal
+    bind:show={showModelLicense}
+    on:accepted={() => { modelPollTimer = setInterval(pollModelReady, 3000); }}
+    on:declined={() => { saveSettings({ embedding_model: 'sface' }).catch(() => {}); }}
+  />
 </div>
 
 <datalist id="people-list">

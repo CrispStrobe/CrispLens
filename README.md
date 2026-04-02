@@ -2,6 +2,24 @@
 
 A self-hosted face recognition and photo management system. Ships as a high-performance Python/FastAPI server (**v2**) and a portable, Python-free Node.js/WASM edition (**v4**).
 
+> [!IMPORTANT]
+> **Legal Disclaimer:** CrispLens is provided "as is", without warranty of any kind. Facial recognition involves the collection and processing of biometric data. **You are solely responsible for ensuring compliance with all applicable local, state, and international laws**, including but not limited to biometric privacy regulations (GDPR Art. 9, BIPA, CCPA, PIPL, etc.), data protection and consent requirements, and any applicable patent law. The authors and contributors assume **no liability** for misuse, legal infringement, damages, or any other consequences arising from your use of this software.
+
+> [!WARNING]
+> **AI Model Licenses — Read Before Use:**
+>
+> CrispLens does **not** distribute AI model weights in the application binary. Models are downloaded on demand and subject to their own licenses:
+>
+> | Model | License | Notes |
+> |---|---|---|
+> | InsightFace **buffalo_l/m/s/sc** (`det_10g.onnx`, `w600k_r50.onnx`) | **Non-commercial only** | Academic/personal use only. Commercial use requires a separate license from [InsightFace](https://insightface.ai/). ArcFace algorithm may be patent-protected. |
+> | **dlib** via `face_recognition` | BSL-1.0 / MIT | **Commercially permissive.** 128-D ResNet embeddings (v2/Gradio only). |
+> | **YuNet** (`face_detection_yunet_2023mar.onnx`) | Apache 2.0 | **Commercially permissive.** Detection only; no embedding. |
+> | **SFace** (`face_recognition_sface_2021dec.onnx`) | Apache 2.0 | **Commercially permissive.** 128-D embeddings from OpenCV Zoo — planned free alternative to buffalo_l in v4. |
+> | **MediaPipe FaceLandmarker** (`face_landmarker.task`) | Apache 2.0 | Google MediaPipe; commercially permissive. |
+>
+> **The application requires explicit acceptance of the InsightFace non-commercial license before downloading buffalo_l.** A confirmation dialog is shown on first use. If you decline or need commercial use: use **dlib** (v2) or **YuNet** (v4, detection only) — both are commercially permissive. For full face recognition without the NC restriction, **SFace** (OpenCV Zoo, Apache 2.0) is the planned free alternative.
+
 **Live Demo (v4 Standalone):** [https://crisplens.vercel.app](https://crisplens.vercel.app)
 
 ---

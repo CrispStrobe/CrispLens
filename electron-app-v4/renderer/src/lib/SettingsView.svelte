@@ -60,6 +60,7 @@
 
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
+  let embeddingModel = 'arcface';  // 'arcface' (512-D, NC license) | 'sface' (128-D, Apache 2.0)
 
   // ── Archive config (admin) ────────────────────────────────────────────────
   let archiveCfg       = null;
@@ -186,6 +187,7 @@
         vlmProvider = c?.vlm?.provider ?? 'anthropic';
         vlmModel    = c?.vlm?.model ?? '';
         detModel    = c?.face_recognition?.insightface?.det_model ?? 'auto';
+        embeddingModel = c?.embedding?.model ?? 'arcface';
         // Remote backend settings
         procBackend    = c?.processing?.backend         ?? 'local';
         remoteV2Url    = c?.processing?.remote_v2?.url  ?? '';
@@ -689,6 +691,7 @@
           vlmModel    = cfg?.vlm?.model ?? '';
           vlmMaxSize  = cfg?.vlm?.max_size ?? 0;
           detModel    = cfg?.face_recognition?.insightface?.det_model ?? 'auto';
+          embeddingModel = cfg?.embedding?.model ?? 'arcface';
           console.log(`[SettingsView] onMount: VLM initialized: enabled=${vlmEnabled}, provider=${vlmProvider}, model=${vlmModel}`);
           procBackend    = cfg?.processing?.backend         ?? 'local';
           remoteV2Url    = cfg?.processing?.remote_v2?.url  ?? '';
@@ -900,6 +903,7 @@
             det_retries: detRetries,
             det_size: detSize,
             det_model: detModel || 'auto',
+            embedding_model: embeddingModel || 'arcface',
             vlm_enabled: vlmEnabled,
             vlm_provider: vlmProvider,
             vlm_model: vlmModel || null,
@@ -2326,6 +2330,14 @@
             <option value={m}>{m}</option>
           {/each}
         </select>
+        {#if model === 'buffalo_l' || model === 'buffalo_m' || model === 'buffalo_s' || model === 'buffalo_sc'}
+          <p class="hint nc-hint">
+            InsightFace models are <strong>non-commercial only</strong> (academic/personal use).
+            Commercial use requires a license from
+            <a href="https://insightface.ai/" target="_blank" rel="noopener noreferrer">InsightFace</a>.
+            Acceptance is required before download.
+          </p>
+        {/if}
       {/if}
       {/if}
 
@@ -2375,6 +2387,28 @@
           {/each}
         </select>
       </div>
+
+      {#if isAdmin}
+        <!-- Embedding model selector (admin only — affects DB embeddings for all users) -->
+        <label for="setting-emb-model">{$t('embedding_model_label')}</label>
+        <div>
+          <select id="setting-emb-model" bind:value={embeddingModel}>
+            <option value="arcface">ArcFace (buffalo_l) — 512-D, non-commercial only</option>
+            <option value="sface">SFace (OpenCV Zoo) — 128-D, Apache 2.0, commercial OK</option>
+          </select>
+          {#if embeddingModel === 'arcface'}
+            <p class="hint nc-hint" style="margin-top:6px;">
+              ArcFace requires <strong>non-commercial use</strong> (InsightFace buffalo_l license).
+              Commercial use requires a separate agreement with InsightFace.
+            </p>
+          {:else}
+            <p class="hint" style="margin-top:4px; color:#60a060;">
+              SFace is Apache 2.0 — commercially permissible. 128-D embeddings (vs 512-D ArcFace).
+              Changing this requires re-processing all images to rebuild embeddings.
+            </p>
+          {/if}
+        </div>
+      {/if}
     </div>
   </section>
 
@@ -2714,6 +2748,12 @@
   button.small { padding: 3px 8px; font-size: 11px; }
   .hint { font-size: 11px; color: #505070; }
   .hint code { font-family: monospace; background: #1a1a2e; padding: 1px 4px; border-radius: 3px; color: #8090b0; }
+  .nc-hint {
+    background: #1c1410; border: 1px solid #5a3a20; border-radius: 4px;
+    padding: 6px 10px; color: #c09060; font-size: 11px; line-height: 1.5; margin-top: 4px;
+  }
+  .nc-hint strong { color: #e0a040; }
+  .nc-hint a { color: #c0a060; }
   .offline-notice { background: #1a1a10; border-color: #4a4a20; }
   .offline-notice p { font-size: 11px; color: #808060; line-height: 1.5; }
   .sync-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #7090c0; }

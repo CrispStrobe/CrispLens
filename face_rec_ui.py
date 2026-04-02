@@ -1503,6 +1503,23 @@ def build_ui():
         # {i18n.t('app_title')}
         ### {i18n.t('app_subtitle')}
         """)
+
+        # ── Legal & model license notice ─────────────────────────────────────
+        gr.Markdown("""
+> **Legal Notice:** CrispLens is provided "as is" without warranty. \
+Facial recognition involves biometric data. \
+**You are solely responsible for compliance with all applicable laws** \
+(GDPR, BIPA, CCPA, etc.) and for any consequences arising from your use of this software.
+>
+> **Model Licenses:**
+> - **InsightFace buffalo_l/m/s/sc** — *non-commercial research use only*. \
+Commercial use requires a separate license from [InsightFace](https://insightface.ai/). \
+The ArcFace algorithm may be patent-protected.
+> - **dlib / face_recognition** — BSL-1.0 + MIT — commercially permissive.
+> - **YuNet** (Apache 2.0) — commercially permissive.
+>
+> By continuing to use InsightFace models you confirm non-commercial use only.
+        """)
         
         # Session state
         user_state = gr.State(None)

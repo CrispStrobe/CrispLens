@@ -24,7 +24,7 @@ const http   = require('http');
 const os     = require('os');
 const crypto = require('crypto');
 const { warpToArcFace }  = require('./face-align');
-const { ensureYuNet }    = require('./model-downloader');
+const { ensureYuNet, ensureSFace } = require('./model-downloader');
 
 sharp.cache(false);
 
@@ -217,6 +217,28 @@ function buildArcFaceInput(rgbBuf) {
 }
 
 /**
+ * Build a CHW float32 tensor for SFace (face_recognition_sface_2021dec.onnx).
+ *
+ * SFace was trained with OpenCV's blobFromImage(swapRB=true) which converts
+ * BGR → RGB, so the ONNX model expects RGB channel order (opposite to ArcFace).
+ * Normalization: (pixel - 127.5) / 127.5  → range [-1, 1]  (identical mean,
+ * divisor differs from ArcFace by 0.5/128 ≈ 0.4% — negligible in practice).
+ *
+ * @param {Buffer} rgbBuf  112×112 raw RGB bytes from Sharp (HWC, uint8)
+ * @returns Float32Array   shape [3, 112, 112] (NCHW), R channel first
+ */
+function buildSFaceInput(rgbBuf) {
+  const spatial = 112 * 112;
+  const f32 = new Float32Array(3 * spatial);
+  for (let i = 0; i < spatial; i++) {
+    f32[i            ] = (rgbBuf[i * 3    ] - 127.5) / 127.5;  // R (channel 0)
+    f32[i + spatial  ] = (rgbBuf[i * 3 + 1] - 127.5) / 127.5;  // G (channel 1)
+    f32[i + spatial*2] = (rgbBuf[i * 3 + 2] - 127.5) / 127.5;  // B (channel 2)
+  }
+  return f32;
+}
+
+/**
  * L2-normalize a Float32Array in-place.
  */
 function l2Normalize(vec) {
@@ -231,13 +253,14 @@ function l2Normalize(vec) {
 
 class FaceEngine {
   constructor(modelDir) {
-    this.modelDir        = modelDir || findModelDir();
-    this.detModel        = null;     // SCRFD (det_10g.onnx)
-    this.recModel        = null;     // ArcFace (w600k_r50.onnx)
-    this.yunetModel      = null;     // YuNet (lazy-loaded on first use)
+    this.modelDir         = modelDir || findModelDir();
+    this.detModel         = null;    // SCRFD (det_10g.onnx)
+    this.recModel         = null;    // ArcFace (w600k_r50.onnx)
+    this.yunetModel       = null;    // YuNet (lazy-loaded on first use)
     this.yunetOutputNames = null;
-    this.initialized     = false;
-    this._outputNames    = null;     // cached SCRFD output names
+    this.sfaceModel       = null;    // SFace (lazy-loaded on first use, Apache 2.0)
+    this.initialized      = false;
+    this._outputNames     = null;    // cached SCRFD output names
     this.currentProviders = ['cpu'];
   }
 
@@ -297,6 +320,59 @@ class FaceEngine {
     });
     this.yunetOutputNames = this.yunetModel.outputNames;
     console.log('[FaceEngine] YuNet ready. Output names:', this.yunetOutputNames.join(', '));
+  }
+
+  /**
+   * Lazy-load SFace ONNX model (downloads if not present).
+   * SFace is Apache 2.0 — no NC license required.
+   */
+  async initSFace(providers = null) {
+    if (this.sfaceModel) return;
+    // SFace can live alongside buffalo_l in the same modelDir, or in any writable models dir
+    const { BUFFALO_DIR } = require('./model-downloader');
+    const sfaceDir = this.modelDir || BUFFALO_DIR;
+    const sfacePath = path.join(sfaceDir, 'face_recognition_sface_2021dec.onnx');
+    if (!fs.existsSync(sfacePath)) await ensureSFace(sfaceDir);
+    this.sfaceModel = await ort.InferenceSession.create(sfacePath, {
+      executionProviders: providers || this.currentProviders || ['cpu'],
+      intraOpNumThreads:  2,
+      interOpNumThreads:  1,
+    });
+    console.log('[FaceEngine] SFace ready (Apache 2.0, 128-D). Input:', this.sfaceModel.inputNames.join(', '));
+  }
+
+  /**
+   * Compute the SFace 128-D embedding for a single detected face.
+   *
+   * Uses the same 5-point similarity-transform alignment as ArcFace (warpToArcFace),
+   * but different input normalization (RGB order, ÷127.5 instead of BGR ÷128).
+   *
+   * SFace is from OpenCV Zoo (Apache 2.0) — commercially permissive, no NC restrictions.
+   *
+   * @param {string}   imagePath
+   * @param {number[][]} landmarks  5 [x,y] points in original image pixel coords
+   * @param {number}   imageWidth
+   * @param {number}   imageHeight
+   * @returns {Float32Array}  length 128, L2-normalized
+   */
+  async embedFaceSFace(imagePath, landmarks, imageWidth, imageHeight) {
+    await this.initSFace();
+
+    const srcBuf = await sharp(imagePath)
+      .rotate()
+      .flatten({ background: '#ffffff' })
+      .raw()
+      .toBuffer();
+
+    const aligned = warpToArcFace(srcBuf, imageWidth, imageHeight, landmarks);
+    const f32     = buildSFaceInput(aligned);
+
+    const outputs = await this.sfaceModel.run({
+      [this.sfaceModel.inputNames[0]]: new ort.Tensor('float32', f32, [1, 3, 112, 112]),
+    });
+
+    const raw = Float32Array.from(outputs[this.sfaceModel.outputNames[0]].data);
+    return l2Normalize(raw);
   }
 
   /**
@@ -518,14 +594,17 @@ class FaceEngine {
    *
    * @param {string} imagePath
    * @param {object} opts
-   * @param {string} [opts.det_model='auto']  'auto'|'scrfd' → SCRFD, 'yunet' → YuNet
-   * @param {number} [opts.det_thresh=0.5]    Detection confidence threshold
-   * @param {number} [opts.min_face_size=0]   Minimum face short-side in px
-   * @param {number} [opts.max_size=0]        Pre-downscale long-edge before detection
-   * Returns array of { bbox, score, landmarks, embedding:Float32Array<512> }
+   * @param {string} [opts.det_model='auto']       'auto'|'scrfd' → SCRFD, 'yunet' → YuNet
+   * @param {string} [opts.embedding_model='arcface'] 'arcface' (512-D, NC) | 'sface' (128-D, Apache 2.0)
+   * @param {number} [opts.det_thresh=0.5]         Detection confidence threshold
+   * @param {number} [opts.min_face_size=0]        Minimum face short-side in px
+   * @param {number} [opts.max_size=0]             Pre-downscale long-edge before detection
+   * Returns array of { bbox, score, landmarks, embedding:Float32Array<512|128> }
    */
   async processImage(imagePath, opts = {}) {
     const detModel = (opts.det_model || 'auto').toLowerCase();
+    const embModel = (opts.embedding_model || 'arcface').toLowerCase();
+
     let detection;
     if (detModel === 'yunet') {
       detection = await this.detectFacesYuNet(imagePath, opts);
@@ -536,9 +615,9 @@ class FaceEngine {
 
     const results = [];
     for (const face of faces) {
-      const embedding = await this.embedFace(
-        imagePath, face.landmarks, imageWidth, imageHeight
-      );
+      const embedding = embModel === 'sface'
+        ? await this.embedFaceSFace(imagePath, face.landmarks, imageWidth, imageHeight)
+        : await this.embedFace(imagePath, face.landmarks, imageWidth, imageHeight);
       results.push({ ...face, embedding });
     }
     return results;
@@ -563,9 +642,12 @@ class FaceEngine {
     }
     const { faces: detFaces, imageWidth: W, imageHeight: H } = detection;
 
+    const embModel = (opts.embedding_model || 'arcface').toLowerCase();
     const facesWithEmb = [];
     for (const face of detFaces) {
-      const embedding = await this.embedFace(imagePath, face.landmarks, W, H);
+      const embedding = embModel === 'sface'
+        ? await this.embedFaceSFace(imagePath, face.landmarks, W, H)
+        : await this.embedFace(imagePath, face.landmarks, W, H);
       facesWithEmb.push({ ...face, embedding });
     }
 
@@ -602,7 +684,7 @@ class FaceEngine {
       file_size:     rawBuf.length,
       file_hash,
       thumbnail_b64: thumbBuf.toString('base64'),
-      local_model:   'buffalo_l',
+      local_model:   embModel === 'sface' ? 'sface' : 'buffalo_l',
       faces,
       visibility:    opts.visibility || 'shared',
     };

@@ -42,6 +42,8 @@ class SettingsPatch(BaseModel):
     copy_exempt_paths:     Optional[list]       = None
     # Admin: path to fix_db.sh for the one-click server update feature.
     fix_db_path:           Optional[str]        = None
+    # License: InsightFace buffalo_l is non-commercial only; must be accepted before use.
+    nc_model_accepted:     Optional[bool]       = None
 
 
 _DE: dict = {
@@ -568,6 +570,12 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
         if body.fix_db_path is not None:
             config.setdefault('admin', {})['fix_db_path'] = body.fix_db_path
 
+    # License acceptance (admin-only; persisted in config.yaml under 'license')
+    if body.nc_model_accepted is not None:
+        if user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+        config.setdefault('license', {})['nc_model_accepted'] = body.nc_model_accepted
+
     # Strip legacy plaintext keys
     config.get('vlm', {}).get('api', {}).pop('key', None)
 
@@ -594,6 +602,7 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
         if body.backend is not None or body.model is not None:
             from face_recognition_core import FaceRecognitionEngine
             s.engine = FaceRecognitionEngine(s.db_path, new_face_cfg)
+            s.engine._nc_model_accepted = config.get('license', {}).get('nc_model_accepted', False)
         else:
             s.engine.config = new_face_cfg
 
@@ -887,11 +896,13 @@ def engine_status(user=Depends(get_current_user)):
         },
     }
 
+    nc_accepted = s.config.get('license', {}).get('nc_model_accepted', False)
     return {
-        "ready":     bool(eng._backend_ready),
-        "error":     eng._init_error or None,
-        "backend":   s.config.get('face_recognition', {}).get('backend', 'insightface'),
-        "model":     s.config.get('face_recognition', {}).get('insightface', {}).get('model', 'buffalo_l'),
+        "ready":              bool(eng._backend_ready),
+        "error":              eng._init_error or None,
+        "backend":            s.config.get('face_recognition', {}).get('backend', 'insightface'),
+        "model":              s.config.get('face_recognition', {}).get('insightface', {}).get('model', 'buffalo_l'),
+        "nc_license_accepted": nc_accepted,
         "detectors": detectors,
     }
 
@@ -918,3 +929,51 @@ def reload_engine(_admin=Depends(require_admin)):
 
     threading.Thread(target=_warm, daemon=True, name="engine-reload").start()
     return {"queued": True, "message": "Engine reload started in background"}
+
+
+# ── POST /settings/accept-nc-license ─────────────────────────────────────────
+# Stores admin's acceptance of the InsightFace non-commercial license in
+# config.yaml (license.nc_model_accepted = true).  InsightFace downloads
+# models lazily on next use; no separate download trigger is needed here
+# because FaceAnalysis.prepare() handles it automatically.
+#
+# Dlib (BSL-1.0 / MIT face_recognition wrapper) and YuNet (Apache 2.0) are
+# commercially permissive and do NOT require this acceptance.
+
+_NC_MODEL_NAMES = frozenset({"buffalo_l", "buffalo_m", "buffalo_s", "buffalo_sc"})
+
+NC_LICENSE_NOTICE = (
+    "InsightFace buffalo_l/m/s/sc models are released for non-commercial research "
+    "use only. See https://github.com/deepinsight/insightface/tree/master/model_zoo. "
+    "Commercial use requires a separate written agreement with the InsightFace team. "
+    "The ArcFace algorithm may be subject to patent protection."
+)
+
+# Commercially-permissive model alternatives:
+#   • dlib (BSL-1.0, MIT face_recognition wrapper) — 128D ResNet embeddings
+#   • YuNet (Apache 2.0)                           — detection only, no embedding
+#   • SFace from OpenCV Zoo (Apache 2.0)           — 128D embeddings (future option)
+
+
+@router.post("/accept-nc-license")
+def accept_nc_license(_admin=Depends(require_admin)):
+    """Accept InsightFace non-commercial license (admin only).
+
+    Persists license.nc_model_accepted = true in config.yaml.
+    The InsightFace models are downloaded lazily on the next inference call.
+    """
+    s = _state()
+    config = dict(s.config or {})
+    config.setdefault("license", {})["nc_model_accepted"] = True
+
+    _DATA_DIR = os.environ.get("FACE_REC_DATA_DIR", "")
+    config_path = os.path.join(_DATA_DIR, "config.yaml") if _DATA_DIR else "config.yaml"
+    try:
+        with open(config_path, "w") as f:
+            yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+
+    s.config = config
+    logger.info("NC model license accepted by admin — InsightFace models will download on next use")
+    return {"ok": True, "message": "License accepted. InsightFace models will download on next inference."}

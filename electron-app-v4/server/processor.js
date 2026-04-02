@@ -120,12 +120,22 @@ function upsertImage(db, filepath, meta, opts = {}) {
 // ── Process one image and write faces+embeddings to DB ───────────────────────
 
 async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
+  // Pull embedding_model from settings (default: arcface) if not overridden in opts
+  let _embeddingModel = opts.embedding_model;
+  if (!_embeddingModel) {
+    try {
+      const { loadFlat } = require('./routes/settings');
+      _embeddingModel = loadFlat().embedding_model || 'arcface';
+    } catch { _embeddingModel = 'arcface'; }
+  }
+
   const detOpts = {
-    det_model:     opts.det_model             || 'auto',
-    det_thresh:    parseFloat(opts.det_thresh) || 0.5,
-    min_face_size: parseInt(opts.min_face_size)|| 0,
-    max_size:      parseInt(opts.max_size)     || 0,
-    visibility:    opts.visibility             || 'shared',
+    det_model:       opts.det_model             || 'auto',
+    det_thresh:      parseFloat(opts.det_thresh) || 0.5,
+    min_face_size:   parseInt(opts.min_face_size)|| 0,
+    max_size:        parseInt(opts.max_size)     || 0,
+    visibility:      opts.visibility             || 'shared',
+    embedding_model: _embeddingModel,
   };
 
   // ── Remote v2 routing ──────────────────────────────────────────────────────
@@ -218,7 +228,8 @@ async function processImageIntoDb(imagePath, existingImageId, opts = {}) {
         (face_id, person_id, embedding_vector, embedding_dimension, embedding_model,
          recognition_confidence)
       VALUES (?,?,?,?,?,?)
-    `).run(faceId, personId, embBuf, 512, 'w600k_r50', recConf);
+    `).run(faceId, personId, embBuf, face.embedding.length,
+         _embeddingModel === 'sface' ? 'sface' : 'w600k_r50', recConf);
 
     if (process.env.DEBUG) {
       console.log(`  face ${faceId}: score=${face.score.toFixed(3)}  bbox=[${[x1,y1,x2,y2].map(v=>Math.round(v)).join(',')}]  person=${personId||'?'}  conf=${recConf?.toFixed(2)||'n/a'}`);

@@ -358,12 +358,29 @@ class FaceRecognitionEngine:
         else:
             return ['CPUExecutionProvider']
 
+    # InsightFace buffalo_* models are non-commercial only.
+    # This set maps to the models that require NC license acceptance.
+    _NC_INSIGHTFACE_MODELS = frozenset({"buffalo_l", "buffalo_m", "buffalo_s", "buffalo_sc"})
+
     def _initialize_backend(self):
         """Initialize face recognition backend."""
         try:
             if self.config.backend == FaceRecognitionConfig.BACKEND_INSIGHTFACE:
                 if not INSIGHTFACE_AVAILABLE:
                     raise ImportError("InsightFace not installed")
+
+                # Warn loudly if NC license not accepted for buffalo_* models.
+                # We do not block (the check is advisory here; the UI enforces it).
+                if self.config.model in self._NC_INSIGHTFACE_MODELS:
+                    nc_accepted = getattr(self, '_nc_model_accepted', False)
+                    if not nc_accepted:
+                        logging.warning(
+                            "IMPORTANT: InsightFace model '%s' is licensed for non-commercial "
+                            "use only. Accept the license in Settings → Engine before use in "
+                            "any commercial context. See: "
+                            "https://github.com/deepinsight/insightface/tree/master/model_zoo",
+                            self.config.model,
+                        )
 
                 providers = self._build_onnx_providers(
                     self.config.ctx_id, self.config.use_coreml

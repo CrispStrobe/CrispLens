@@ -64,7 +64,27 @@ function download(url, dest) {
   });
 }
 
-async function ensureModels() {
+// ── Non-commercial license info ───────────────────────────────────────────────
+// InsightFace buffalo_l (det_10g.onnx + w600k_r50.onnx) is released under
+// InsightFace's non-commercial research license:
+//   https://github.com/deepinsight/insightface/tree/master/model_zoo
+// Commercial use requires a separate license from the InsightFace team.
+// The ArcFace algorithm is also subject to patent protection.
+// YuNet (face_detection_yunet_2023mar.onnx) is Apache 2.0 — free for all use.
+
+const NC_LICENSE_TEXT = `InsightFace buffalo_l models (det_10g.onnx, w600k_r50.onnx)
+are released for non-commercial research use only.
+See: https://github.com/deepinsight/insightface/tree/master/model_zoo
+Commercial use requires a separate agreement with the InsightFace team.`;
+
+/**
+ * Download buffalo_l only if:
+ *   (a) models already exist on disk (no license prompt needed for existing installs), OR
+ *   (b) opts.ncAccepted === true (user has explicitly accepted the NC license)
+ *
+ * Throws { code: 'NC_LICENSE_REQUIRED' } if models are absent and license not accepted.
+ */
+async function ensureModels({ ncAccepted = false } = {}) {
   // Try the InsightFace Python cache first (no download needed)
   const insightDir = path.join(os.homedir(), '.insightface', 'models', 'buffalo_l');
   if (REQUIRED.every(f => fs.existsSync(path.join(insightDir, f)))) {
@@ -75,6 +95,16 @@ async function ensureModels() {
   if (allExist()) {
     console.log(`[models] Models already present at: ${BUFFALO_DIR}`);
     return BUFFALO_DIR;
+  }
+
+  // Models not on disk — require explicit NC license acceptance before downloading.
+  if (!ncAccepted) {
+    const err = new Error(
+      'NC license acceptance required before downloading InsightFace buffalo_l models.\n' +
+      NC_LICENSE_TEXT
+    );
+    err.code = 'NC_LICENSE_REQUIRED';
+    throw err;
   }
 
   console.log('[models] Downloading buffalo_l ONNX models...');
@@ -122,6 +152,29 @@ async function ensureYuNet(modelDir) {
   return dest;
 }
 
+// ── SFace face recognition model (OpenCV Zoo, Apache 2.0) ───────────────────
+// Commercially-free 128-D embedding alternative to InsightFace ArcFace.
+// Pairs with YuNet for a fully Apache-2.0 detection+recognition pipeline.
+
+const SFACE_URL  = 'https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx';
+const SFACE_FILE = 'face_recognition_sface_2021dec.onnx';
+
+/**
+ * Download the SFace ONNX model into modelDir.
+ * No-op if already present. Returns the full path to the model file.
+ * License: Apache 2.0 — no NC restrictions, commercial use allowed.
+ */
+async function ensureSFace(modelDir) {
+  const dest = path.join(modelDir, SFACE_FILE);
+  if (fs.existsSync(dest)) return dest;
+
+  console.log('[models] Downloading SFace recognition model (~37 MB, Apache 2.0)...');
+  fs.mkdirSync(modelDir, { recursive: true });
+  await download(SFACE_URL, dest);
+  console.log(`[models] SFace ready at: ${dest}`);
+  return dest;
+}
+
 // ── MediaPipe FaceLandmarker task model ───────────────────────────────────────
 
 const LANDMARKER_URL  = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
@@ -142,8 +195,20 @@ async function ensureFaceLandmarker(modelDir) {
   return dest;
 }
 
-module.exports = { ensureModels, ensureYuNet, ensureFaceLandmarker, BUFFALO_DIR };
+module.exports = { ensureModels, ensureYuNet, ensureSFace, ensureFaceLandmarker, BUFFALO_DIR, NC_LICENSE_TEXT };
 
 if (require.main === module) {
-  ensureModels().catch(err => { console.error(err); process.exit(1); });
+  // CLI usage: node model-downloader.js --accept-nc
+  const acceptNc = process.argv.includes('--accept-nc');
+  ensureModels({ ncAccepted: acceptNc }).catch(err => {
+    if (err.code === 'NC_LICENSE_REQUIRED') {
+      console.error('\n[models] Cannot download: InsightFace buffalo_l requires non-commercial license acceptance.');
+      console.error('[models] Re-run with --accept-nc flag to confirm non-commercial use:\n');
+      console.error('  node core/model-downloader.js --accept-nc\n');
+      console.error(NC_LICENSE_TEXT);
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  });
 }
