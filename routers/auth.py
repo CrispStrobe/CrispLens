@@ -135,6 +135,55 @@ def change_password(body: ChangePasswordRequest, session: Optional[str] = Cookie
     return {"ok": True, "message": "Password changed successfully"}
 
 
+def _require_rate_limit_access(request: Request, session: Optional[str]) -> None:
+    """Allow authenticated admins or unauthenticated localhost callers."""
+    username = _get_session_user(session) if session else None
+    if username:
+        s = _state()
+        user = s.permissions.get_user(username)
+        if not user or user.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+    else:
+        client_ip = request.client.host if request.client else None
+        if client_ip not in ("127.0.0.1", "::1"):
+            raise HTTPException(status_code=403, detail="Localhost access required")
+
+
+@router.get("/rate-limits")
+def list_rate_limits(request: Request, session: Optional[str] = Cookie(None)):
+    """Show IPs with active login-attempt records."""
+    _require_rate_limit_access(request, session)
+    now = time.time()
+    result = {}
+    for ip, attempts in list(_login_attempts.items()):
+        active = [t for t in attempts if now - t < _LOGIN_WINDOW_SECS]
+        if active:
+            result[ip] = {
+                "attempts": len(active),
+                "limit": _LOGIN_MAX_ATTEMPTS,
+                "blocked": len(active) >= _LOGIN_MAX_ATTEMPTS,
+                "oldest": round(now - max(active)),
+                "resets_in": round(_LOGIN_WINDOW_SECS - (now - min(active))),
+            }
+    return {"ok": True, "ips": result}
+
+
+@router.post("/reset-rate-limit")
+def reset_rate_limit(request: Request, ip: Optional[str] = None, session: Optional[str] = Cookie(None)):
+    """Clear login rate-limit counters. Admin only.
+
+    If *ip* is given, only that IP is cleared; otherwise all IPs are cleared.
+    """
+    _require_rate_limit_access(request, session)
+
+    if ip:
+        _login_attempts.pop(ip, None)
+        return {"ok": True, "cleared": ip}
+    else:
+        _login_attempts.clear()
+        return {"ok": True, "cleared": "all"}
+
+
 @router.get("/me")
 def me(session: Optional[str] = Cookie(None)):
     username = _get_session_user(session) if session else None
