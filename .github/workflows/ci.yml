@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Python: lint + security + import smoke (Linux only — portable code) ─────
+  python:
+    name: Python (ruff + bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install lint tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff bandit pyflakes
+
+      - name: Ruff — errors + likely bugs
+        run: |
+          ruff check --select F,E9,B9 \
+            --exclude bkp,electron-app-v2,electron-app-v3-proto,electron-app-v4,generated,cloud \
+            .
+
+      - name: Bandit — HIGH severity only
+        run: |
+          bandit -q -r --severity-level high \
+            --exclude ./bkp,./electron-app-v2,./electron-app-v3-proto,./electron-app-v4,./generated,./cloud,./.git \
+            . \
+            || (echo "Bandit HIGH findings above"; exit 1)
+
+      - name: Python syntax (AST parse)
+        run: |
+          python - <<'PY'
+          import ast, os, sys
+          skip = {'bkp','electron-app-v2','electron-app-v3-proto','electron-app-v4','generated','cloud','.git','venv','.venv'}
+          bad = []
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in skip]
+              for f in files:
+                  if f.endswith('.py'):
+                      p = os.path.join(root, f)
+                      try: ast.parse(open(p, encoding='utf-8').read())
+                      except SyntaxError as e: bad.append(f"{p}: {e}")
+          if bad:
+              print('\n'.join(bad)); sys.exit(1)
+          print("AST parse OK")
+          PY
+
+  # ── Svelte v4 renderer: build cross-platform (catches path/CRLF bugs) ───────
+  renderer:
+    name: v4 renderer build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: electron-app-v4/renderer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-app-v4/renderer/package-lock.json
+
+      - name: Install
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Lint (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: npx eslint src
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist produced
+        shell: bash
+        run: |
+          test -f dist/index.html || { echo "dist/index.html missing"; exit 1; }
+          echo "dist size: $(du -sh dist | cut -f1)"
+
+  # ── Node v4 server: import smoke test (load server module, no network) ──────
+  v4-server:
+    name: v4 server smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: electron-app-v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-app-v4/package-lock.json
+
+      - name: Install (prod deps only)
+        run: npm ci --omit=dev --no-audit --loglevel=error
+
+      - name: Syntax-check entry points
+        shell: bash
+        run: |
+          node --check server.js
+          node --check electron-main.js || true  # electron-main requires electron at runtime

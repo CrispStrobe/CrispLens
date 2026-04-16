@@ -1,0 +1,104 @@
+name: Release (Electron)
+
+on:
+  push:
+    tags:
+      - "v*-v4"           # matches existing scheme used by release-v4.sh / .ps1
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.1-v4). Empty to build without publishing."
+        required: false
+        default: ""
+
+permissions:
+  contents: write         # electron-builder needs this to upload release assets
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }} ${{ matrix.arch_label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch_label: "arm64+x64"
+            ebuild_args: "--mac --arm64 --x64"
+          - os: windows-latest
+            arch_label: "x64"
+            ebuild_args: "--win --x64"
+          - os: ubuntu-latest
+            arch_label: "x64"
+            ebuild_args: "--linux --x64"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            electron-app-v4/package-lock.json
+            electron-app-v4/renderer/package-lock.json
+
+      # ── Linux-only extras needed by electron-builder for AppImage/deb ──────
+      - name: Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            rpm fakeroot dpkg ffmpeg
+
+      # ── Build Svelte renderer (produces electron-app-v4/renderer/dist) ─────
+      - name: Install renderer deps
+        working-directory: electron-app-v4/renderer
+        run: npm ci --prefer-offline --no-audit --loglevel=error
+
+      - name: Build renderer
+        working-directory: electron-app-v4/renderer
+        run: npm run build
+
+      # ── Install electron app deps + run electron-builder ───────────────────
+      - name: Install electron-app deps
+        working-directory: electron-app-v4
+        run: npm ci --no-audit --loglevel=error
+
+      - name: electron-builder — ${{ matrix.os }}
+        working-directory: electron-app-v4
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code-signing / notarisation (optional: set these as repo secrets to enable)
+          CSC_LINK: ${{ secrets.MAC_CERTS }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTS }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTS_PASSWORD }}
+        shell: bash
+        run: |
+          # Only publish when a tag triggered the workflow (skip for manual dry-run
+          # with empty input tag).
+          if [[ "${{ github.event_name }}" == "push" || -n "${{ github.event.inputs.tag }}" ]]; then
+            PUBLISH_FLAG="--publish always"
+          else
+            PUBLISH_FLAG="--publish never"
+          fi
+          echo "Running: electron-builder ${{ matrix.ebuild_args }} $PUBLISH_FLAG"
+          npx electron-builder ${{ matrix.ebuild_args }} $PUBLISH_FLAG
+
+      # ── Always upload the build artefacts to the workflow run ──────────────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: crisplens-${{ matrix.os }}-${{ matrix.arch_label }}
+          path: |
+            electron-app-v4/dist/*.dmg
+            electron-app-v4/dist/*.exe
+            electron-app-v4/dist/*.AppImage
+            electron-app-v4/dist/*.deb
+            electron-app-v4/dist/*.zip
+            electron-app-v4/dist/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
