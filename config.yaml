@@ -1,3 +1,20 @@
+admin:
+  fix_db_path: ./fix_db.sh
+video:
+  # Scene-change frame extraction settings (see video_processing.py)
+  enabled: true
+  max_frames_per_video: 10           # user-settable upper limit per video
+  scene_threshold: 0.3               # ffmpeg select='gt(scene,x)' threshold
+  min_fallback_interval_sec: 1.0     # evenly-spaced fallback floor
+  phash_dedup_distance: 4            # Hamming distance to treat frames as dupes
+  extensions: [.mp4, .mov, .mkv, .avi, .webm, .m4v]
+transcription:
+  enabled: false                     # disabled by default; opt-in per user
+  provider: faster_whisper           # faster_whisper | openai_whisper | gladia
+  whisper_model_size: base           # tiny | base | small | medium | large-v3
+  whisper_device: auto               # auto | cpu | cuda
+  whisper_compute_type: int8         # int8 (CPU) | float16 (GPU)
+  language: ''                       # '' = auto-detect, else ISO 639-1 (e.g. 'de')
 database:
   backup:
     directory: backups
@@ -117,7 +134,13 @@ security:
     - .gif
     - .bmp
     - .webp
-    max_file_size_mb: 50
+    - .mp4
+    - .mov
+    - .mkv
+    - .avi
+    - .webm
+    - .m4v
+    max_file_size_mb: 500
     scan_uploads: true
 storage:
   calculate_file_hash: true

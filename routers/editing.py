@@ -10,13 +10,12 @@ Endpoints:
   POST /api/edit/adjust        — tonal/colour adjustments + presets (brightness, contrast, etc.)
 """
 import glob
-import io
 import json
 import os
 import sqlite3
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -52,7 +51,7 @@ def _get_pil():
         from PIL import Image
         return Image
     except ImportError:
-        raise HTTPException(status_code=500, detail="Pillow is not installed")
+        raise HTTPException(status_code=500, detail="Pillow is not installed")  # noqa: B904
 
 
 def _delete_thumbnails(thumb_dir: str, image_id: int):
@@ -72,17 +71,17 @@ class CropRequest(BaseModel):
     width: float
     height: float
     save_as: str = 'replace'        # 'replace' | 'new_file'
-    new_filename: Optional[str] = None
+    new_filename: str | None = None
 
 class ConvertRequest(BaseModel):
-    image_ids: List[int]
+    image_ids: list[int]
     output_format: str = 'jpeg'     # jpeg | png | webp | tiff
     quality: int = 85               # JPEG/WebP only
     resize_mode: str = 'none'       # none | fit | exact
-    max_width: Optional[int] = None
-    max_height: Optional[int] = None
+    max_width: int | None = None
+    max_height: int | None = None
     save_as: str = 'new_file'       # replace | new_file | output_folder
-    output_folder: Optional[str] = None
+    output_folder: str | None = None
     suffix: str = '_converted'
 
 
@@ -113,7 +112,7 @@ class AdjustRequest(BaseModel):
     sharpness:  float = 1.0
     warmth:     float = 0.0     # –1.0–+1.0 (cool↔warm)
     # ── Preset (applied first) ───────────────────────────────────────
-    preset: Optional[str] = None  # 'bw' | 'sepia' | 'auto_contrast' | 'lucky' | 'vivid' | 'cool' | 'warm'
+    preset: str | None = None  # 'bw' | 'sepia' | 'auto_contrast' | 'lucky' | 'vivid' | 'cool' | 'warm'
     # ── Save ─────────────────────────────────────────────────────────
     save_as: str = 'new_file'
     suffix:  str = '_adj'
@@ -225,7 +224,7 @@ def list_formats():
 
 
 @router.post("/crop")
-def crop_image(body: CropRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+def crop_image(body: CropRequest, user=Depends(get_current_user)) -> dict[str, Any]:
     """Crop an image to the given pixel rectangle."""
     PILImage = _get_pil()
     s = _state()
@@ -255,7 +254,7 @@ def crop_image(body: CropRequest, user=Depends(get_current_user)) -> Dict[str, A
         cropped = img.crop(box)
     except Exception as e:
         logger.error("Crop failed for image %d: %s", body.image_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Crop failed")
+        raise HTTPException(status_code=500, detail="Crop failed")  # noqa: B904
 
     if body.save_as == 'replace':
         out_path = filepath
@@ -274,7 +273,7 @@ def crop_image(body: CropRequest, user=Depends(get_current_user)) -> Dict[str, A
         cropped.save(out_path, format=fmt, **save_kwargs)
     except Exception as e:
         logger.error("Crop save failed for %s: %s", out_path, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save cropped image")
+        raise HTTPException(status_code=500, detail="Failed to save cropped image")  # noqa: B904
 
     w, h = cropped.size
     conn = None
@@ -338,7 +337,7 @@ def _build_out_path(filepath: str, body: ConvertRequest) -> str:
         return str(p.parent / new_name)
 
 
-def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_id: int) -> Optional[int]:
+def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_id: int) -> int | None:
     """Insert a newly-created file into the images table. Returns new image_id or None."""
     conn = None
     try:
@@ -364,7 +363,7 @@ def _register_converted_file(db_path: str, out_path: str, w: int, h: int, owner_
 
 
 @router.post("/convert")
-def convert_images(body: ConvertRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+def convert_images(body: ConvertRequest, user=Depends(get_current_user)) -> dict[str, Any]:
     """Convert/resize one or more images (synchronous, up to 50 images).
     New files (save_as != 'replace') are registered in the DB so they can be
     accessed/downloaded via /api/images/{new_id}/download."""
@@ -397,7 +396,7 @@ def convert_images(body: ConvertRequest, user=Depends(get_current_user)) -> Dict
         out_path = filepath if body.save_as == 'replace' else _build_out_path(filepath, body)
         try:
             w, h = _do_convert_one(PILImage, filepath, out_path, body)
-            new_id: Optional[int] = None
+            new_id: int | None = None
             if body.save_as == 'replace':
                 _delete_thumbnails(s.thumb_dir, image_id)
                 new_id = image_id
@@ -447,7 +446,7 @@ def convert_batch(body: ConvertRequest, user=Depends(get_current_user)):
             out_path = filepath if body.save_as == 'replace' else _build_out_path(filepath, body)
             try:
                 w, h = _do_convert_one(PILImage, filepath, out_path, body)
-                new_id: Optional[int] = None
+                new_id: int | None = None
                 if body.save_as == 'replace':
                     _delete_thumbnails(s.thumb_dir, image_id)
                     new_id = image_id
@@ -470,7 +469,7 @@ def convert_batch(body: ConvertRequest, user=Depends(get_current_user)):
 
 
 @router.post("/adjust")
-def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> dict[str, Any]:
     """Apply tonal / colour adjustments to a single image.
 
     Pipeline order: preset → gamma → tonal (shadows/highlights) → warmth → PIL enhancers
@@ -505,7 +504,7 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
             img = img.convert('RGB')
 
         # 1. Preset
-        overrides: Dict[str, float] = {}
+        overrides: dict[str, float] = {}
         if body.preset:
             img, overrides = _apply_preset(img, body.preset)
 
@@ -529,7 +528,7 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
 
     except Exception as e:
         logger.error("Adjust failed for image %d: %s", body.image_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Adjustment failed")
+        raise HTTPException(status_code=500, detail="Adjustment failed")  # noqa: B904
 
     # Determine output path
     if body.save_as == 'replace':
@@ -546,7 +545,7 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
     fmt = img.format or Path(filepath).suffix.lstrip('.').upper() or 'JPEG'
     if fmt.upper() == 'JPG':
         fmt = 'JPEG'
-    save_kwargs: Dict[str, Any] = {}
+    save_kwargs: dict[str, Any] = {}
     if fmt.upper() in ('JPEG', 'WEBP'):
         save_kwargs['quality'] = 92
 
@@ -554,10 +553,10 @@ def adjust_image(body: AdjustRequest, user=Depends(get_current_user)) -> Dict[st
         img.save(out_path, format=fmt, **save_kwargs)
     except Exception as e:
         logger.error("Adjust save failed for %s: %s", out_path, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save adjusted image")
+        raise HTTPException(status_code=500, detail="Failed to save adjusted image")  # noqa: B904
 
     w, h = img.size
-    new_image_id: Optional[int] = None
+    new_image_id: int | None = None
     conn = None
     try:
         conn = _connect(s.db_path)
@@ -596,7 +595,7 @@ def _hex_to_rgb(s: str) -> tuple:
 
 
 @router.post("/canvas-size")
-def canvas_size_image(body: CanvasSizeRequest, user=Depends(get_current_user)) -> Dict[str, Any]:
+def canvas_size_image(body: CanvasSizeRequest, user=Depends(get_current_user)) -> dict[str, Any]:
     """Add a border around an image using solid-color or mirror-edge fill.
     For AI-generated fill, use /api/bfl/outpaint instead."""
     PILImage = _get_pil()
@@ -680,7 +679,7 @@ def canvas_size_image(body: CanvasSizeRequest, user=Depends(get_current_user)) -
 
     except Exception as exc:
         logger.error("canvas-size failed for image %d: %s", body.image_id, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Canvas size operation failed")
+        raise HTTPException(status_code=500, detail="Canvas size operation failed")  # noqa: B904
 
     # Determine output path
     p = Path(filepath)
@@ -699,10 +698,10 @@ def canvas_size_image(body: CanvasSizeRequest, user=Depends(get_current_user)) -
         canvas.save(out_path, **save_kwargs)
     except Exception as exc:
         logger.error("canvas-size save failed for %s: %s", out_path, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save image with border")
+        raise HTTPException(status_code=500, detail="Failed to save image with border")  # noqa: B904
 
     w, h = canvas.size
-    new_image_id: Optional[int] = None
+    new_image_id: int | None = None
     conn = None
     try:
         conn = _connect(s.db_path)

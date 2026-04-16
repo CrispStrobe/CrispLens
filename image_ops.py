@@ -17,13 +17,12 @@ Phase-B API mapping (for reference):
   read_exif(filepath)                      → GET   /api/images/{id}/exif
 """
 
-import io
 import json
 import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ SCENE_TYPES = [
 # EXIF helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _rational_to_float(val) -> Optional[float]:
+def _rational_to_float(val) -> float | None:
     """Convert IFDRational / (num, denom) tuple / plain number to float."""
     try:
         if hasattr(val, 'numerator'):
@@ -57,7 +56,7 @@ def _rational_to_float(val) -> Optional[float]:
         return None
 
 
-def _format_shutter(val) -> Optional[str]:
+def _format_shutter(val) -> str | None:
     f = _rational_to_float(val)
     if f is None:
         return None
@@ -67,7 +66,7 @@ def _format_shutter(val) -> Optional[str]:
     return f"1/{denom} s"
 
 
-def _parse_gps_coord(vals, ref: str) -> Optional[float]:
+def _parse_gps_coord(vals, ref: str) -> float | None:
     try:
         d = _rational_to_float(vals[0])
         m = _rational_to_float(vals[1])
@@ -82,7 +81,7 @@ def _parse_gps_coord(vals, ref: str) -> Optional[float]:
         return None
 
 
-def read_exif(filepath: str) -> Dict[str, Any]:
+def read_exif(filepath: str) -> dict[str, Any]:
     """
     Read EXIF metadata from an image file using Pillow.
 
@@ -92,7 +91,7 @@ def read_exif(filepath: str) -> Dict[str, Any]:
 
     Phase-B API: GET /api/images/{id}/exif
     """
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     if not PIL_AVAILABLE:
         result['_error'] = 'Pillow not installed'
         return result
@@ -107,7 +106,7 @@ def read_exif(filepath: str) -> Dict[str, Any]:
             if not exif:
                 return result
 
-            raw: Dict[str, Any] = {}
+            raw: dict[str, Any] = {}
             for tag_id, value in exif.items():
                 raw[TAGS.get(tag_id, str(tag_id))] = value
 
@@ -144,7 +143,7 @@ def read_exif(filepath: str) -> Dict[str, Any]:
             # GPS
             gps_ifd = exif.get_ifd(0x8825)
             if gps_ifd:
-                gps: Dict[str, Any] = {}
+                gps: dict[str, Any] = {}
                 for tag_id, value in gps_ifd.items():
                     gps[GPSTAGS.get(tag_id, str(tag_id))] = value
                 lat = _parse_gps_coord(
@@ -171,7 +170,7 @@ def read_exif(filepath: str) -> Dict[str, Any]:
     return result
 
 
-def format_exif_as_markdown(exif: Dict[str, Any]) -> str:
+def format_exif_as_markdown(exif: dict[str, Any]) -> str:
     """
     Render EXIF dict as a two-column markdown table.
     Returns a plain italic message if no data is available.
@@ -179,7 +178,7 @@ def format_exif_as_markdown(exif: Dict[str, Any]) -> str:
     if '_error' in exif:
         return f"_EXIF read error: {exif['_error']}_"
 
-    rows: List[str] = []
+    rows: list[str] = []
 
     def add(label: str, val: Any):
         if val is not None and str(val).strip() not in ('', 'None'):
@@ -228,7 +227,7 @@ def _connect(db_path: str, timeout: float = 5.0) -> sqlite3.Connection:
 # Image record
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_image_record(db_path: str, image_id: int) -> Optional[Dict[str, Any]]:
+def get_image_record(db_path: str, image_id: int) -> dict[str, Any] | None:
     """
     Return the full DB record for one image, augmented with:
       detected_people  – list of {name, conf} dicts
@@ -304,7 +303,7 @@ def get_image_record(db_path: str, image_id: int) -> Optional[Dict[str, Any]]:
 # Lookup helpers (for populating filter dropdowns)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_all_tags(db_path: str) -> List[str]:
+def get_all_tags(db_path: str) -> list[str]:
     """Return all tag names ordered by usage count. Phase-B: GET /api/tags"""
     try:
         conn = _connect(db_path)
@@ -317,7 +316,7 @@ def get_all_tags(db_path: str) -> List[str]:
         return []
 
 
-def get_all_scene_types(db_path: str) -> List[str]:
+def get_all_scene_types(db_path: str) -> list[str]:
     """Return all distinct scene types present in the images table."""
     try:
         conn = _connect(db_path)
@@ -332,7 +331,7 @@ def get_all_scene_types(db_path: str) -> List[str]:
         return []
 
 
-def get_all_person_names(db_path: str) -> List[str]:
+def get_all_person_names(db_path: str) -> list[str]:
     """Return all person names. Phase-B: GET /api/people"""
     try:
         conn = _connect(db_path)
@@ -350,7 +349,7 @@ def get_all_person_names(db_path: str) -> List[str]:
 def _sync_tags_to_table(
     conn: sqlite3.Connection,
     image_id: int,
-    tags: List[str],
+    tags: list[str],
     source: str = 'manual',
 ) -> None:
     """
@@ -384,12 +383,12 @@ def update_image_metadata(
     tags_csv: str,
     creator: str = '',
     copyright: str = '',
-    fachbereich: Optional[str] = None,
-    veranstaltungsnummer: Optional[str] = None,
-    veranstaltungstitel: Optional[str] = None,
-    urheber: Optional[str] = None,
-    datum_event: Optional[str] = None,
-) -> Tuple[bool, str]:
+    fachbereich: str | None = None,
+    veranstaltungsnummer: str | None = None,
+    veranstaltungstitel: str | None = None,
+    urheber: str | None = None,
+    datum_event: str | None = None,
+) -> tuple[bool, str]:
     """
     Persist description, scene type, tags, creator/copyright, and archive metadata for an image.
     Tags are written to both images.ai_tags (JSON) and the image_tags table.
@@ -439,7 +438,7 @@ def reassign_face(
     db_path: str,
     face_id: int,
     new_person_name: str,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """
     Manually reassign a face detection to a different person.
     Creates the person if they don't exist.
@@ -447,16 +446,16 @@ def reassign_face(
     new_person_name = new_person_name.strip()
     if not new_person_name:
         return False, "❌ Person name cannot be empty"
-    
+
     try:
         conn = _connect(db_path, timeout=10.0)
-        
+
         # 1. Ensure person exists
         conn.execute("INSERT OR IGNORE INTO people (name) VALUES (?)", (new_person_name,))
         person_id = conn.execute(
             "SELECT id FROM people WHERE name = ?", (new_person_name,)
         ).fetchone()['id']
-        
+
         # 2. Update (or insert) face_embeddings table
         rows_before = conn.execute(
             "SELECT COUNT(*) as cnt FROM face_embeddings WHERE face_id=?", (face_id,)
@@ -505,7 +504,7 @@ def reassign_face(
 def delete_face(
     db_path: str,
     face_id: int,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """
     Remove a face detection and its embeddings from the database.
     Also updates the face_count in the images table.
@@ -521,11 +520,11 @@ def delete_face(
 
         conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
         conn.execute("DELETE FROM faces WHERE id = ?", (face_id,))
-        
+
         # Update face_count for the image
         new_count = conn.execute("SELECT COUNT(*) FROM faces WHERE image_id = ?", (image_id,)).fetchone()[0]
         conn.execute("UPDATE images SET face_count = ? WHERE id = ?", (new_count, image_id))
-        
+
         conn.commit()
         conn.close()
         return True, "✅ Face removed"
@@ -540,12 +539,12 @@ def re_detect_faces(
     det_thresh: float = 0.7,
     min_face_size: int = 40,
     rec_thresh: float = 0.4,
-    engine: Optional[Any] = None,
-    vlm_provider: Optional[Any] = None,
+    engine: Any | None = None,
+    vlm_provider: Any | None = None,
     det_model: str = 'auto',
     max_size: int = 0,
     vlm_max_size: int = 0,
-) -> Tuple[bool, str, Any]:
+) -> tuple[bool, str, Any]:
     """
     Clear existing faces for an image and re-run detection with new parameters.
     Reuses the existing engine if provided to avoid model reload.
@@ -588,7 +587,7 @@ def re_detect_faces(
             max_size=max_size,
             vlm_max_size=vlm_max_size,
         )
-        
+
         if result.get('success'):
             return True, f"✅ Re-detected {result.get('face_count', 0)} faces", result
         else:
@@ -607,7 +606,7 @@ def rename_image(
     db_path: str,
     image_id: int,
     new_filename: str,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """
     Rename an image file on disk and update filepath/filename in the DB.
     Directory is preserved; only the basename changes.
@@ -664,7 +663,7 @@ def get_or_create_thumbnail(
     filepath: str,
     thumb_dir: str,
     size: int = 400,
-) -> Optional[str]:
+) -> str | None:
     """
     Return the path to a JPEG thumbnail, creating it on disk if needed.
     Files are named  <image_id>_<size>.jpg  inside thumb_dir.
@@ -724,7 +723,7 @@ def load_thumbnail_pil(
     filepath: str,
     thumb_dir: str,
     size: int = 400,
-) -> Optional[Any]:
+) -> Any | None:
     """
     Return the thumbnail as a PIL Image (RGB).
     Falls back to a resized version of the original if thumbnail creation fails.
@@ -794,7 +793,7 @@ def browse_images_filtered(
     album_id:        int = 0,
     current_user_id: int = None,
     is_admin:        bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Return a list of image record dicts matching the given filters.
 
@@ -825,7 +824,7 @@ def browse_images_filtered(
     order = sort_map.get(sort_by, 'i.created_at DESC')
 
     wheres = ["i.processed = 1", "i.filepath != '__training__'"]
-    params: List[Any] = []
+    params: list[Any] = []
 
     if person.strip():
         wheres.append("""

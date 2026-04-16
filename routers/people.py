@@ -2,7 +2,7 @@
 routers/people.py — People list, detail, rename, merge, delete.
 """
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -41,7 +41,7 @@ class ReassignFaceRequest(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_people() -> List[Dict[str, Any]]:
+def list_people() -> list[dict[str, Any]]:
     s = _state()
     return s.engine.get_all_people()
 
@@ -83,7 +83,7 @@ def get_person_embeddings():
             })
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -118,7 +118,7 @@ def get_person(person_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -142,7 +142,7 @@ def rename_person(person_id: int, body: RenamePersonRequest, _=Depends(require_a
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -165,7 +165,7 @@ def merge_people(body: MergeRequest, _=Depends(require_admin_or_mediamanager)):
         conn.commit()
         return {"ok": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -207,7 +207,7 @@ def delete_person(person_id: int, _=Depends(require_admin_or_mediamanager)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()

@@ -14,7 +14,6 @@ import base64
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -41,7 +40,7 @@ def _state_with_engine():
     try:
         state.engine._ensure_backend()
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=503,
             detail=f'Face recognition model failed to initialize: {e}',
         )
@@ -65,10 +64,10 @@ class FaceData(BaseModel):
     bbox_right:           float
     bbox_bottom:          float
     detection_confidence: float
-    embedding:            List[float]   # 512 L2-normalised floats
+    embedding:            list[float]   # 512 L2-normalised floats
     embedding_dimension:  int
-    age:                  Optional[int]   = None
-    gender:               Optional[str]   = None  # 'male' | 'female'
+    age:                  int | None   = None
+    gender:               str | None   = None  # 'male' | 'female'
 
 
 class ImportProcessedRequest(BaseModel):
@@ -77,11 +76,11 @@ class ImportProcessedRequest(BaseModel):
     width:        int
     height:       int
     thumbnail_b64: str
-    file_hash:    Optional[str]  = None
-    file_size:    Optional[int]  = None
-    exif_data:    Optional[dict] = None
+    file_hash:    str | None  = None
+    file_size:    int | None  = None
+    exif_data:    dict | None = None
     local_model:  str            = 'buffalo_l'
-    faces:        List[FaceData] = []
+    faces:        list[FaceData] = []
     visibility:   str            = 'shared'
 
 
@@ -92,17 +91,17 @@ async def upload_local(
     file:           UploadFile     = File(...),
     local_path:     str            = Form(...),
     visibility:     str            = Form('shared'),
-    det_thresh:     Optional[float] = Form(None),
-    min_face_size:  Optional[int]   = Form(None),
-    rec_thresh:     Optional[float] = Form(None),
+    det_thresh:     float | None = Form(None),
+    min_face_size:  int | None   = Form(None),
+    rec_thresh:     float | None = Form(None),
     det_model:      str             = Form('auto'),
     max_size:       int             = Form(0),
     skip_faces:     bool            = Form(False),
     skip_vlm:       bool            = Form(False),
     tag_ids:        str             = Form(''),        # JSON array of existing tag IDs
     new_tag_names:  str             = Form(''),        # JSON array of new tag names to create
-    album_id:       Optional[int]   = Form(None),
-    new_album_name: Optional[str]   = Form(None),
+    album_id:       int | None   = Form(None),
+    new_album_name: str | None   = Form(None),
     user=Depends(get_current_user),
 ):
     """
@@ -125,7 +124,7 @@ async def upload_local(
             timeout=120.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=503,
             detail='Face recognition model did not become ready within 120 s.',
         )
@@ -386,7 +385,7 @@ def import_processed(body: ImportProcessedRequest, user=Depends(get_current_user
         try:
             thumb_bytes = base64.b64decode(body.thumbnail_b64)
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f'Invalid thumbnail_b64: {e}')
+            raise HTTPException(status_code=422, detail=f'Invalid thumbnail_b64: {e}')  # noqa: B904
 
         # ── 3. Insert image record ─────────────────────────────────────────────
         exif    = body.exif_data or {}
@@ -448,7 +447,7 @@ def import_processed(body: ImportProcessedRequest, user=Depends(get_current_user
         # ── 5. Insert faces + embeddings, run FAISS matching ───────────────────
         from face_recognition_core import Face, BoundingBox
 
-        matched_people: List[str] = []
+        matched_people: list[str] = []
 
         for fd in body.faces:
             # Face record

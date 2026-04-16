@@ -9,10 +9,10 @@ import logging
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from image_ops import (
@@ -23,7 +23,7 @@ from image_ops import (
     rename_image,
     update_image_metadata,
 )
-from routers.deps import can_access_image, get_current_user, require_admin_or_mediamanager
+from routers.deps import can_access_image, get_current_user
 
 # HTTP cache headers — 1 day browser cache, stale-while-revalidate for background refresh.
 _THUMB_CACHE = {'Cache-Control': 'public, max-age=86400, stale-while-revalidate=3600'}
@@ -122,11 +122,11 @@ class MetadataPatch(BaseModel):
     tags_csv:             str            = ''
     creator:              str            = ''
     copyright:            str            = ''
-    fachbereich:          Optional[str]  = None
-    veranstaltungsnummer: Optional[str]  = None
-    veranstaltungstitel:  Optional[str]  = None
-    urheber:              Optional[str]  = None
-    datum_event:          Optional[str]  = None
+    fachbereich:          str | None  = None
+    veranstaltungsnummer: str | None  = None
+    veranstaltungstitel:  str | None  = None
+    urheber:              str | None  = None
+    datum_event:          str | None  = None
 
 class RenameRequest(BaseModel):
     new_filename: str
@@ -135,7 +135,7 @@ class RatingPatch(BaseModel):
     rating: int  # 0–5
 
 class FlagPatch(BaseModel):
-    flag: Optional[str] = None  # 'pick' | 'delete' | null
+    flag: str | None = None  # 'pick' | 'delete' | null
 
 class RotateRequest(BaseModel):
     direction: str  # 'cw' | 'ccw' | 'flip_h' | 'flip_v'
@@ -150,8 +150,8 @@ class ReDetectRequest(BaseModel):
     vlm_max_size:  int   = 0      # 0 = send original; >0 = resize long-edge before VLM
 
 class ManualAddFaceRequest(BaseModel):
-    bbox: Dict[str, float]  # top, right, bottom, left
-    rec_thresh: Optional[float] = None
+    bbox: dict[str, float]  # top, right, bottom, left
+    rec_thresh: float | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ def list_images(
     unidentified: bool = Query(False),
     album:        int  = Query(0),
     user=Depends(get_current_user),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     s = _state()
     rows = browse_images_filtered(
         db_path=s.db_path,
@@ -204,7 +204,7 @@ def get_image(image_id: int, user=Depends(get_current_user)):
 
 
 @router.get("/{image_id}/faces")
-def get_image_faces(image_id: int, user=Depends(get_current_user)) -> List[Dict[str, Any]]:
+def get_image_faces(image_id: int, user=Depends(get_current_user)) -> list[dict[str, Any]]:
     """Return all detected faces for an image with bbox and identity info."""
     s = _state()
     if not can_access_image(image_id, user, s.db_path):
@@ -248,7 +248,7 @@ def get_image_faces(image_id: int, user=Depends(get_current_user)) -> List[Dict[
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -365,13 +365,13 @@ def get_preview(image_id: int, user=Depends(get_current_user)):
     if not PIL_AVAILABLE:
         logger.warning("PIL not available, falling back to full file")
         return get_full(image_id, user=user)
-    
+
     s = _state()
     rec = get_image_record(s.db_path, image_id)
     if rec is None:
         logger.error(f"Image {image_id} not found in DB")
         raise HTTPException(status_code=404, detail="Image not found")
-    
+
     filepath = rec.get('filepath', '')
     logger.debug(f"Image {image_id} filepath: {filepath}")
     if not filepath or not Path(filepath).exists():
@@ -473,7 +473,7 @@ def delete_image(image_id: int, user=Depends(get_current_user)):
         _thumb_mem.invalidate(image_id)
         return {"ok": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -614,7 +614,7 @@ def rotate_image(image_id: int, body: RotateRequest, user=Depends(get_current_us
     try:
         from PIL import Image as PILImage
     except ImportError:
-        raise HTTPException(status_code=500, detail="Pillow not installed")
+        raise HTTPException(status_code=500, detail="Pillow not installed")  # noqa: B904
 
     try:
         img = PILImage.open(filepath)
@@ -635,7 +635,7 @@ def rotate_image(image_id: int, body: RotateRequest, user=Depends(get_current_us
         rotated.save(filepath, format=fmt, **save_kwargs)
         new_w, new_h = rotated.size
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Rotation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Rotation failed: {e}")  # noqa: B904
 
     # Update DB dimensions
     conn = None
@@ -740,7 +740,7 @@ def clear_identifications(image_id: int, user=Depends(get_current_user)):
             pass
         return {"ok": True, "cleared": affected}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -769,7 +769,7 @@ def clear_detections(image_id: int, user=Depends(get_current_user)):
             pass
         return {"ok": True, "deleted": deleted}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -792,7 +792,7 @@ class VisibilityRequest(BaseModel):
 
 
 class ShareRequest(BaseModel):
-    user_ids: List[int]
+    user_ids: list[int]
 
 
 @router.post("/{image_id}/visibility")

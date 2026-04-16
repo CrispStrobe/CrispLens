@@ -5,7 +5,6 @@ Role rules:
   admin / mediamanager  — may use all providers + set system keys
   user                  — EU providers only; may not set system keys
 """
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -123,7 +122,7 @@ def test_key(provider: str, user=Depends(get_current_user)):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Connection error: {e}")
+            raise HTTPException(status_code=400, detail=f"Connection error: {e}")  # noqa: B904
 
     from vlm_providers import fetch_vlm_models
     models, error = fetch_vlm_models(provider, api_key)

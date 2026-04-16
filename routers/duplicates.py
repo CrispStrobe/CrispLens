@@ -16,7 +16,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import datetime
 
@@ -69,7 +69,7 @@ def _ensure_phash_column(db_path: str):
             conn.close()
 
 
-def _image_details(conn, image_id: int) -> Optional[Dict]:
+def _image_details(conn, image_id: int) -> dict | None:
     """Load key fields for one image."""
     row = conn.execute("""
         SELECT id, filepath, filename, file_hash, file_size, face_count,
@@ -100,7 +100,7 @@ def _bbox_iou(a_top, a_right, a_bottom, a_left,
     return inter / union if union > 0 else 0.0
 
 
-def _merge_faces(conn, keep_id: int, delete_ids: List[int]):
+def _merge_faces(conn, keep_id: int, delete_ids: list[int]):
     """
     Carry verified person assignments from the deleted images' faces over to
     the best-matching face in the kept image (by bbox IOU >= 0.3).
@@ -162,8 +162,8 @@ def _delete_image_record(conn, image_id: int):
     conn.execute("DELETE FROM images WHERE id=?",              (image_id,))
 
 
-def _do_resolve(db_path: str, keep_id: int, delete_ids: List[int],
-                action: str, merge_faces: bool) -> Dict[str, Any]:
+def _do_resolve(db_path: str, keep_id: int, delete_ids: list[int],
+                action: str, merge_faces: bool) -> dict[str, Any]:
     """Core resolution logic. Returns summary dict."""
     conn = None
     errors = []
@@ -223,7 +223,7 @@ def _do_resolve(db_path: str, keep_id: int, delete_ids: List[int],
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -241,23 +241,23 @@ def _hamming(h1: str, h2: str) -> int:
 
 class ResolveRequest(BaseModel):
     keep_id:     int
-    delete_ids:  List[int]
+    delete_ids:  list[int]
     action:      str = 'delete_file'   # 'delete_file' | 'db_only' | 'symlink'
     merge_faces: bool = True
 
 class BatchGroupItem(BaseModel):
     keep_id:    int
-    delete_ids: List[int]
+    delete_ids: list[int]
 
 class ResolveBatchRequest(BaseModel):
-    groups:      List[BatchGroupItem]
+    groups:      list[BatchGroupItem]
     action:      str  = 'delete_file'
     merge_faces: bool = True
 
 class CleanupScriptRequest(BaseModel):
     # Each entry is {origin_path, server_path, kept_origin_path, filename} —
     # paths collected in the frontend before resolve (DB records deleted by then).
-    files:  List[Dict[str, Any]]
+    files:  list[dict[str, Any]]
     format: str = 'bash'   # 'bash' | 'powershell' | 'json'
     action: str = 'trash'  # 'trash' | 'delete' | 'symlink'
 
@@ -349,7 +349,7 @@ def get_stats():
 def get_groups(
     method:    str = Query('hash'),      # name_size | hash | visual
     threshold: int = Query(8, ge=0, le=64),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return duplicate groups. Each group has a list of image detail dicts."""
     s = _state()
     _ensure_phash_column(s.db_path)
@@ -413,7 +413,7 @@ def get_groups(
 
             # Greedy grouping by hamming distance
             ungrouped = [(r['id'], r['phash']) for r in rows]
-            groups_raw: List[List[int]] = []
+            groups_raw: list[list[int]] = []
             assigned: set = set()
 
             for i, (id_a, hash_a) in enumerate(ungrouped):
@@ -446,7 +446,7 @@ def get_groups(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()

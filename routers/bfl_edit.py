@@ -15,7 +15,6 @@ import random
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
 
 import requests as _req
 from fastapi import APIRouter, Depends, HTTPException
@@ -81,7 +80,7 @@ def _get_bfl_key(user, s) -> str:
     return key
 
 
-def _get_image_info(db_path: str, image_id: int) -> Optional[dict]:
+def _get_image_info(db_path: str, image_id: int) -> dict | None:
     conn = None
     try:
         conn = sqlite3.connect(db_path, timeout=10.0)
@@ -166,7 +165,7 @@ def _build_bfl_out_path(filepath: str, suffix: str) -> str:
 
 def _save_and_register(s, data: bytes, out_path: str, image_id: int,
                        save_as: str, user_id: int,
-                       register: bool = True) -> Optional[int]:
+                       register: bool = True) -> int | None:
     """Write result bytes to disk, optionally register in DB. Returns new_image_id or None."""
     with open(out_path, "wb") as f:
         f.write(data)
@@ -240,10 +239,10 @@ class AIEditRequest(BaseModel):
     image_id:     int
     prompt:       str
     model:        str           = "flux-kontext-pro"
-    aspect_ratio: Optional[str] = None
+    aspect_ratio: str | None = None
     save_as:      str           = "new_file"
     suffix:       str           = "_edited"
-    seed:         Optional[int] = None
+    seed:         int | None = None
     register_in_db:     bool          = True
 
 
@@ -253,16 +252,16 @@ class GenerateRequest(BaseModel):
     # FLUX.1 Kontext / flux-pro*: use aspect_ratio
     aspect_ratio:    str            = "1:1"
     # FLUX.2 models: use width/height (multiples of 16, defaults to 1024×1024)
-    width:           Optional[int]  = None
-    height:          Optional[int]  = None
+    width:           int | None  = None
+    height:          int | None  = None
     # FLUX.2 flex only: steps + guidance
-    steps:           Optional[int]  = None
-    guidance:        Optional[float] = None
-    seed:            Optional[int]  = None
+    steps:           int | None  = None
+    guidance:        float | None = None
+    seed:            int | None  = None
     output_folder:   str            = ""
     filename_prefix: str            = "generated"
     # Optional reference image (by DB id); sent as input_image when provided
-    image_id:        Optional[int]  = None
+    image_id:        int | None  = None
     register_in_db:  bool           = True
 
 
@@ -310,7 +309,7 @@ def outpaint_image(body: OutpaintRequest, user=Depends(get_current_user)):
         mask_b64 = _img_to_b64(mask, "PNG")
     except Exception as e:
         logger.error("Outpaint prep failed for image %d: %s", body.image_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Image preparation failed")
+        raise HTTPException(status_code=500, detail="Image preparation failed")  # noqa: B904
 
     prompt = body.prompt.strip() or (
         "Extend the image naturally to fill the surrounding area, "
@@ -389,7 +388,7 @@ def inpaint_image(body: InpaintRequest, user=Depends(get_current_user)):
         mask_b64 = _img_to_b64(mask, "PNG")
     except Exception as e:
         logger.error("Inpaint prep failed for image %d: %s", body.image_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Image preparation failed")
+        raise HTTPException(status_code=500, detail="Image preparation failed")  # noqa: B904
 
     payload = {
         "image":         image_b64,
@@ -452,7 +451,7 @@ def ai_edit_image(body: AIEditRequest, user=Depends(get_current_user)):
         image_b64 = _img_to_b64(img, "JPEG")
     except Exception as e:
         logger.error("AI edit prep failed for image %d: %s", body.image_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Image preparation failed")
+        raise HTTPException(status_code=500, detail="Image preparation failed")  # noqa: B904
 
     payload: dict = {"prompt": body.prompt, "input_image": image_b64, "output_format": "jpeg"}
     if body.seed is not None:
@@ -506,7 +505,7 @@ def generate_image(body: GenerateRequest, user=Depends(get_current_user)):
     try:
         os.makedirs(out_dir, exist_ok=True)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Cannot create output folder: {e}")
+        raise HTTPException(status_code=500, detail=f"Cannot create output folder: {e}")  # noqa: B904
 
     # Unique filename: prefix_timestamp_hex.jpg
     prefix   = body.filename_prefix.strip() or "generated"
@@ -617,7 +616,7 @@ def register_bfl_file(body: RegisterFileRequest, user=Depends(get_current_user))
         with _PILImg.open(str(p)) as img:
             w, h = img.size
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Cannot open image: {e}")
+        raise HTTPException(status_code=422, detail=f"Cannot open image: {e}")  # noqa: B904
     new_id = _register_converted_file(s.db_path, str(p), w, h, user.id)
     logger.info("register_bfl_file: registered path=%s | new_image_id=%s | %dx%d | user=%s",
                 p, new_id, w, h, user.username)

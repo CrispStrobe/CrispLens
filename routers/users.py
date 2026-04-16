@@ -9,7 +9,6 @@ Endpoints:
     POST   /api/users/{user_id}/reset-lock  reset failed-login counter
 """
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,14 +30,14 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     role: str = 'user'              # 'admin' | 'user' | 'mediamanager'
-    allowed_folders: List[str] = []
+    allowed_folders: list[str] = []
 
 
 class PatchUserRequest(BaseModel):
-    role:            Optional[str]        = None
-    is_active:       Optional[bool]       = None
-    password:        Optional[str]        = None
-    allowed_folders: Optional[List[str]]  = None
+    role:            str | None        = None
+    is_active:       bool | None       = None
+    password:        str | None        = None
+    allowed_folders: list[str] | None  = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -50,7 +49,7 @@ def list_users(_admin=Depends(require_admin)):
     result = []
     for u in users:
         # Fetch last_login + failed_login_attempts separately (not in User dataclass)
-        import sqlite3, json
+        import sqlite3
         conn = sqlite3.connect(s.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         row = conn.execute(

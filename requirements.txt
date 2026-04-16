@@ -34,3 +34,12 @@ mnemonic
 
 # Optional: visual duplicate detection
 imagehash
+
+# Optional: MediaPipe face detection (CPU), Tasks API ≥ 0.10
+mediapipe>=0.10.14
+
+# Video processing (scene-change extraction + frame decode)
+av
+
+# Speech-to-text (local, default transcription backend)
+faster-whisper

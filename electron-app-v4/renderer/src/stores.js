@@ -230,6 +230,28 @@ const EN = {
   ort_use_directml_hint:      'Hardware acceleration on Windows for AMD/NVIDIA/Intel GPUs.',
   ort_recommended:            'Recommended for this platform',
   ort_no_accel_available:     'No platform-specific acceleration available (WASM CPU only).',
+  // Hardcoded-to-i18n additions (task #1): labels & notes used in SettingsView
+  axis_3_badge:               'AXIS 3',
+  ort_providers_server_section: 'ONNX EXECUTION PROVIDERS (Node.js backend)',
+  ort_provider_cuda_linux:    'CUDA (Linux/NVIDIA)',
+  ort_provider_coreml_mac:    'CoreML (macOS/Apple Silicon)',
+  ort_provider_directml_win:  'DirectML (Windows)',
+  ort_gpu_warning_note_html:  '⚠ <strong>Note:</strong> the standard <code>onnxruntime-node</code> npm package is <strong>CPU-only</strong>. CUDA/CoreML/DirectML settings are stored and passed to ORT but will silently fall back to CPU unless you replace <code>onnxruntime-node</code> with a GPU-enabled build. For GPU inference, use the <strong>Python FastAPI backend</strong> with <code>onnxruntime-gpu</code> (fix_db.sh auto-installs it when NVIDIA GPU is detected). Save Settings then Reload Engine after changing.',
+  ort_reload_engine_btn:      '↺ Reload Engine',
+  ort_engine_reloaded_msg:    'Engine reloaded',
+  ort_gpu_wasm_warning:       '⚠ GPU mode uses a larger WASM runtime (~24 MB). Restart/reload after changing.',
+  standalone_wasm_hint_prefix: 'Standalone: uses <strong>Browser WASM</strong> (onnxruntime-web).',
+  standalone_wasm_electron_hint: 'WebGL is <strong>off by default</strong> in Electron — more stable. Enable below to use GPU acceleration (requires app restart).',
+  standalone_wasm_browser_hint:  'WebGL is on by default. Enable WebGPU for best GPU performance (experimental).',
+  bench_perf_hint:            'Test performance of different inference backends on this device.',
+  bench_image_id_label:       'Image ID (opt):',
+  bench_run_browser:          'Run Browser Benchmark',
+  bench_run_server:           'Run Server Benchmark',
+  bench_running:              'Running...',
+  // (i) info button content
+  info_bildarchiv_workflow_title: 'Bildarchiv / Bildauswahl workflow',
+  info_bildarchiv_workflow:   'Two-stage archive. <strong>Bildauswahl</strong> = curated selection (short-term working pool). <strong>Bildarchiv</strong> = long-term archive organized by folder/filename templates. Set the base paths and templates here; the Archive action on an image (copy/move) then writes the file plus ExifTool metadata into the correct subfolder.',
+  info_offline_thumb_size_title: 'Thumbnail resolution',
   // Detector status messages (engine status panel)
   settings_detectors:         'Detectors',
   det_model_not_downloaded:   'model not yet downloaded',
@@ -901,6 +923,28 @@ export const TRANSLATIONS = {
     ort_use_directml_hint:      'Hardware-Beschleunigung unter Windows für AMD/NVIDIA/Intel.',
     ort_recommended:            'Empfohlen für diese Plattform',
     ort_no_accel_available:     'Keine plattformspezifische Beschleunigung verfügbar (WASM-CPU).',
+    // Task #1: German for hardcoded strings in SettingsView
+    axis_3_badge:               'ACHSE 3',
+    ort_providers_server_section: 'ONNX-EXECUTION-PROVIDER (Node.js-Backend)',
+    ort_provider_cuda_linux:    'CUDA (Linux/NVIDIA)',
+    ort_provider_coreml_mac:    'CoreML (macOS/Apple Silicon)',
+    ort_provider_directml_win:  'DirectML (Windows)',
+    ort_gpu_warning_note_html:  '⚠ <strong>Hinweis:</strong> Das Standard-npm-Paket <code>onnxruntime-node</code> ist <strong>nur CPU-fähig</strong>. CUDA/CoreML/DirectML-Einstellungen werden zwar gespeichert und an ORT übergeben, führen aber stillschweigend zum CPU-Fallback, solange <code>onnxruntime-node</code> nicht durch einen GPU-Build ersetzt wird. Für GPU-Inferenz das <strong>Python-FastAPI-Backend</strong> mit <code>onnxruntime-gpu</code> nutzen (fix_db.sh installiert es automatisch, wenn eine NVIDIA-GPU erkannt wird). Nach Änderung zuerst Einstellungen speichern, dann Engine neu laden.',
+    ort_reload_engine_btn:      '↺ Engine neu laden',
+    ort_engine_reloaded_msg:    'Engine neu geladen',
+    ort_gpu_wasm_warning:       '⚠ GPU-Modus nutzt eine größere WASM-Laufzeit (~24 MB). Nach Änderung neu starten bzw. neu laden.',
+    standalone_wasm_hint_prefix: 'Standalone: nutzt <strong>Browser-WASM</strong> (onnxruntime-web).',
+    standalone_wasm_electron_hint: 'WebGL ist in Electron <strong>standardmäßig aus</strong> – stabiler. Unten aktivieren für GPU-Beschleunigung (App-Neustart erforderlich).',
+    standalone_wasm_browser_hint:  'WebGL ist standardmäßig aktiv. WebGPU für beste GPU-Leistung aktivieren (experimentell).',
+    bench_perf_hint:            'Leistung verschiedener Inferenz-Backends auf diesem Gerät testen.',
+    bench_image_id_label:       'Bild-ID (opt.):',
+    bench_run_browser:          'Browser-Benchmark starten',
+    bench_run_server:           'Server-Benchmark starten',
+    bench_running:              'Läuft…',
+    // (i) info button content
+    info_bildarchiv_workflow_title: 'Bildarchiv-/Bildauswahl-Workflow',
+    info_bildarchiv_workflow:   'Zweistufiges Archiv. <strong>Bildauswahl</strong> = kuratierte Auswahl (kurzfristiger Arbeitspool). <strong>Bildarchiv</strong> = Langzeitarchiv, organisiert per Ordner-/Dateinamens-Vorlagen. Basis-Pfade und Vorlagen hier festlegen; die Archiv-Aktion auf einem Bild (Kopieren/Verschieben) schreibt die Datei samt ExifTool-Metadaten in den richtigen Unterordner.',
+    info_offline_thumb_size_title: 'Vorschau-Auflösung',
     settings_detectors:         'Detektoren',
     det_model_not_downloaded:   'Modell noch nicht heruntergeladen',
     det_lib_missing:            'Bibliothek fehlt',
@@ -1365,7 +1409,7 @@ function _getInitialLanguage() {
       console.log(`[stores] Found cached language in sessionStorage: "${l}"`);
       return l;
     }
-  } catch (e) {}
+  } catch (_e) { /* ignore */ }
   console.log('[stores] No stored language found, defaulting to "en"');
   return 'en';
 }

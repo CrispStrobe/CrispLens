@@ -5,7 +5,7 @@
     fetchUserVlmPrefs, saveUserVlmPrefs,
     fetchUserDetPrefs, saveUserDetPrefs,
     fetchProviders, fetchKeyStatus, saveApiKey, deleteApiKey, testApiKey,
-    login, logout, fetchMe, fetchVlmModels,
+    login, logout, fetchVlmModels,
     listUsers, createUser, updateUser, deleteUser, resetUserLock,
     checkCredentials, fetchDbStatus, fetchEngineStatus, reloadEngine,
     changePassword, fetchTranslations,
@@ -18,6 +18,7 @@
            testAdminJson } from '../api.js';
   import ServerUpdateModal from './ServerUpdateModal.svelte';
   import ServerLogsModal   from './ServerLogsModal.svelte';
+  import InfoHint          from './InfoHint.svelte';
   import { VLM_MODELS } from './VlmData.js';
 
   // ── Config state ──────────────────────────────────────────────────────────
@@ -54,9 +55,11 @@
   let serverBenchResults = null;
   let benchProgress = '';
   let benchImageId = null;
+  /* eslint-disable no-unused-vars, svelte/no-immutable-reactive-statements */
   $: isAppleSiliconClient = typeof navigator !== 'undefined' && /Macintosh|Mac OS X/i.test(navigator.userAgent);
   $: isWindowsClient = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
   $: isLinuxClient = typeof navigator !== 'undefined' && /Linux/i.test(navigator.userAgent);
+  /* eslint-enable no-unused-vars, svelte/no-immutable-reactive-statements */
 
   let fixDbPath       = '';
   let detModel     = 'auto';   // detection model (system default or user override)
@@ -67,6 +70,7 @@
   let archiveSaving    = false;
   let archiveSaveMsg   = '';
   let archiveExiftoolOk = false;
+  // eslint-disable-next-line no-unused-vars
   const FACHBEREICH_DEFAULT = ['DIR', 'ÖFA', 'GES', 'GUS', 'HOH', 'INZ', 'IRD', 'MMN', 'NUT', 'KUN', 'RSP', 'SUG'];
 
   async function loadArchiveConfig() {
@@ -125,7 +129,9 @@
   let remoteV2User   = '';
   let remoteV2Pass   = '';
   let remoteV2Mode   = 'upload_bytes';  // 'upload_bytes' | 'local_infer'
+  // eslint-disable-next-line no-unused-vars
   let remoteV2TestMsg = '';
+  // eslint-disable-next-line no-unused-vars
   let remoteV2Testing = false;
 
   // Detection model options vary by backend
@@ -470,11 +476,13 @@
   let pwaServerUrl  = typeof window !== 'undefined'
     ? (localStorage.getItem('remote_url') || window.location.origin)
     : '';
+  // eslint-disable-next-line no-unused-vars
   let pwaConnectMsg = '';
   let serverPresets = typeof window !== 'undefined'
     ? JSON.parse(localStorage.getItem(_PRESETS_KEY) || '[]')
     : [];
   let newPresetName = '';
+  // eslint-disable-next-line no-unused-vars
   let presetMsg = '';
 
   function doPwaConnect(urlOverride) {
@@ -492,7 +500,7 @@
     setTimeout(() => { window.location.reload(); }, 800);
   }
 
-  function saveCurrentAsPreset() {
+  function _saveCurrentAsPreset() {
     const url = pwaServerUrl.trim().replace(/\/$/, '');
     if (!url || !url.startsWith('http')) { presetMsg = '✗ Set a valid URL first'; return; }
     const name = newPresetName.trim() || url;
@@ -620,6 +628,7 @@
   // ── User management state (admin only) ───────────────────────────────────
   let users          = [];
   let usersLoading   = false;
+  // eslint-disable-next-line no-useless-assignment
   let usersLoaded    = false;
   let usersMsg       = '';
   let newUserName    = '';
@@ -810,7 +819,7 @@
           b64 = thumb.startsWith('data:') ? thumb : `data:image/jpeg;base64,${thumb}`;
           console.log('[Benchmark] Using direct base64 from DB');
         }
-      } catch (e) { console.warn('[Benchmark] DB fetch failed'); }
+      } catch (_e) { console.warn('[Benchmark] DB fetch failed'); }
 
       // Step B: Fallback to URL conversion
       if (!b64) {
@@ -1194,7 +1203,7 @@
   }
 
   // ── Test remote v2 connection ─────────────────────────────────────────────
-  async function doTestRemoteV2() {
+  async function _doTestRemoteV2() {
     remoteV2Testing = true;
     remoteV2TestMsg = '';
     try {
@@ -1603,7 +1612,7 @@
         <p class="hint" style="margin-bottom:10px;">{$t('api_server_hint')}</p>
         {#if serverPresets.length > 0}
           <div style="margin-bottom:12px;">
-            {#each serverPresets as preset, i}
+            {#each serverPresets as preset, i (preset.name ?? i)}
             <div class="preset-row">
               <div class="preset-info"><span class="preset-name">{preset.name}</span></div>
               <button class="preset-connect" on:click={() => doPwaConnect(preset.url)}
@@ -1677,16 +1686,20 @@
     <!-- ── Axis 3: Inference Engine ─────────────────────────────────────── -->
     <div style="border-top:1px solid #2a2a42;padding-top:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">AXIS 3</span>
+        <span style="font-size:10px;font-weight:700;color:#4080c0;background:#1a2840;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;">{$t('axis_3_badge')}</span>
         <span style="font-size:13px;font-weight:600;color:#c0d0e0;">{$t('processing_backend_section')}</span>
       </div>
       {#if dbMode === 'local'}
+        <!-- i18n strings come from stores.js (dev-authored). Only contain <strong>/<code>. -->
         <p class="hint">
-          Standalone: uses <strong>Browser WASM</strong> (onnxruntime-web).
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+          {@html $t('standalone_wasm_hint_prefix')}
           {#if _inElectron}
-            WebGL is <strong>off by default</strong> in Electron — more stable. Enable below to use GPU acceleration (requires app restart).
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html $t('standalone_wasm_electron_hint')}
           {:else}
-            WebGL is on by default. Enable WebGPU for best GPU performance (experimental).
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html $t('standalone_wasm_browser_hint')}
           {/if}
         </p>
         <div class="form-grid" style="margin-top:8px;">
@@ -1696,7 +1709,7 @@
           <input type="checkbox" bind:checked={ortUseWebGPU} on:change={saveOrtPrefs} />
         </div>
         {#if (ortUseWebGL || ortUseWebGPU)}
-          <p class="hint" style="color:#c08040;margin-top:4px;">⚠ GPU mode uses a larger WASM runtime (~24 MB). Restart/reload after changing.</p>
+          <p class="hint" style="color:#c08040;margin-top:4px;">{$t('ort_gpu_wasm_warning')}</p>
         {/if}
       {:else if isAdmin && $backendReady}
         <div class="form-grid">
@@ -1710,25 +1723,21 @@
         {#if procBackend === 'local'}
           <!-- Server-side ONNX execution provider toggles -->
           <div style="margin-top:10px;padding:10px;background:#0e1420;border-radius:6px;border:1px solid #1e2a3a;">
-            <div style="font-size:11px;font-weight:700;color:#4a6080;margin-bottom:8px;letter-spacing:0.05em;">ONNX EXECUTION PROVIDERS (Node.js backend)</div>
+            <div style="font-size:11px;font-weight:700;color:#4a6080;margin-bottom:8px;letter-spacing:0.05em;">{$t('ort_providers_server_section')}</div>
             <div class="form-grid">
-              <label>CUDA (Linux/NVIDIA)</label>
+              <label>{$t('ort_provider_cuda_linux')}</label>
               <input type="checkbox" bind:checked={ortUseCUDA} />
-              <label>CoreML (macOS/Apple Silicon)</label>
+              <label>{$t('ort_provider_coreml_mac')}</label>
               <input type="checkbox" bind:checked={ortUseCoreML} />
-              <label>DirectML (Windows)</label>
+              <label>{$t('ort_provider_directml_win')}</label>
               <input type="checkbox" bind:checked={ortUseDirectML} />
             </div>
             <p class="hint" style="margin-top:6px;">
-              ⚠ <strong>Note:</strong> the standard <code>onnxruntime-node</code> npm package is <strong>CPU-only</strong>.
-              CUDA/CoreML/DirectML settings are stored and passed to ORT but will silently fall back to CPU
-              unless you replace <code>onnxruntime-node</code> with a GPU-enabled build.
-              For GPU inference, use the <strong>Python FastAPI backend</strong> with <code>onnxruntime-gpu</code>
-              (fix_db.sh auto-installs it when NVIDIA GPU is detected).
-              Save Settings then Reload Engine after changing.
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html $t('ort_gpu_warning_note_html')}
             </p>
-            <button class="btn-sm" style="margin-top:6px;" on:click={async () => { await reloadEngine(); alert('Engine reloaded'); }}>
-              ↺ Reload Engine
+            <button class="btn-sm" style="margin-top:6px;" on:click={async () => { await reloadEngine(); alert($t('ort_engine_reloaded_msg')); }}>
+              {$t('ort_reload_engine_btn')}
             </button>
           </div>
         {:else if procBackend === 'remote_v2' || procBackend === 'remote_v4'}
@@ -1761,12 +1770,14 @@
         <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncMaxSizeMb} MB</span>
       </div>
 
-      <label>{$t('offline_thumb_size')}</label>
+      <label>
+        {$t('offline_thumb_size')}
+        <InfoHint title={$t('info_offline_thumb_size_title')} text={$t('offline_thumb_size_hint')} />
+      </label>
       <div class="field-row" style="gap:10px;">
         <input type="range" min="150" max="1200" step="50" bind:value={syncThumbSize} style="flex:1;" />
         <span style="width:55px;text-align:right;font-variant-numeric:tabular-nums;">{syncThumbSize}px</span>
       </div>
-      <p class="hint" style="margin-top:4px;">{$t('offline_thumb_size_hint')}</p>
     </div>
 
     {#if syncStats}
@@ -1849,7 +1860,7 @@
 
           <label>{$t('settings_local_model')}</label>
           <select bind:value={localModelLocal}>
-            {#each IF_MODELS as m}
+            {#each IF_MODELS as m (m)}
               <option value={m}>{m}</option>
             {/each}
           </select>
@@ -1859,7 +1870,7 @@
           <div class="model-table-head">
             <span>Model</span><span>Status</span><span></span>
           </div>
-          {#each IF_MODELS as m}
+          {#each IF_MODELS as m (m)}
             <div class="model-row-item" class:active-model={m === localModelLocal}>
               <span class="model-name">{m}</span>
               <span class="model-status-badge" class:downloaded={localModelStatus[m]}>
@@ -1891,20 +1902,20 @@
   <!-- Benchmarking -->
   <section class="card">
     <h3>{$t('tab_benchmark')}</h3>
-    <p class="hint">Test performance of different inference backends on this device.</p>
-    
+    <p class="hint">{$t('bench_perf_hint')}</p>
+
     <div class="flex-row" style="margin-top:10px; gap:15px; align-items:center;">
       <div style="display:flex; align-items:center; gap:5px;">
-        <label for="bench-img-id" style="font-size:11px; color:#8090b0; margin:0;">Image ID (opt):</label>
-        <input id="bench-img-id" type="number" bind:value={benchImageId} placeholder="auto" 
+        <label for="bench-img-id" style="font-size:11px; color:#8090b0; margin:0;">{$t('bench_image_id_label')}</label>
+        <input id="bench-img-id" type="number" bind:value={benchImageId} placeholder="auto"
                class="num-input" style="width:60px; margin:0;" />
       </div>
       <button class="btn-primary" on:click={doBrowserBenchmark} disabled={benchmarkRunning}>
-        {benchmarkRunning ? 'Running...' : 'Run Browser Benchmark'}
+        {benchmarkRunning ? $t('bench_running') : $t('bench_run_browser')}
       </button>
       {#if isAdmin}
       <button class="btn-primary" on:click={doServerBenchmark} disabled={benchmarkRunning}>
-        {benchmarkRunning ? 'Running...' : 'Run Server Benchmark'}
+        {benchmarkRunning ? $t('bench_running') : $t('bench_run_server')}
       </button>
       {/if}
     </div>
@@ -1927,7 +1938,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each browserBenchResults as r}
+            {#each browserBenchResults as r (r.backend)}
               <tr style="border-bottom:1px solid #222;">
                 <td style="padding:4px;">{r.backend}</td>
                 <td style="padding:4px;">{r.success ? r.warmup_ms + 'ms' : '-'}</td><td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
@@ -1955,7 +1966,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each serverBenchResults.results as r}
+            {#each serverBenchResults.results as r (r.backend)}
               <tr style="border-bottom:1px solid #222;">
                 <td style="padding:4px;">{r.provider}</td>
                 <td style="padding:4px;">{r.success ? r.warmup_ms + 'ms' : '-'}</td><td style="padding:4px;">{r.success ? r.duration_ms + 'ms' : '-'}</td>
@@ -2183,7 +2194,7 @@
     <div style="margin-top:10px;">
       <div class="hint" style="margin-bottom:4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;">{$t('settings_detectors') || 'Detectors'}</div>
       <div class="detector-grid">
-        {#each Object.entries(engineStatus.detectors) as [name, d]}
+        {#each Object.entries(engineStatus.detectors) as [name, d] (name)}
           {@const ok = d.available && (d.ready ?? (d.model_ok ?? d.model_exists ?? true))}
           <div class="detector-row">
             <span class="det-name">{name}</span>
@@ -2271,7 +2282,7 @@
                     padding:8px 10px;font-family:monospace;font-size:10.5px;line-height:1.65;color:#90b890;
                     max-height:160px;overflow-y:auto;">
           <div style="color:#505570;margin-bottom:4px;">{testLabel}</div>
-          {#each testLines as l}<div>{l}</div>{/each}
+          {#each testLines as l, i (i)}<div>{l}</div>{/each}
           {#if testRunning}<div style="opacity:0.4;">▌</div>{/if}
         </div>
       {/if}
@@ -2289,7 +2300,7 @@
       <label>{$t('exempt_paths_label')}</label>
       <div>
         <div class="hint" style="margin-bottom:6px;">{$t('exempt_paths_hint')}</div>
-        {#each exemptPaths as _, i}
+        {#each exemptPaths as _, i (i)}
           <div class="path-row">
             <input type="text" bind:value={exemptPaths[i]} placeholder="/mnt" />
             <button class="small" on:click={() => exemptPaths = exemptPaths.filter((__, j) => j !== i)}>✕</button>
@@ -2310,7 +2321,7 @@
       <label for="setting-lang">{$t('language')}</label>
       <select id="setting-lang" value={language}
         on:change={e => applyLanguage(e.target.value)}>
-        {#each LANGUAGES as l}
+        {#each LANGUAGES as l (l.code ?? l)}
           <option value={l.code}>{l.label}</option>
         {/each}
       </select>
@@ -2318,7 +2329,7 @@
       {#if isAdmin && procBackend === 'remote_v2'}
       <label for="setting-backend">{$t('backend')}</label>
       <select id="setting-backend" bind:value={backend}>
-        {#each BACKENDS as b}
+        {#each BACKENDS as b (b)}
           <option value={b}>{b}</option>
         {/each}
       </select>
@@ -2326,7 +2337,7 @@
       {#if backend === 'insightface'}
         <label for="setting-model">{$t('model')}</label>
         <select id="setting-model" bind:value={model}>
-          {#each IF_MODELS as m}
+          {#each IF_MODELS as m (m)}
             <option value={m}>{m}</option>
           {/each}
         </select>
@@ -2382,7 +2393,7 @@
           </p>
         {/if}
         <select id="setting-det-model" bind:value={detModel}>
-          {#each DET_MODELS as m}
+          {#each DET_MODELS as m (m.value ?? m)}
             <option value={m.value}>{$t(m.label)}</option>
           {/each}
         </select>
@@ -2433,7 +2444,7 @@
 
       <label for="setting-vlm-prov">{$t('vlm_provider')}</label>
       <select id="setting-vlm-prov" bind:value={vlmProvider} disabled={!vlmEnabled}>
-        {#each Object.entries(providers) as [key, p]}
+        {#each Object.entries(providers) as [key, p] (key)}
           <option value={key}>{p.display_name}</option>
         {:else}
           <option value="">(Loading...)</option>
@@ -2444,7 +2455,7 @@
       <div class="model-row">
         <select id="setting-vlm-model" bind:value={vlmModel} disabled={!vlmEnabled}>
           <option value="">{defaultModelLabel}</option>
-          {#each vlmModels as m}
+          {#each vlmModels as m (m)}
             <option value={m}>{m}</option>
           {/each}
         </select>
@@ -2484,7 +2495,7 @@
     {#if $currentUser?.role === 'user'}
       <p class="hint" style="margin-bottom: 8px;">As a regular user you have access to EU-hosted providers only.</p>
     {/if}
-    {#each Object.entries(providers) as [provKey, prov]}
+    {#each Object.entries(providers) as [provKey, prov] (provKey)}
       {@const ki = keyInputs[provKey] ?? { value: '', scope: 'user' }}
       {@const canSystemKey = $currentUser?.role === 'admin' || $currentUser?.role === 'mediamanager'}
       <div class="key-row">
@@ -2541,7 +2552,12 @@
   <!-- ─── Archive Configuration (Admin only) ─────────────────────────────── -->
   {#if isAdmin && archiveCfg}
   <section class="card">
-    <h3>🗂 {$t('archive_config_title')}</h3>
+    <h3>
+      🗂 {$t('archive_config_title')}
+      <InfoHint width="380px"
+                title={$t('info_bildarchiv_workflow_title')}
+                html={$t('info_bildarchiv_workflow')} />
+    </h3>
     {#if !archiveExiftoolOk}
       <div class="hint-row" style="color:#d0a030;margin-bottom:8px;">⚠ {$t('archive_exiftool_missing')}</div>
     {:else}
@@ -2550,7 +2566,7 @@
 
     <!-- Custom Fields -->
     <h4 style="font-size:12px;color:#8080a0;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">{$t('archive_config_fields')}</h4>
-    {#each (archiveCfg.fields || []).sort((a,b)=>a.order-b.order) as field, idx}
+    {#each (archiveCfg.fields || []).sort((a,b)=>a.order-b.order) as field, idx (field.id ?? idx)}
       <div class="archive-field-row">
         <input class="small-input" type="text" bind:value={field.label} placeholder="Bezeichnung" title="Label" />
         <select class="small-input" bind:value={field.type}>

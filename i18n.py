@@ -1,8 +1,6 @@
 # i18n.py - Comprehensive internationalization support
 import json
 import logging
-from typing import Dict, Optional, List
-from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,9 +21,8 @@ TRANSLATIONS = {
         'logout': 'Abmelden',
         'login': 'Anmelden',
 
-        'training_in_progress': 'Trainiere',
         'details': 'Details',
-        
+
         # ====================================================================
         # TABS
         # ====================================================================
@@ -63,7 +60,7 @@ TRANSLATIONS = {
         'paste': 'Einfügen',
         'sidebar_expand': 'Seitenleiste ausklappen',
         'sidebar_collapse': 'Seitenleiste einklappen',
-        
+
         # ====================================================================
         # RECOGNIZE TAB
         # ====================================================================
@@ -92,7 +89,7 @@ TRANSLATIONS = {
         'date_created': 'Erstellt am',
         'date_modified': 'Geändert am',
         'camera_model': 'Kameramodell',
-        
+
         # ====================================================================
         # TRAIN TAB
         # ====================================================================
@@ -117,7 +114,7 @@ TRANSLATIONS = {
         'tip_4': 'Eine Person pro Bild für beste Ergebnisse',
         'tip_5': 'Vermeiden Sie verschwommene oder unscharfe Bilder',
         'tip_6': 'Verschiedene Hintergründe helfen bei der Generalisierung',
-        
+
         # ====================================================================
         # SEARCH TAB
         # ====================================================================
@@ -134,7 +131,6 @@ TRANSLATIONS = {
         'sort_oldest': 'Älteste zuerst',
         'sort_date_taken_desc': 'Aufnahmedatum absteigend',
         'sort_date_taken_asc': 'Aufnahmedatum aufsteigend',
-        'sort_most_faces': 'Meiste Gesichter',
         'sort_filename_az': 'Dateiname A-Z',
         'search_button': 'Suchen',
         'search_results': 'Suchergebnisse für',
@@ -142,7 +138,7 @@ TRANSLATIONS = {
         'no_results_found': 'Keine Ergebnisse gefunden',
         'refine_search': 'Suche verfeinern',
         'refresh': 'Aktualisieren',
-        
+
         # ====================================================================
         # BROWSE TAB
         # ====================================================================
@@ -168,7 +164,7 @@ TRANSLATIONS = {
         'deselect_all': 'Alle abwählen',
         'select_none': 'Auswahl aufheben',
         'selection': 'Auswahl',
-        
+
         # ====================================================================
         # BATCH TAB
         # ====================================================================
@@ -207,7 +203,7 @@ TRANSLATIONS = {
         'bj_persistent_hint': 'Einen dauerhaften serverseitigen Auftrag für diese Dateien erstellen',
         'bj_path_required_hint': 'Lokaler Basisordner erforderlich für Stapelaufträge im Browser',
         'bj_source_selection': 'Manuelle Auswahl',
-        
+
         # ====================================================================
         # STATISTICS TAB
         # ====================================================================
@@ -238,7 +234,6 @@ TRANSLATIONS = {
         'recognition_settings': 'Erkennungseinstellungen',
         'backend': 'Backend',
         'model': 'Modell',
-        'detection_threshold': 'Erkennungsschwelle',
         'recognition_threshold': 'Wiedererkennungsschwelle',
         'use_gpu': 'GPU verwenden',
         'storage_settings': 'Speichereinstellungen',
@@ -297,7 +292,7 @@ TRANSLATIONS = {
         'reset_password': 'Passwort zurücksetzen',
         'deactivate_user': 'Deaktivieren',
         'activate_user': 'Aktivieren',
-        
+
         # ====================================================================
         # MESSAGES
         # ====================================================================
@@ -321,8 +316,7 @@ TRANSLATIONS = {
         'please_wait': 'Bitte warten...',
         'loading': 'Lade...',
         'no_key': 'Kein Schlüssel',
-        'of': 'von',
-        
+
         # ====================================================================
         # BUTTONS & ACTIONS
         # ====================================================================
@@ -336,15 +330,12 @@ TRANSLATIONS = {
         'view': 'Anzeigen',
         'download': 'Herunterladen',
         'upload': 'Hochladen',
-        'refresh': 'Aktualisieren',
         'clear': 'Löschen',
         'reset': 'Zurücksetzen',
         'confirm': 'Bestätigen',
         'back': 'Zurück',
         'next': 'Weiter',
         'previous': 'Vorherige',
-        'select_all': 'Alle auswählen',
-        'deselect_all': 'Alle abwählen',
 
         # ====================================================================
         # IDENTIFY VIEW & FACE IDENTIFY MODAL
@@ -478,7 +469,7 @@ Formatieren Sie als JSON:
   "tags": ["tag1", "tag2", ...]
 }""",
     },
-    
+
     'en': {
         # ====================================================================
         # UI LABELS
@@ -489,8 +480,7 @@ Formatieren Sie als JSON:
         'welcome': 'Welcome',
         'logout': 'Logout',
         'login': 'Login',
-        
-        'training_in_progress': 'Training',
+
         'details': 'Details',
 
         # ====================================================================
@@ -530,7 +520,7 @@ Formatieren Sie als JSON:
         'paste': 'Paste',
         'sidebar_expand': 'Expand sidebar',
         'sidebar_collapse': 'Collapse sidebar',
-        
+
         # ====================================================================
         # RECOGNIZE TAB
         # ====================================================================
@@ -559,7 +549,7 @@ Formatieren Sie als JSON:
         'date_created': 'Date Created',
         'date_modified': 'Date Modified',
         'camera_model': 'Camera Model',
-        
+
         # ====================================================================
         # TRAIN TAB
         # ====================================================================
@@ -584,7 +574,7 @@ Formatieren Sie als JSON:
         'tip_4': 'One person per image for best results',
         'tip_5': 'Avoid blurry or out-of-focus images',
         'tip_6': 'Different backgrounds help generalization',
-        
+
         # ====================================================================
         # SEARCH TAB
         # ====================================================================
@@ -601,7 +591,6 @@ Formatieren Sie als JSON:
         'sort_oldest': 'Oldest first',
         'sort_date_taken_desc': 'Date taken descending',
         'sort_date_taken_asc': 'Date taken ascending',
-        'sort_most_faces': 'Most faces',
         'sort_filename_az': 'Filename A-Z',
         'search_button': 'Search',
         'search_results': 'Search Results for',
@@ -609,7 +598,7 @@ Formatieren Sie als JSON:
         'no_results_found': 'No results found',
         'refine_search': 'Refine search',
         'refresh': 'Refresh',
-        
+
         # ====================================================================
         # BROWSE TAB
         # ====================================================================
@@ -635,7 +624,7 @@ Formatieren Sie als JSON:
         'deselect_all': 'Deselect All',
         'select_none': 'Select None',
         'selection': 'Selection',
-        
+
         # ====================================================================
         # BATCH TAB
         # ====================================================================
@@ -674,7 +663,7 @@ Formatieren Sie als JSON:
         'bj_persistent_hint': 'Create a persistent server-side job for these files',
         'bj_path_required_hint': 'Local base path required for persistent jobs in browser',
         'bj_source_selection': 'Manual selection',
-        
+
         # ====================================================================
         # STATISTICS TAB
         # ====================================================================
@@ -705,7 +694,6 @@ Formatieren Sie als JSON:
         'recognition_settings': 'Recognition Settings',
         'backend': 'Backend',
         'model': 'Model',
-        'detection_threshold': 'Detection Threshold',
         'recognition_threshold': 'Recognition Threshold',
         'use_gpu': 'Use GPU',
         'storage_settings': 'Storage Settings',
@@ -764,7 +752,7 @@ Formatieren Sie als JSON:
         'reset_password': 'Reset Password',
         'deactivate_user': 'Deactivate',
         'activate_user': 'Activate',
-        
+
         # ====================================================================
         # MESSAGES
         # ====================================================================
@@ -788,8 +776,7 @@ Formatieren Sie als JSON:
         'please_wait': 'Please wait...',
         'loading': 'Loading...',
         'no_key': 'No Key',
-        'of': 'of',
-        
+
         # ====================================================================
         # BUTTONS & ACTIONS
         # ====================================================================
@@ -803,17 +790,12 @@ Formatieren Sie als JSON:
         'view': 'View',
         'download': 'Download',
         'upload': 'Upload',
-        'refresh': 'Refresh',
         'clear': 'Clear',
         'reset': 'Reset',
         'confirm': 'Confirm',
         'back': 'Back',
         'next': 'Next',
         'previous': 'Previous',
-        'select_all': 'Select All',
-        'deselect_all': 'Deselect All',
-        'select_none': 'Select None',
-        'selection': 'Selection',
 
         # ====================================================================
         # IDENTIFY VIEW & FACE IDENTIFY MODAL
@@ -956,10 +938,10 @@ Format as JSON:
 
 class I18n:
     """Internationalization helper with comprehensive features."""
-    
+
     SUPPORTED_LANGUAGES = ['de', 'en']
     DEFAULT_LANGUAGE = 'de'
-    
+
     def __init__(self, language: str = None):
         """
         Initialize i18n.
@@ -970,17 +952,17 @@ class I18n:
         self.language = language or self.DEFAULT_LANGUAGE
         self.translations = {}
         self._load_translations()
-    
+
     def _load_translations(self):
         """Load translations for current language."""
         if self.language not in TRANSLATIONS:
             logger.warning(f"Language '{self.language}' not found, falling back to '{self.DEFAULT_LANGUAGE}'")
             self.language = self.DEFAULT_LANGUAGE
-        
+
         self.translations = TRANSLATIONS[self.language]
         logger.info(f"Loaded translations for language: {self.language}")
-    
-    def t(self, key: str, default: Optional[str] = None, **kwargs) -> str:
+
+    def t(self, key: str, default: str | None = None, **kwargs) -> str:
         """
         Get translation for key with optional string formatting.
         
@@ -999,16 +981,16 @@ class I18n:
             'Hallo, Max!'
         """
         translation = self.translations.get(key, default or key)
-        
+
         # Apply string formatting if kwargs provided
         if kwargs:
             try:
                 translation = translation.format(**kwargs)
             except (KeyError, ValueError) as e:
                 logger.warning(f"Translation formatting error for key '{key}': {e}")
-        
+
         return translation
-    
+
     def set_language(self, language: str) -> bool:
         """
         Change language.
@@ -1022,27 +1004,27 @@ class I18n:
         if language not in self.SUPPORTED_LANGUAGES:
             logger.error(f"Unsupported language: {language}")
             return False
-        
+
         self.language = language
         self._load_translations()
         return True
-    
+
     def get_language(self) -> str:
         """Get current language."""
         return self.language
-    
-    def get_supported_languages(self) -> List[str]:
+
+    def get_supported_languages(self) -> list[str]:
         """Get list of supported languages."""
         return self.SUPPORTED_LANGUAGES.copy()
-    
+
     def has_translation(self, key: str) -> bool:
         """Check if translation key exists."""
         return key in self.translations
-    
-    def get_all_keys(self) -> List[str]:
+
+    def get_all_keys(self) -> list[str]:
         """Get all translation keys for current language."""
         return list(self.translations.keys())
-    
+
     def export_translations(self, filepath: str):
         """Export current translations to JSON file."""
         try:
@@ -1051,7 +1033,7 @@ class I18n:
             logger.info(f"Exported translations to: {filepath}")
         except Exception as e:
             logger.error(f"Failed to export translations: {e}")
-    
+
     def import_translations(self, filepath: str) -> bool:
         """
         Import translations from JSON file.
@@ -1063,9 +1045,9 @@ class I18n:
             True if successful
         """
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, encoding='utf-8') as f:
                 new_translations = json.load(f)
-            
+
             self.translations.update(new_translations)
             logger.info(f"Imported translations from: {filepath}")
             return True
@@ -1102,7 +1084,7 @@ def get_translation(key: str, language: str = None, **kwargs) -> str:
         # Create temporary instance for different language
         temp_i18n = I18n(language)
         return temp_i18n.t(key, **kwargs)
-    
+
     return i18n.t(key, **kwargs)
 
 

@@ -4,7 +4,7 @@ import time
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Optional, Any
 import logging
 import hashlib
 import json
@@ -12,7 +12,6 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import io
 from PIL import Image
-import base64
 import os
 import platform
 import threading
@@ -26,7 +25,7 @@ except ImportError:
     logging.warning("FAISS not available - vector search will be limited")
 
 try:
-    import insightface
+    import insightface  # noqa: F401  — availability probe; FaceAnalysis is the actual import used below
     from insightface.app import FaceAnalysis
     INSIGHTFACE_AVAILABLE = True
 except ImportError:
@@ -41,7 +40,7 @@ except (ImportError, SystemExit, Exception):
     logging.warning("face_recognition (dlib) not available")
 
 try:
-    import mediapipe as _mp_module
+    import mediapipe as _mp_module  # noqa: F401  — availability probe only
     MEDIAPIPE_AVAILABLE = True
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
@@ -103,8 +102,8 @@ class BoundingBox:
     right: float
     bottom: float
     left: float
-    
-    def to_pixels(self, width: int, height: int) -> Tuple[int, int, int, int]:
+
+    def to_pixels(self, width: int, height: int) -> tuple[int, int, int, int]:
         """Convert to pixel coordinates."""
         return (
             int(self.top * height),
@@ -112,11 +111,11 @@ class BoundingBox:
             int(self.bottom * height),
             int(self.left * width)
         )
-    
+
     def area(self) -> float:
         """Calculate area (normalized)."""
         return (self.bottom - self.top) * (self.right - self.left)
-    
+
     def is_valid(self) -> bool:
         """Check if bounding box is valid."""
         return (
@@ -130,19 +129,19 @@ class Face:
     """Detected face with metadata."""
     bbox: BoundingBox
     detection_confidence: float
-    embedding: Optional[np.ndarray] = None
+    embedding: np.ndarray | None = None
     quality: float = 1.0
-    landmarks: Optional[np.ndarray] = None
-    age: Optional[int] = None
-    gender: Optional[str] = None
-    pose: Optional[Dict[str, float]] = None
+    landmarks: np.ndarray | None = None
+    age: int | None = None
+    gender: str | None = None
+    pose: dict[str, float] | None = None
 
 
 @dataclass
 class Recognition:
     """Face recognition result."""
-    person_id: Optional[int]
-    person_name: Optional[str]
+    person_id: int | None
+    person_name: str | None
     confidence: float
     distance: float
     verified: bool = False
@@ -156,14 +155,14 @@ class ImageMetadata:
     format: str
     file_size: int
     file_hash: str
-    taken_at: Optional[datetime] = None
-    location: Optional[Tuple[float, float]] = None
-    camera_make: Optional[str] = None
-    camera_model: Optional[str] = None
-    iso: Optional[int] = None
-    aperture: Optional[float] = None
-    shutter_speed: Optional[str] = None
-    focal_length: Optional[float] = None
+    taken_at: datetime | None = None
+    location: tuple[float, float] | None = None
+    camera_make: str | None = None
+    camera_model: str | None = None
+    iso: int | None = None
+    aperture: float | None = None
+    shutter_speed: str | None = None
+    focal_length: float | None = None
 
 
 # ============================================================================
@@ -172,31 +171,34 @@ class ImageMetadata:
 
 class FaceRecognitionConfig:
     """Configuration for face recognition system."""
-    
+
     # Backend options
     BACKEND_INSIGHTFACE = "insightface"
     BACKEND_DLIB_HOG = "dlib_hog"
     BACKEND_DLIB_CNN = "dlib_cnn"
-    
+
     # InsightFace models
     MODEL_BUFFALO_L = "buffalo_l"  # Best quality, 512D
     MODEL_BUFFALO_M = "buffalo_m"  # Balanced, 512D
     MODEL_BUFFALO_S = "buffalo_s"  # Fast, 512D
     MODEL_BUFFALO_SC = "buffalo_sc"  # Compact, 128D
-    
-    def __init__(self, config_dict: Optional[Dict] = None):
+
+    def __init__(self, config_dict: dict | None = None):
         """Initialize configuration."""
         config = config_dict or {}
-        
+        # Keep the raw top-level config so modules that care about video /
+        # transcription sections can read them without re-parsing config.yaml.
+        self.raw = config if isinstance(config, dict) else {}
+
         # Backend settings
         self.backend = config.get('backend', self.BACKEND_INSIGHTFACE)
-        
+
         # InsightFace settings
         insightface_config = config.get('insightface', {})
         self.model = insightface_config.get('model', self.MODEL_BUFFALO_L)
         self.detection_threshold = insightface_config.get('detection_threshold', 0.5)
         self.recognition_threshold = insightface_config.get('recognition_threshold', 0.4)
-        
+
         # Load det_size (can be int or list of 2 ints)
         ds = insightface_config.get('det_size', [640, 640])
         if isinstance(ds, int):
@@ -209,19 +211,19 @@ class FaceRecognitionConfig:
         self.ctx_id = insightface_config.get('ctx_id', 0)  # -1=CPU, 0+=GPU
         self.use_coreml = insightface_config.get('use_coreml', True)  # macOS CoreML acceleration
         self.lazy_init = config.get('lazy_init', True)  # Defer backend load to first use
-        
+
         # Dlib settings
         dlib_config = config.get('dlib', {})
         self.dlib_model = dlib_config.get('model', 'hog')
         self.dlib_num_jitters = dlib_config.get('num_jitters', 1)
-        
+
         # Processing settings
         processing = config.get('processing', {})
         self.min_face_size = processing.get('min_face_size', 40)  # px; below this = likely false positive
         self.max_face_size = processing.get('max_face_size', 0)
         self.min_face_quality = processing.get('min_face_quality', 0.3)
         self.max_faces_per_image = processing.get('max_faces_per_image', 50)
-        
+
         # Storage settings
         storage = config.get('storage', {})
         self.store_in_db = storage.get('store_in_db', False)
@@ -252,8 +254,8 @@ class FaceRecognitionEngine:
     - Comprehensive error handling
     - Database integration
     """
-    
-    def __init__(self, db_path: str, config: Optional[FaceRecognitionConfig] = None):
+
+    def __init__(self, db_path: str, config: FaceRecognitionConfig | None = None):
         """
         Initialize face recognition engine.
         
@@ -263,7 +265,7 @@ class FaceRecognitionEngine:
         """
         self.db_path = db_path
         self.config = config or FaceRecognitionConfig()
-        
+
         # Initialize components
         self.face_analyzer = None
         self.faiss_index = None
@@ -303,11 +305,11 @@ class FaceRecognitionEngine:
             # Eager load (default)
             self._initialize_backend()
             logger.info(f"FaceRecognitionEngine initialized with backend: {self.config.backend}")
-    
+
     def _execute_with_retry(self, func, max_retries=3):
         """Execute database operation with retry on lock."""
         import time
-        
+
         for attempt in range(max_retries):
             try:
                 return func()
@@ -318,7 +320,7 @@ class FaceRecognitionEngine:
                     time.sleep(wait_time)
                 else:
                     raise
-    
+
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection with proper settings."""
         conn = sqlite3.connect(self.db_path, timeout=60.0)  # Increased from 10.0 to 60.0
@@ -326,7 +328,7 @@ class FaceRecognitionEngine:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.row_factory = sqlite3.Row
         return conn
-    
+
     def _ensure_backend(self):
         """Lazy-initialize the backend on first use (thread-safe)."""
         if not self._backend_ready:
@@ -335,7 +337,7 @@ class FaceRecognitionEngine:
                     self._initialize_backend()
 
     @staticmethod
-    def _build_onnx_providers(ctx_id: int, use_coreml: bool) -> List[str]:
+    def _build_onnx_providers(ctx_id: int, use_coreml: bool) -> list[str]:
         """
         Build the ONNX Runtime execution provider list.
 
@@ -445,7 +447,7 @@ class FaceRecognitionEngine:
                 schema_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'schema_complete.sql')
                 if _os.path.exists(schema_path):
                     logger.info(f"Initialising database schema from {schema_path}")
-                    schema_sql = open(schema_path, 'r').read()
+                    schema_sql = open(schema_path).read()
                     conn.executescript(schema_sql)
                     conn.commit()
                     logger.info("Database schema created successfully.")
@@ -478,13 +480,13 @@ class FaceRecognitionEngine:
 
         except Exception as e:
             logger.error(f"Database initialization check failed: {e}")
-    
+
     def _load_faiss_index(self):
         """Load FAISS index from database."""
         if not FAISS_AVAILABLE:
             logger.warning("FAISS not available - using linear search")
             return
-        
+
         try:
             conn = self._get_connection()
             rows = conn.execute("""
@@ -545,7 +547,7 @@ class FaceRecognitionEngine:
                     logger.info(f"  → {pname}: {cnt} embedding(s)")
             else:
                 logger.info("No embeddings in database — FAISS index is empty")
-        
+
         except Exception as e:
             logger.error(f"Failed to load FAISS index: {e}")
             self.faiss_index = None
@@ -584,32 +586,32 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"Failed to calculate file hash: {e}")
             return ""
-    
+
     def _extract_metadata(self, image_path: str) -> ImageMetadata:
         """Extract image metadata."""
         logger.info(f"  🔍 Extracting metadata from: {image_path}")
         try:
             path = Path(image_path)
-            
+
             # Get file info
             file_size = path.stat().st_size
-            
+
             # Load image to get dimensions
             img = cv2.imread(str(path))
             if img is None:
                 raise ValueError("Failed to load image")
-            
+
             height, width = img.shape[:2]
             logger.info(f"    Size: {width}x{height}, Bytes: {file_size}")
 
             # Determine format
             img_format = path.suffix.upper()[1:] if path.suffix else "UNKNOWN"
-            
+
             # Calculate hash if enabled
             file_hash = ""
             if self.config.calculate_file_hash:
                 file_hash = self._calculate_file_hash(image_path)
-            
+
             # Try to extract EXIF data
             taken_at = None
             location = None
@@ -622,7 +624,6 @@ class FaceRecognitionEngine:
 
             try:
                 from PIL import Image
-                from PIL.ExifTags import TAGS, GPSTAGS
 
                 pil_img = Image.open(image_path)
                 exif_data = pil_img.getexif()
@@ -707,43 +708,43 @@ class FaceRecognitionEngine:
                 shutter_speed=shutter_speed,
                 focal_length=focal_length,
             )
-        
+
         except Exception as e:
             logger.error(f"Failed to extract metadata: {e}")
             raise
-    
-    def _create_thumbnail(self, image: np.ndarray) -> Optional[bytes]:
+
+    def _create_thumbnail(self, image: np.ndarray) -> bytes | None:
         """Create thumbnail of image."""
         if not self.config.generate_thumbnails:
             return None
-        
+
         try:
             # Convert BGR to RGB
             img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
-            
+
             # Create thumbnail
             pil_img.thumbnail(self.config.thumbnail_size, Image.Resampling.LANCZOS)
-            
+
             # Convert to bytes
             buffer = io.BytesIO()
             pil_img.save(buffer, format='JPEG', quality=85)
             return buffer.getvalue()
-        
+
         except Exception as e:
             logger.error(f"Failed to create thumbnail: {e}")
             return None
-    
-    def _detect_faces_insightface(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List[Face]:
+
+    def _detect_faces_insightface(self, image: np.ndarray, det_thresh: float | None = None) -> list[Face]:
         """Detect faces using InsightFace with adaptive detection size."""
         self._ensure_backend()
         try:
             h, w = image.shape[:2]
-            
+
             # Ensure BGR format
             if len(image.shape) == 2:
                 image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-            
+
             # ================================================================
             # KEY FIX: Adaptive detection size based on image dimensions
             # Increased for high-res images to find small faces.
@@ -763,7 +764,7 @@ class FaceRecognitionEngine:
                     det_size = (1280, 1280)
                 else:
                     det_size = (1920, 1920)
-            
+
             self.face_analyzer.det_model.input_size = det_size
 
             # Use provided threshold or global config
@@ -816,21 +817,21 @@ class FaceRecognitionEngine:
 
                 # Get embedding
                 embedding = face.normed_embedding
-                
+
                 # Optional attributes - handle None values
                 landmarks = face.kps if hasattr(face, 'kps') else None
-                
+
                 age = None
                 if hasattr(face, 'age') and face.age is not None:
                     try:
                         age = int(face.age)
                     except (ValueError, TypeError):
                         pass
-                
+
                 gender = None
                 if hasattr(face, 'sex') and face.sex is not None:
                     gender = str(face.sex)
-                
+
                 pose = None
                 if hasattr(face, 'pose') and face.pose is not None:
                     try:
@@ -841,7 +842,7 @@ class FaceRecognitionEngine:
                         }
                     except (IndexError, TypeError, ValueError):
                         pass
-                
+
                 face_obj = Face(
                     bbox=bbox,
                     detection_confidence=conf,
@@ -852,43 +853,43 @@ class FaceRecognitionEngine:
                     gender=gender,
                     pose=pose
                 )
-                
+
                 detected_faces.append(face_obj)
-            
+
             return detected_faces
-        
+
         except Exception as e:
             logger.error(f"Face detection failed (InsightFace): {e}", exc_info=True)
             return []
-    
-    def _detect_faces_dlib(self, image: np.ndarray) -> List[Face]:
+
+    def _detect_faces_dlib(self, image: np.ndarray) -> list[Face]:
         """Detect faces using Dlib (face_recognition library)."""
         self._ensure_backend()
         try:
             # Convert BGR to RGB
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
+
             # Detect faces
             if self.config.dlib_model == 'cnn':
                 face_locations = fr.face_locations(rgb_image, model='cnn')
             else:
                 face_locations = fr.face_locations(rgb_image, model='hog')
-            
+
             # Get encodings
             face_encodings = fr.face_encodings(
                 rgb_image,
                 face_locations,
                 num_jitters=self.config.dlib_num_jitters
             )
-            
+
             # Convert to Face objects
             detected_faces = []
             height, width = image.shape[:2]
-            
-            for location, encoding in zip(face_locations, face_encodings):
+
+            for location, encoding in zip(face_locations, face_encodings, strict=False):
                 # face_locations returns (top, right, bottom, left) in pixels
                 top, right, bottom, left = location
-                
+
                 # Normalize to 0-1
                 bbox = BoundingBox(
                     top=max(0, top / height),
@@ -896,27 +897,27 @@ class FaceRecognitionEngine:
                     bottom=min(1, bottom / height),
                     left=max(0, left / width)
                 )
-                
+
                 if not bbox.is_valid():
                     continue
-                
+
                 face_obj = Face(
                     bbox=bbox,
                     detection_confidence=1.0,  # Dlib doesn't provide confidence
                     embedding=encoding,
                     quality=1.0
                 )
-                
+
                 detected_faces.append(face_obj)
-            
+
             return detected_faces
-        
+
         except Exception as e:
             logger.error(f"Face detection failed (Dlib): {e}")
             return []
-    
-    def detect_faces(self, image: np.ndarray, det_thresh: Optional[float] = None,
-                     min_face_size: Optional[int] = None, det_model: str = 'auto') -> List[Face]:
+
+    def detect_faces(self, image: np.ndarray, det_thresh: float | None = None,
+                     min_face_size: int | None = None, det_model: str = 'auto') -> list[Face]:
         """
         Detect faces in image.
 
@@ -933,12 +934,12 @@ class FaceRecognitionEngine:
         """
         if image is None or image.size == 0:
             return []
-        
+
         try:
             height, width = image.shape[:2]
             mfs = min_face_size if min_face_size is not None else self.config.min_face_size
 
-            def _apply_filters(raw_faces: List) -> List:
+            def _apply_filters(raw_faces: list) -> list:
                 """Apply quality and size filters. Bbox is normalised 0-1 so original
                 image dimensions are correct even for faces found in a downscaled copy."""
                 result = []
@@ -1061,8 +1062,8 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"Face detection failed: {e}")
             return []
-    
-    def recognize_face(self, face: Face, top_k: int = 1, rec_thresh: Optional[float] = None) -> List[Recognition]:
+
+    def recognize_face(self, face: Face, top_k: int = 1, rec_thresh: float | None = None) -> list[Recognition]:
         """
         Recognize a face using FAISS index.
         
@@ -1083,40 +1084,40 @@ class FaceRecognitionEngine:
         if self.faiss_index is None or self.faiss_index.ntotal == 0:
             logger.info("  ℹ️ FAISS index empty, skipping recognition")
             return []
-        
+
         try:
             # Prepare query
             query_embedding = face.embedding.reshape(1, -1).astype('float32')
             faiss.normalize_L2(query_embedding)
-            
+
             # Search
             distances, indices = self.faiss_index.search(query_embedding, min(top_k, self.faiss_index.ntotal))
-            
+
             # Convert to Recognition objects
             recognitions = []
-            
+
             # Use provided threshold or global config
             threshold = rec_thresh if rec_thresh is not None else self.config.recognition_threshold
 
-            for dist, idx in zip(distances[0], indices[0]):
+            for dist, idx in zip(distances[0], indices[0], strict=False):
                 if idx == -1:  # No match
                     continue
-                
+
                 # Get person_id
                 person_id = self.person_id_map.get(int(idx))
                 if person_id is None:
                     continue
-                
+
                 # Convert distance to confidence (cosine similarity -> confidence)
                 # Distance is cosine similarity (0-1), higher is better
                 confidence = float(dist)
-                
+
                 # Get person name
                 person_name = self._get_person_name(person_id)
-                
+
                 # Check if above threshold
                 verified = confidence >= threshold
-                
+
                 logger.info(f"  👤 Recognized '{person_name}' (id={person_id}) with confidence {confidence:.4f} (thresh={threshold}, verified={verified})")
 
                 recognition = Recognition(
@@ -1126,35 +1127,35 @@ class FaceRecognitionEngine:
                     distance=1.0 - confidence,  # Convert to distance metric
                     verified=verified
                 )
-                
+
                 recognitions.append(recognition)
-            
+
             return recognitions
-        
+
         except Exception as e:
             logger.error(f"Face recognition failed: {e}")
             return []
-    
-    def _get_person_name(self, person_id: int) -> Optional[str]:
+
+    def _get_person_name(self, person_id: int) -> str | None:
         """Get person name from database."""
         try:
             conn = self._get_connection()
             cursor = conn.execute("SELECT name FROM people WHERE id = ?", (person_id,))
             row = cursor.fetchone()
             conn.close()
-            
+
             return row['name'] if row else None
         except Exception as e:
             logger.error(f"Failed to get person name: {e}")
             return None
-    
+
     def process_image(self, image_path: str, vlm_provider=None, force: bool = False,
-                     det_thresh: Optional[float] = None, min_face_size: Optional[int] = None,
-                     rec_thresh: Optional[float] = None,
+                     det_thresh: float | None = None, min_face_size: int | None = None,
+                     rec_thresh: float | None = None,
                      skip_faces: bool = False, skip_vlm: bool = False,
                      det_model: str = 'auto', max_size: int = 0,
-                     original_filename: Optional[str] = None,
-                     vlm_max_size: int = 0) -> Dict[str, Any]:
+                     original_filename: str | None = None,
+                     vlm_max_size: int = 0) -> dict[str, Any]:
         """
         Process image: detect faces, recognize, store in database.
 
@@ -1174,6 +1175,20 @@ class FaceRecognitionEngine:
             Processing results dictionary
         """
         logger.info(f"=== Processing image: {image_path} (force={force}) ===")
+
+        # Route video files to the video pipeline (scene-change frame extraction).
+        # Keeps the public process_image() call site compatible with mixed galleries.
+        try:
+            from video_processing import is_video as _is_video
+        except ImportError:
+            _is_video = lambda _p: False
+        if _is_video(image_path):
+            return self.process_video(
+                image_path,
+                vlm_provider=vlm_provider,
+                original_filename=original_filename,
+            )
+
         try:
             # ================================================================
             # CHECK FOR DUPLICATES - Skip if already processed
@@ -1185,35 +1200,44 @@ class FaceRecognitionEngine:
             )
             existing = cursor.fetchone()
             conn.close()
-            
+
             if existing and not force:
                 image_id = existing['id']
                 logger.info(f"⏭️  Image already processed (id={image_id}, faces={existing['face_count']})")
-                
+
                 # Run VLM if active and no description stored yet
                 if vlm_provider and (not existing['ai_description']):
                     try:
                         from i18n import i18n as _i18n
-                        vlm_r = vlm_provider.enrich_image(image_path, _i18n.t('vlm_prompt'), vlm_max_size=vlm_max_size)
+                        try:
+                            from szenentyp import build_vlm_prompt, apply_to_image as _apply_szen
+                            prompt_text = build_vlm_prompt(_i18n.t('vlm_prompt'), self.db_path, _i18n.language)
+                        except Exception:
+                            prompt_text = _i18n.t('vlm_prompt')
+                            _apply_szen = None
+                        vlm_r = vlm_provider.enrich_image(image_path, prompt_text, vlm_max_size=vlm_max_size)
                         if vlm_r and 'error' not in vlm_r:
                             self._update_image_vlm(image_id, vlm_r)
+                            if _apply_szen and vlm_r.get('szenentyp'):
+                                try: _apply_szen(self.db_path, image_id, vlm_r.get('szenentyp') or [])
+                                except Exception as _e: logger.debug(f"Szenentyp apply failed: {_e}")
                     except Exception as e:
                         logger.warning(f"VLM enrichment failed for cached image: {e}")
-                
+
                 return self._build_cached_result(image_id, image_path)
             # ================================================================
-            
+
             # Load image (handles grayscale, RGBA → BGR automatically)
             image = self._load_image(image_path)
             if image is None:
                 raise ValueError(f"Failed to load image: {image_path}")
-            
+
             # Extract metadata
             metadata = self._extract_metadata(image_path)
-            
+
             # Create thumbnail
             thumbnail = self._create_thumbnail(image)
-            
+
             # Store image in database
             image_id = self._store_image(image_path, metadata, image if self.config.store_in_db else None, thumbnail, original_filename=original_filename)
             if image_id is None:
@@ -1273,8 +1297,8 @@ class FaceRecognitionEngine:
                     logger.info(f"  🔽 Downsized for detection: {dw}×{dh} → {det_image.shape[1]}×{det_image.shape[0]}")
 
             # ── Face detection & recognition ───────────────────────────────────
-            faces: List = []
-            recognitions_by_face: List = []
+            faces: list = []
+            recognitions_by_face: list = []
             if not skip_faces:
                 faces = self.detect_faces(det_image, det_thresh=det_thresh, min_face_size=min_face_size, det_model=det_model)
                 logger.info(f"  👤 Detected {len(faces)} faces")
@@ -1300,17 +1324,26 @@ class FaceRecognitionEngine:
                 logger.info(f"Calling VLM provider for: {image_path}")
                 try:
                     from i18n import i18n
-                    vlm_result = vlm_provider.enrich_image(image_path, i18n.t('vlm_prompt'), vlm_max_size=vlm_max_size)
+                    try:
+                        from szenentyp import build_vlm_prompt, apply_to_image as _apply_szen
+                        prompt_text = build_vlm_prompt(i18n.t('vlm_prompt'), self.db_path, i18n.language)
+                    except Exception:
+                        prompt_text = i18n.t('vlm_prompt')
+                        _apply_szen = None
+                    vlm_result = vlm_provider.enrich_image(image_path, prompt_text, vlm_max_size=vlm_max_size)
                     logger.debug(f"VLM response: {vlm_result}")
                     if vlm_result and 'error' not in vlm_result:
                         self._update_image_vlm(image_id, vlm_result)
+                        if _apply_szen and vlm_result.get('szenentyp'):
+                            try: _apply_szen(self.db_path, image_id, vlm_result.get('szenentyp') or [])
+                            except Exception as _e: logger.debug(f"Szenentyp apply failed: {_e}")
                 except Exception as e:
                     logger.warning(f"VLM enrichment failed: {e}")
             elif skip_vlm:
                 logger.debug("  ⏭️  skip_vlm=True — VLM enrichment skipped")
             else:
                 logger.debug("VLM provider not enabled, skipping enrichment")
-            
+
             # Update processing status
             conn = self._get_connection()
             conn.execute("UPDATE images SET processed = 1 WHERE id = ?", (image_id,))
@@ -1322,7 +1355,7 @@ class FaceRecognitionEngine:
             self.stats['images_processed'] += 1
             self.stats['faces_detected'] += len(faces)
             self.stats['faces_recognized'] += sum(1 for r in recognitions_by_face if r and r.verified)
-            
+
             # Build result
             result = {
                 'success': True,
@@ -1333,8 +1366,8 @@ class FaceRecognitionEngine:
                 'faces': [],
                 'vlm_result': vlm_result
             }
-            
-            for face, recognition in zip(faces, recognitions_by_face):
+
+            for face, recognition in zip(faces, recognitions_by_face, strict=False):
                 face_result = {
                     'bbox': asdict(face.bbox),
                     'confidence': face.detection_confidence,
@@ -1344,9 +1377,9 @@ class FaceRecognitionEngine:
                     'recognition': asdict(recognition) if recognition else None
                 }
                 result['faces'].append(face_result)
-            
+
             return result
-        
+
         except Exception as e:
             logger.error(f"Failed to process image {image_path}: {e}", exc_info=True)
             self.stats['errors'] += 1
@@ -1355,12 +1388,219 @@ class FaceRecognitionEngine:
                 'error': str(e),
                 'filepath': image_path
             }
-    
-    def _store_image(self, filepath: str, metadata: ImageMetadata, 
-                    image_blob: Optional[np.ndarray], thumbnail_blob: Optional[bytes],
-                    original_filename: Optional[str] = None) -> int:
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Video ingest
+    # ─────────────────────────────────────────────────────────────────────────
+    def process_video(self, video_path: str, vlm_provider=None,
+                      max_frames: int | None = None,
+                      scene_threshold: float | None = None,
+                      transcribe: bool | None = None,
+                      original_filename: str | None = None) -> dict[str, Any]:
+        """
+        Extract frames from a video, run face detection on each, optionally
+        transcribe the audio track, and call the VLM on the midpoint frame.
+
+        Writes one `images` row (media_type='video') plus one `video_frames`
+        row per extracted frame.  Faces are stored against the video's image
+        id with frame_id pointing at the correct video_frames row.
+
+        Config knobs (config.yaml):
+            video.max_frames_per_video      upper cap (default 10)
+            video.scene_threshold           ffmpeg scene filter (default 0.3)
+            transcription.enabled           opt-in STT
+            transcription.provider          faster_whisper | openai_whisper | gladia
+        """
+        import cv2
+        import tempfile
+        import os
+        try:
+            from video_processing import extract_frames, midpoint_thumbnail
+        except ImportError as e:
+            return {'success': False, 'error': f'video_processing missing: {e}',
+                    'filepath': video_path}
+
+        logger.info(f"=== Processing video: {video_path} ===")
+
+        # Read root config.yaml for video / transcription sections
+        def _root_cfg():
+            try:
+                import yaml
+                import os as _os
+                _d = _os.environ.get('FACE_REC_DATA_DIR', '')
+                _p = _os.path.join(_d, 'config.yaml') if _d else 'config.yaml'
+                with open(_p) as _fh: return yaml.safe_load(_fh) or {}
+            except Exception:
+                return {}
+        _root = _root_cfg()
+
+        # ── 1. Probe and extract frames into a temp dir ─────────────────────
+        vcfg = _root.get('video', {}) or {}
+        cap  = int(max_frames or vcfg.get('max_frames_per_video', 10))
+        thr  = float(scene_threshold or vcfg.get('scene_threshold', 0.3))
+        tmp  = tempfile.mkdtemp(prefix='crisp_video_')
+        try:
+            vinfo = extract_frames(video_path, tmp, max_frames=cap, scene_threshold=thr)
+        except Exception as e:
+            logger.exception(f"Frame extraction failed: {e}")
+            return {'success': False, 'error': str(e), 'filepath': video_path}
+
+        # ── 2. Store the video's parent row in `images` ─────────────────────
+        metadata = self._extract_metadata(video_path)
+        thumb_blob = None
+        try:
+            thumb_path = os.path.join(tmp, 'poster.jpg')
+            if midpoint_thumbnail(video_path, thumb_path):
+                with open(thumb_path, 'rb') as fh:
+                    thumb_blob = fh.read()
+        except Exception:
+            pass
+
+        image_id = self._store_image(
+            video_path, metadata,
+            image_blob=None, thumbnail_blob=thumb_blob,
+            original_filename=original_filename,
+        )
+        if image_id is None:
+            return {'success': False, 'error': 'failed to insert video row', 'filepath': video_path}
+
+        conn = self._get_connection()
+        try:
+            conn.execute(
+                "UPDATE images SET media_type='video', duration_sec=?, fps=?, frame_count=? WHERE id=?",
+                (vinfo.duration_sec, vinfo.fps, vinfo.frame_count, image_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ── 3. Per-frame face detection ─────────────────────────────────────
+        total_faces = 0
+        frame_rows: list[dict] = []
+        for vf in vinfo.frames:
+            img = cv2.imread(vf.path)
+            if img is None: continue
+            # Insert video_frames row first
+            conn = self._get_connection()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO video_frames (image_id, frame_index, timestamp_ms, "
+                    "is_keyframe, phash) VALUES (?, ?, ?, ?, ?)",
+                    (image_id, vf.frame_index, vf.timestamp_ms,
+                     1 if vf.is_keyframe else 0, vf.phash),
+                )
+                frame_id = cur.lastrowid
+                conn.commit()
+            finally:
+                conn.close()
+
+            faces = self.detect_faces(img)
+            recognitions = [self.recognize_face(f)[:1] if faces else [] for f in faces]
+            rec_flat = [(r[0] if r else None) for r in recognitions]
+            self._store_faces(image_id, faces, rec_flat)
+
+            # Tag the faces just inserted with frame_id
+            if faces:
+                conn = self._get_connection()
+                try:
+                    conn.execute(
+                        "UPDATE faces SET frame_id=? WHERE image_id=? AND frame_id IS NULL",
+                        (frame_id, image_id),
+                    )
+                    n = conn.execute(
+                        "SELECT COUNT(*) FROM faces WHERE frame_id=?", (frame_id,),
+                    ).fetchone()[0]
+                    conn.execute("UPDATE video_frames SET face_count=? WHERE id=?", (n, frame_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+            total_faces += len(faces)
+            frame_rows.append({
+                'frame_id': frame_id, 'frame_index': vf.frame_index,
+                'timestamp_ms': vf.timestamp_ms, 'face_count': len(faces),
+                'is_keyframe': vf.is_keyframe,
+            })
+
+        # ── 4. Optional audio transcription ─────────────────────────────────
+        transcript_text = ''
+        tcfg = _root.get('transcription', {}) or {}
+        do_tr = transcribe if transcribe is not None else bool(tcfg.get('enabled', False))
+        if do_tr:
+            try:
+                from transcription_providers import make_provider
+                prov = make_provider(tcfg.get('provider', 'faster_whisper'), tcfg)
+                if prov:
+                    tr = prov.transcribe(video_path, language=(tcfg.get('language') or None))
+                    if tr and not tr.error:
+                        transcript_text = tr.text
+                        conn = self._get_connection()
+                        try:
+                            conn.execute("UPDATE images SET transcript=? WHERE id=?",
+                                         (transcript_text, image_id))
+                            conn.commit()
+                        finally:
+                            conn.close()
+            except Exception as e:
+                logger.warning(f"transcription failed: {e}")
+
+        # ── 5. VLM on midpoint frame (prompt includes Szenentyp + transcript) ─
+        vlm_result = None
+        if vlm_provider and vinfo.frames:
+            try:
+                from i18n import i18n as _i18n
+                try:
+                    from szenentyp import build_vlm_prompt, apply_to_image as _apply_szen
+                    prompt_text = build_vlm_prompt(_i18n.t('vlm_prompt'),
+                                                   self.db_path,
+                                                   _i18n.language)
+                except Exception:
+                    prompt_text = _i18n.t('vlm_prompt')
+                    _apply_szen = None
+                if transcript_text:
+                    prompt_text += f"\n\nAudio-Transkript des Videos (gekürzt):\n{transcript_text[:2000]}"
+                mid = vinfo.frames[len(vinfo.frames) // 2]
+                vlm_result = vlm_provider.enrich_image(mid.path, prompt_text)
+                if vlm_result and 'error' not in vlm_result:
+                    self._update_image_vlm(image_id, vlm_result)
+                    if _apply_szen and vlm_result.get('szenentyp'):
+                        try: _apply_szen(self.db_path, image_id,
+                                         vlm_result.get('szenentyp') or [])
+                        except Exception: pass
+            except Exception as e:
+                logger.warning(f"VLM enrichment (video) failed: {e}")
+
+        # ── 6. Cleanup tempdir, mark processed, return ──────────────────────
+        try:
+            import shutil as _sh
+            _sh.rmtree(tmp, ignore_errors=True)
+        except Exception: pass
+
+        conn = self._get_connection()
+        try:
+            conn.execute("UPDATE images SET processed=1 WHERE id=?", (image_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        return {
+            'success': True,
+            'image_id': image_id,
+            'filepath': video_path,
+            'media_type': 'video',
+            'duration_sec': vinfo.duration_sec,
+            'fps': vinfo.fps,
+            'frame_count_extracted': len(vinfo.frames),
+            'face_count': total_faces,
+            'frames': frame_rows,
+            'transcript_length': len(transcript_text),
+            'vlm_result': vlm_result,
+        }
+
+    def _store_image(self, filepath: str, metadata: ImageMetadata,
+                    image_blob: np.ndarray | None, thumbnail_blob: bytes | None,
+                    original_filename: str | None = None) -> int:
         """Store image in database with retry on lock."""
-        
+
         def store_operation():
             conn = None
             try:
@@ -1444,14 +1684,14 @@ class FaceRecognitionEngine:
             finally:
                 if conn:
                     conn.close()
-        
+
         # Use retry wrapper for database locks
         return self._execute_with_retry(store_operation)
 
 
-    def _store_faces(self, image_id: int, faces: List[Face], recognitions: List[Optional[Recognition]]):
+    def _store_faces(self, image_id: int, faces: list[Face], recognitions: list[Recognition | None]):
         """Store faces and embeddings in database with retry on lock."""
-        
+
         def store_operation():
             conn = None
             try:
@@ -1461,7 +1701,7 @@ class FaceRecognitionEngine:
                 # Use BEGIN IMMEDIATE to get write lock upfront
                 cursor.execute("BEGIN IMMEDIATE")
 
-                for face, recognition in zip(faces, recognitions):
+                for face, recognition in zip(faces, recognitions, strict=False):
                     # Insert face
                     cursor.execute("""
                         INSERT INTO faces (
@@ -1533,11 +1773,11 @@ class FaceRecognitionEngine:
             finally:
                 if conn:
                     conn.close()
-        
+
         # Use retry wrapper for database locks
         self._execute_with_retry(store_operation)
-    
-    def _build_cached_result(self, image_id: int, image_path: str) -> Dict[str, Any]:
+
+    def _build_cached_result(self, image_id: int, image_path: str) -> dict[str, Any]:
         """
         Build a full result dict from already-stored DB data.
         Used when process_image detects a duplicate so callers still get
@@ -1603,13 +1843,13 @@ class FaceRecognitionEngine:
             'skipped': True,
         }
 
-    def _update_image_vlm(self, image_id: int, vlm_result: Dict):
+    def _update_image_vlm(self, image_id: int, vlm_result: dict):
         """Update image with VLM enrichment data."""
         try:
             conn = self._get_connection()
-            
+
             tags_json = json.dumps(vlm_result.get('tags', []))
-            
+
             conn.execute("""
                 UPDATE images
                 SET ai_description = ?,
@@ -1623,14 +1863,14 @@ class FaceRecognitionEngine:
                 tags_json,
                 image_id
             ))
-            
+
             conn.commit()
             conn.close()
-        
+
         except Exception as e:
             logger.error(f"Failed to update VLM data: {e}")
-    
-    def _load_image(self, image_path: str) -> Optional[np.ndarray]:
+
+    def _load_image(self, image_path: str) -> np.ndarray | None:
         """
         Load image in BGR format with correct EXIF orientation applied.
 
@@ -1642,10 +1882,18 @@ class FaceRecognitionEngine:
         try:
             ext = Path(image_path).suffix.lower()
 
-            # Reject video files early
-            if ext in {'.webm', '.mp4', '.avi', '.mov', '.mkv'}:
-                logger.error(f"Cannot process video file as image: {image_path}")
-                return None
+            # Reject video files in the still-image loader — callers that receive
+            # a video path must use process_video() (dispatched automatically by
+            # process_image based on extension).
+            try:
+                from video_processing import is_video as _is_video
+                if _is_video(image_path):
+                    logger.error(f"_load_image called with video path — use process_video(): {image_path}")
+                    return None
+            except ImportError:
+                if ext in {'.webm', '.mp4', '.avi', '.mov', '.mkv', '.m4v'}:
+                    logger.error(f"Cannot process video file as image: {image_path}")
+                    return None
 
             # ── Primary path: PIL + EXIF transpose ──────────────────────────
             # PIL reads EXIF orientation and ImageOps.exif_transpose() rotates
@@ -1679,7 +1927,7 @@ class FaceRecognitionEngine:
             logger.error(f"Error loading image {image_path}: {e}")
             return None
 
-    def train_person(self, person_name: str, image_paths: List[str]) -> Tuple[bool, str, Dict]:
+    def train_person(self, person_name: str, image_paths: list[str]) -> tuple[bool, str, dict]:
         """
         Train system to recognize a person.
         
@@ -1693,14 +1941,14 @@ class FaceRecognitionEngine:
         try:
             if not person_name or not person_name.strip():
                 return False, "Person name cannot be empty", {}
-            
+
             if not image_paths:
                 return False, "No training images provided", {}
-            
+
             person_name = person_name.strip()
-            
+
             logger.info(f"=== Training '{person_name}' with {len(image_paths)} images ===")
-            
+
             # Check if person exists
             conn = self._get_connection()
             try:
@@ -1718,55 +1966,55 @@ class FaceRecognitionEngine:
                     logger.info(f"Created person '{person_name}' (ID: {person_id})")
             finally:
                 conn.close()
-            
+
             # Process training images
             embeddings = []
             processed_images = 0
             failed_images = 0
             total_faces = 0
-            
+
             for idx, image_path in enumerate(image_paths, 1):
                 try:
                     # Get filename for logging
                     filename = Path(image_path).name
                     logger.info(f"[{idx}/{len(image_paths)}] Processing: {filename}")
-                    
+
                     # Load image with proper format handling
                     image = self._load_image(image_path)
-                    
+
                     if image is None:
                         logger.warning(f"  ❌ Failed to load image: {filename}")
                         failed_images += 1
                         continue
-                    
+
                     # Log image dimensions
                     h, w = image.shape[:2]
                     channels = image.shape[2] if len(image.shape) == 3 else 1
                     logger.info(f"  📐 Dimensions: {w}x{h} pixels, {channels} channels")
-                    
+
                     # Check if image is too small
                     min_dim = min(h, w)
                     if min_dim < 480:
                         logger.info(f"  ⚠️  Small image detected (min dim: {min_dim}px) - upscaling recommended")
-                    
+
                     # Detect faces
                     faces = self.detect_faces(image)
                     total_faces += len(faces)
-                    
+
                     logger.info(f"  👤 Detected {len(faces)} face(s)")
-                    
+
                     if not faces:
                         logger.warning(f"  ❌ No faces detected in: {filename}")
                         failed_images += 1
                         continue
-                    
+
                     # Log face details
                     for i, face in enumerate(faces, 1):
                         logger.debug(f"    Face {i}: confidence={face.detection_confidence:.3f}, quality={face.quality:.3f}")
-                    
+
                     # Use first face (assume single person per training image)
                     face = faces[0]
-                    
+
                     if face.embedding is not None:
                         logger.info(f"  ✅ Embedding extracted: {len(face.embedding)}D vector")
                         embeddings.append(face.embedding)
@@ -1774,18 +2022,18 @@ class FaceRecognitionEngine:
                     else:
                         logger.warning(f"  ❌ No embedding extracted from: {filename}")
                         failed_images += 1
-                
+
                 except Exception as e:
                     logger.error(f"  ❌ Failed to process training image {Path(image_path).name}: {e}")
                     failed_images += 1
-            
+
             # Summary of processing
-            logger.info(f"=== Processing Summary ===")
+            logger.info("=== Processing Summary ===")
             logger.info(f"  Processed: {processed_images}/{len(image_paths)} images")
             logger.info(f"  Failed: {failed_images}/{len(image_paths)} images")
             logger.info(f"  Total faces: {total_faces}")
             logger.info(f"  Valid embeddings: {len(embeddings)}")
-            
+
             if not embeddings:
                 error_msg = f"No valid embeddings extracted from training images (processed: {processed_images}, failed: {failed_images})"
                 logger.error(f"  ❌ {error_msg}")
@@ -1794,7 +2042,7 @@ class FaceRecognitionEngine:
                     'failed_images': failed_images,
                     'total_faces': total_faces
                 }
-            
+
             # Store embeddings in database with retry
             logger.info(f"=== Storing {len(embeddings)} embeddings in database ===")
 
@@ -1803,7 +2051,7 @@ class FaceRecognitionEngine:
                 try:
                     cursor = conn.cursor()
                     cursor.execute("BEGIN IMMEDIATE")
-                    
+
                     # CRITICAL FIX: Create dummy training image if it doesn't exist
                     cursor.execute("SELECT id FROM images WHERE id = -1")
                     if not cursor.fetchone():
@@ -1812,10 +2060,10 @@ class FaceRecognitionEngine:
                             VALUES (-1, '__training__', '__training__', 1, 0, CURRENT_TIMESTAMP)
                         """)
                         logger.debug("  Created dummy training image (id=-1)")
-                    
+
                     for i, embedding in enumerate(embeddings, 1):
                         embedding_blob = embedding.tobytes()
-                        
+
                         # Use dummy image_id = -1 for training faces
                         cursor.execute("""
                             INSERT INTO faces (
@@ -1823,9 +2071,9 @@ class FaceRecognitionEngine:
                                 detection_confidence, face_quality
                             ) VALUES (-1, 0, 1, 1, 0, 1.0, 1.0)
                         """)
-                        
+
                         face_id = cursor.lastrowid
-                        
+
                         cursor.execute("""
                             INSERT INTO face_embeddings (
                                 face_id, person_id, embedding_vector, embedding_dimension,
@@ -1838,9 +2086,9 @@ class FaceRecognitionEngine:
                             len(embedding),
                             self.config.model
                         ))
-                        
+
                         logger.debug(f"  Stored embedding {i}/{len(embeddings)}")
-                    
+
                     conn.commit()
                     return True
                 except Exception:
@@ -1852,12 +2100,12 @@ class FaceRecognitionEngine:
             # Execute with retry
             self._execute_with_retry(store_embeddings)
             logger.info(f"✅ Database updated with {len(embeddings)} embeddings")
-            
+
             # Reload FAISS index
             logger.info("=== Reloading FAISS index ===")
             self._load_faiss_index()
             logger.info(f"✅ FAISS index reloaded: {self.faiss_index.ntotal if self.faiss_index else 0} total vectors")
-            
+
             message = f"Successfully trained '{person_name}' with {len(embeddings)} embeddings"
             details = {
                 'person_id': person_id,
@@ -1867,19 +2115,19 @@ class FaceRecognitionEngine:
                 'failed_images': failed_images,
                 'total_faces': total_faces
             }
-            
-            logger.info(f"=== Training Complete ===")
+
+            logger.info("=== Training Complete ===")
             logger.info(f"  {message}")
             logger.info(f"  Person ID: {person_id}")
             logger.info(f"  Success rate: {processed_images}/{len(image_paths)} ({100*processed_images/len(image_paths):.1f}%)")
-            
+
             return True, message, details
-        
+
         except Exception as e:
             logger.error(f"❌ Training failed for '{person_name}': {e}", exc_info=True)
             return False, f"Training failed: {str(e)}", {}
-    
-    def search_images_by_person(self, person_name: str, max_results: int = 50) -> List[Dict]:
+
+    def search_images_by_person(self, person_name: str, max_results: int = 50) -> list[dict]:
         """
         Search for images containing a specific person.
         Supports partial name matching (substring search).
@@ -1907,7 +2155,7 @@ class FaceRecognitionEngine:
                 ORDER BY i.taken_at DESC, fe.recognition_confidence DESC
                 LIMIT ?
             """, (f'%{person_name}%', max_results))
-            
+
             results = []
             for row in cursor.fetchall():
                 results.append({
@@ -1920,35 +2168,35 @@ class FaceRecognitionEngine:
                     'tags': json.loads(row['ai_tags']) if row['ai_tags'] else [],
                     'confidence': row['recognition_confidence']
                 })
-            
+
             conn.close()
             return results
-        
+
         except Exception as e:
             logger.error(f"Image search failed: {e}")
             return []
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get system statistics."""
         try:
             conn = self._get_connection()
-            
+
             stats = {}
-            
+
             # People count
             cursor = conn.execute("SELECT COUNT(*) as count FROM people")
             stats['total_people'] = cursor.fetchone()['count']
-            
+
             # Images count
             cursor = conn.execute("SELECT COUNT(*) as count, SUM(processed) as processed FROM images")
             row = cursor.fetchone()
             stats['total_images'] = row['count']
             stats['processed_images'] = row['processed'] or 0
-            
+
             # Faces count
             cursor = conn.execute("SELECT COUNT(*) as count FROM faces")
             stats['total_faces'] = cursor.fetchone()['count']
-            
+
             # Identified vs unknown
             cursor = conn.execute("""
                 SELECT 
@@ -1959,7 +2207,7 @@ class FaceRecognitionEngine:
             row = cursor.fetchone()
             stats['identified_faces'] = row['identified'] or 0
             stats['unknown_faces'] = row['unknown'] or 0
-            
+
             # Top people
             cursor = conn.execute("""
                 SELECT p.name, COUNT(*) as count
@@ -1971,7 +2219,7 @@ class FaceRecognitionEngine:
                 LIMIT 10
             """)
             stats['top_people'] = [{'name': row['name'], 'count': row['count']} for row in cursor.fetchall()]
-            
+
             # FAISS index info
             if self.faiss_index:
                 stats['faiss_vectors'] = self.faiss_index.ntotal
@@ -1979,24 +2227,24 @@ class FaceRecognitionEngine:
             else:
                 stats['faiss_vectors'] = 0
                 stats['faiss_dimension'] = 0
-            
+
             # Configuration
             stats['backend'] = self.config.backend
             stats['model'] = self.config.model
             stats['detection_threshold'] = self.config.detection_threshold
             stats['recognition_threshold'] = self.config.recognition_threshold
-            
+
             # Processing stats
             stats.update(self.stats)
-            
+
             conn.close()
             return stats
-        
+
         except Exception as e:
             logger.error(f"Failed to get statistics: {e}")
             return {}
 
-    def get_all_people(self) -> List[Dict[str, Any]]:
+    def get_all_people(self) -> list[dict[str, Any]]:
         """Get list of all people in database."""
         try:
             conn = self._get_connection()
@@ -2005,7 +2253,7 @@ class FaceRecognitionEngine:
                 FROM people
                 ORDER BY name
             """)
-            
+
             people = []
             for row in cursor.fetchall():
                 people.append({
@@ -2016,10 +2264,10 @@ class FaceRecognitionEngine:
                     'last_seen': row['last_seen'],
                     'created_at': row['created_at']
                 })
-            
+
             conn.close()
             return people
-        
+
         except Exception as e:
             logger.error(f"Failed to get people list: {e}")
             return []
@@ -2064,7 +2312,7 @@ class FaceRecognitionEngine:
             logger.warning(f"Full-image face fallback failed: {e}")
         return None
 
-    def _extract_embedding_from_crop(self, crop: np.ndarray) -> Optional[np.ndarray]:
+    def _extract_embedding_from_crop(self, crop: np.ndarray) -> np.ndarray | None:
         """
         Extract a face embedding directly from a BGR crop by feeding it to
         InsightFace's ArcFace recognition model, bypassing the detector.
@@ -2101,7 +2349,7 @@ class FaceRecognitionEngine:
     # are directly comparable with FAISS index entries.
 
     def _embed_crop(self, image: np.ndarray, bbox: 'BoundingBox',
-                    landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+                    landmarks: np.ndarray | None = None) -> np.ndarray | None:
         """
         Return an ArcFace embedding for the given bbox region.
         If ``landmarks`` is a (5, 2) array compatible with InsightFace's
@@ -2131,7 +2379,7 @@ class FaceRecognitionEngine:
             return None
         return self._extract_embedding_from_crop(crop)
 
-    def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
+    def _detect_faces_scrfd(self, image: np.ndarray, det_thresh: float | None = None) -> list['Face']:
         """
         SCRFD detection via face_analyzer.get() — the full InsightFace pipeline.
         buffalo_l's det_model IS SCRFD-10G-KPS; it was trained at 640×640.
@@ -2154,7 +2402,7 @@ class FaceRecognitionEngine:
             orig_h, orig_w = image.shape[:2]
             NMS_FLOOR = 0.05
 
-            def _run_at(det_size: tuple, thresh: float, img: np.ndarray) -> List['Face']:
+            def _run_at(det_size: tuple, thresh: float, img: np.ndarray) -> list['Face']:
                 """Run one SCRFD pass at the given det_size and confidence floor."""
                 det_model.input_size = det_size
                 if hasattr(det_model, 'det_thresh'):
@@ -2236,7 +2484,7 @@ class FaceRecognitionEngine:
             logger.warning(f"SCRFD detection failed: {e}")
             return []
 
-    def _detect_faces_yunet(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
+    def _detect_faces_yunet(self, image: np.ndarray, det_thresh: float | None = None) -> list['Face']:
         """
         Face detector using OpenCV YuNet (FaceDetectorYN).
         Requires OpenCV ≥ 4.5.4.  Downloads the model file on first use.
@@ -2314,7 +2562,7 @@ class FaceRecognitionEngine:
             logger.warning(f"YuNet detection failed: {e}")
             return []
 
-    def _detect_faces_mediapipe(self, image: np.ndarray, det_thresh: Optional[float] = None) -> List['Face']:
+    def _detect_faces_mediapipe(self, image: np.ndarray, det_thresh: float | None = None) -> list['Face']:
         """
         Face detector using the MediaPipe Tasks API (mediapipe ≥ 0.10).
         Uses the blaze_face_short_range.tflite model downloaded on first use.
@@ -2324,7 +2572,8 @@ class FaceRecognitionEngine:
             return []
         try:
             import mediapipe as mp
-            import tempfile, os
+            import tempfile
+            import os
             h, w = image.shape[:2]
             threshold = det_thresh if det_thresh is not None else self.config.detection_threshold
             # Use a very low floor so we can see EVERYTHING the model finds;
@@ -2430,7 +2679,7 @@ class FaceRecognitionEngine:
             logger.warning(f"MediaPipe detection failed: {e}", exc_info=True)
             return []
 
-    def add_manual_face(self, image_id: int, bbox_dict: Dict[str, float], rec_thresh: Optional[float] = None) -> Dict[str, Any]:
+    def add_manual_face(self, image_id: int, bbox_dict: dict[str, float], rec_thresh: float | None = None) -> dict[str, Any]:
         """
         Manually add a face detection for an image.
         bbox_dict: {top, right, bottom, left} (0-1)
@@ -2469,7 +2718,7 @@ class FaceRecognitionEngine:
                 face = self._detect_face_near_bbox(image, bbox, det_thresh=0.3)
                 if face is None:
                     # Strategy 3: feed the crop directly to the ArcFace model (no alignment)
-                    logger.warning(f"Full-image fallback also failed — extracting embedding from crop directly")
+                    logger.warning("Full-image fallback also failed — extracting embedding from crop directly")
                     embedding = self._extract_embedding_from_crop(crop)
                     if embedding is not None:
                         logger.info(f"Direct crop embedding succeeded for image {image_id}")
@@ -2496,7 +2745,7 @@ class FaceRecognitionEngine:
 
             # Store
             self._store_faces(image_id, [face], [recognition])
-            
+
             # Get the newly created face_id
             conn = self._get_connection()
             new_face = conn.execute("""
@@ -2510,7 +2759,7 @@ class FaceRecognitionEngine:
             conn.close()
 
             return {
-                'success': True, 
+                'success': True,
                 'face': {
                     'face_id': new_face['face_id'],
                     'bbox': bbox_dict,
@@ -2521,4 +2770,3 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"add_manual_face failed: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
-    

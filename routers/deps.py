@@ -9,12 +9,11 @@ Usage in route handlers:
         ...
 """
 import sqlite3
-from typing import Optional
 
 from fastapi import Cookie, Depends, HTTPException
 
 
-def get_current_user(session: Optional[str] = Cookie(None)):
+def get_current_user(session: str | None = Cookie(None)):
     """Return the authenticated User or raise 401."""
     from routers.auth import _get_session_user
     from fastapi_app import state

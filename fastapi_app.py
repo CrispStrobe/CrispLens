@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from fastapi import Depends, FastAPI
@@ -144,9 +143,9 @@ async def require_auth_middleware(request, call_next):
 # ─── Shared application state ─────────────────────────────────────────────────
 
 class AppState:
-    engine: Optional[FaceRecognitionEngine] = None
-    permissions: Optional[PermissionManager] = None
-    api_key_manager: Optional[ApiKeyManager] = None
+    engine: FaceRecognitionEngine | None = None
+    permissions: PermissionManager | None = None
+    api_key_manager: ApiKeyManager | None = None
     _vlm_provider = None
     config: dict = {}
     db_path: str = ''
@@ -158,7 +157,7 @@ class AppState:
         """Lazy-load the VLM provider on first access."""
         if self._vlm_provider is not None:
             return self._vlm_provider
-        
+
         vlm_config = self.config.get('vlm', {})
         if vlm_config.get('enabled', False):
             provider = vlm_config.get('provider', 'anthropic')
@@ -167,7 +166,7 @@ class AppState:
             if not api_key:
                 api_key = vlm_config.get('api', {}).get('key') or None
             endpoint = vlm_config.get('api', {}).get('endpoint') or None
-            
+
             logger.info(f"Lazy-initializing VLM provider: {provider}")
             self._vlm_provider = create_vlm_provider(
                 provider=provider, api_key=api_key,
@@ -219,7 +218,7 @@ def startup():
     config_path = os.path.join(_DATA_DIR, 'config.yaml') if _DATA_DIR else 'config.yaml'
 
     if Path(config_path).exists():
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config_dict = yaml.safe_load(f) or {}
         logger.info(f"Loaded configuration from {config_path}")
     else:

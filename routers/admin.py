@@ -16,7 +16,7 @@ import subprocess
 import time as _time
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from routers.deps import require_admin
@@ -105,7 +105,7 @@ def get_server_logs(lines: int = 100, admin=Depends(require_admin)):
             yield "data: [ERROR] Log file not found\n\n"; return
         yield f"data: [PATH] {log_file}\n\n"; _time.sleep(0.05)
         try:
-            with open(log_file, 'r', errors='replace') as fh:
+            with open(log_file, errors='replace') as fh:
                 tail = list(collections.deque(fh, maxlen=lines))
             for ln in tail:
                 yield f"data: {ln.rstrip()}\n\n"
@@ -131,7 +131,7 @@ def get_server_logs_json(lines: int = 100, _=Depends(require_admin)):
     if not log_file:
         return JSONResponse({"error": "Log file not found"}, status_code=404)
     try:
-        with open(log_file, 'r', errors='replace') as fh:
+        with open(log_file, errors='replace') as fh:
             tail = list(collections.deque(fh, maxlen=lines))
         return {"lines": [ln.rstrip() for ln in tail], "path": log_file}
     except Exception as e:

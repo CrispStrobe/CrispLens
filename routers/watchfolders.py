@@ -6,7 +6,7 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -67,7 +67,7 @@ def count_images(folder_path: str, recursive: bool) -> int:
     )
 
 
-def get_new_image_paths(db_path: str, folder_path: str, recursive: bool) -> List[str]:
+def get_new_image_paths(db_path: str, folder_path: str, recursive: bool) -> list[str]:
     """Return image paths in folder that are not yet processed in the DB."""
     base = Path(folder_path)
     if not base.exists():
@@ -123,15 +123,15 @@ class WatchFolderCreate(BaseModel):
     scan_interval_hours: float = 24.0
 
 class WatchFolderUpdate(BaseModel):
-    recursive:           Optional[bool]  = None
-    auto_scan:           Optional[bool]  = None
-    scan_interval_hours: Optional[float] = None
+    recursive:           bool | None  = None
+    auto_scan:           bool | None  = None
+    scan_interval_hours: float | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_watch_folders() -> List[Dict[str, Any]]:
+def list_watch_folders() -> list[dict[str, Any]]:
     s = _state()
     ensure_table(s.db_path)
     conn = None
@@ -168,9 +168,9 @@ def add_watch_folder(body: WatchFolderCreate, _=Depends(require_admin_or_mediama
         ).fetchone()
         return dict(row)
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Folder is already being watched")
+        raise HTTPException(status_code=409, detail="Folder is already being watched")  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -205,7 +205,7 @@ def update_watch_folder(folder_id: int, body: WatchFolderUpdate, _=Depends(requi
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -228,7 +228,7 @@ def delete_watch_folder(folder_id: int, _=Depends(require_admin_or_mediamanager)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         if conn:
             conn.close()

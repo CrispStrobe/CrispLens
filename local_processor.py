@@ -53,11 +53,11 @@ def get_analyzer():
             providers=providers,
         )
         _analyzer.prepare(ctx_id=-1, det_size=(640, 640))
-        print(f'[local_processor] Model ready', file=sys.stderr, flush=True)
+        print('[local_processor] Model ready', file=sys.stderr, flush=True)
 
     except ImportError as e:
         print(f'[local_processor] ERROR: {e}', file=sys.stderr, flush=True)
-        print(f'[local_processor] Install: pip install insightface onnxruntime', file=sys.stderr, flush=True)
+        print('[local_processor] Install: pip install insightface onnxruntime', file=sys.stderr, flush=True)
         raise
 
     return _analyzer
@@ -119,7 +119,6 @@ def extract_exif(path: str) -> dict:
 
 def process_image(path: str) -> dict:
     import cv2
-    import numpy as np
 
     try:
         analyzer = get_analyzer()

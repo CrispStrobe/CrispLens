@@ -18,13 +18,13 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ── In-memory session cache ───────────────────────────────────────────────────
 # { drive_id: { 'session': <credentials dict>, 'expires_at': <unix ts> } }
-_sessions: Dict[int, Dict[str, Any]] = {}
+_sessions: dict[int, dict[str, Any]] = {}
 _SESSION_TTL = 23 * 3600   # 23 hours
 
 
@@ -47,11 +47,11 @@ def _get_fernet(db_path: str):
     return Fernet(key)
 
 
-def encrypt_config(db_path: str, config: Dict[str, Any]) -> str:
+def encrypt_config(db_path: str, config: dict[str, Any]) -> str:
     return _get_fernet(db_path).encrypt(json.dumps(config).encode()).decode()
 
 
-def decrypt_config(db_path: str, token: str) -> Dict[str, Any]:
+def decrypt_config(db_path: str, token: str) -> dict[str, Any]:
     return json.loads(_get_fernet(db_path).decrypt(token.encode()).decode())
 
 
@@ -94,7 +94,7 @@ def ensure_table(db_path: str) -> None:
 
 # ── SMB / CIFS ────────────────────────────────────────────────────────────────
 
-def _mount_smb(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
+def _mount_smb(cfg: dict[str, Any], mount_point: str) -> tuple[bool, str]:
     from drive_mount import DriveMount
     return DriveMount.mount_smb(
         server=cfg['server'],
@@ -109,7 +109,7 @@ def _mount_smb(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
 
 # ── SFTP (sshfs) ─────────────────────────────────────────────────────────────
 
-def _mount_sftp(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
+def _mount_sftp(cfg: dict[str, Any], mount_point: str) -> tuple[bool, str]:
     server = cfg.get('server', '')
     port = cfg.get('port', 22)
     username = cfg.get('username', '')
@@ -150,7 +150,7 @@ def _mount_sftp(cfg: Dict[str, Any], mount_point: str) -> Tuple[bool, str]:
         return False, f'SFTP mount error: {e}'
 
 
-def _unmount_path(mount_point: str, force: bool = False) -> Tuple[bool, str]:
+def _unmount_path(mount_point: str, force: bool = False) -> tuple[bool, str]:
     system = platform.system()
     try:
         if system == 'Darwin':
@@ -182,7 +182,7 @@ def _is_mounted(mount_point: str) -> bool:
 
 # ── Cloud session helpers ─────────────────────────────────────────────────────
 
-def _get_cached_session(drive_id: int) -> Optional[Dict[str, Any]]:
+def _get_cached_session(drive_id: int) -> dict[str, Any] | None:
     entry = _sessions.get(drive_id)
     if entry and entry['expires_at'] > time.time():
         return entry['session']
@@ -190,11 +190,11 @@ def _get_cached_session(drive_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _cache_session(drive_id: int, session: Dict[str, Any]) -> None:
+def _cache_session(drive_id: int, session: dict[str, Any]) -> None:
     _sessions[drive_id] = {'session': session, 'expires_at': time.time() + _SESSION_TTL}
 
 
-def _connect_filen(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
+def _connect_filen(cfg: dict[str, Any], drive_id: int) -> tuple[bool, str]:
     """Authenticate with Filen and cache the session."""
     # Use cached session if still valid
     if _get_cached_session(drive_id):
@@ -210,7 +210,7 @@ def _connect_filen(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
         return False, f'Filen connection error: {e}'
 
 
-def _connect_internxt(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
+def _connect_internxt(cfg: dict[str, Any], drive_id: int) -> tuple[bool, str]:
     """Authenticate with Internxt and cache the session."""
     if _get_cached_session(drive_id):
         return True, 'Already connected (session cached)'
@@ -228,7 +228,7 @@ def _connect_internxt(cfg: Dict[str, Any], drive_id: int) -> Tuple[bool, str]:
 
 # ── Public API — mount / unmount ──────────────────────────────────────────────
 
-def mount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
+def mount_drive(db_path: str, drive_id: int) -> tuple[bool, str]:
     """Mount / connect a drive by ID. Updates is_mounted and last_error in DB."""
     conn = None
     try:
@@ -264,7 +264,7 @@ def mount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
     return ok, msg
 
 
-def unmount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
+def unmount_drive(db_path: str, drive_id: int) -> tuple[bool, str]:
     """Unmount / disconnect a drive by ID."""
     conn = None
     try:
@@ -292,7 +292,7 @@ def unmount_drive(db_path: str, drive_id: int) -> Tuple[bool, str]:
     return ok, msg
 
 
-def get_drive_status(drive: Dict[str, Any]) -> Dict[str, Any]:
+def get_drive_status(drive: dict[str, Any]) -> dict[str, Any]:
     """Return live mount/connection status for a drive row dict."""
     dtype = drive.get('type', '')
     drive_id = drive.get('id')
@@ -311,9 +311,11 @@ def get_drive_status(drive: Dict[str, Any]) -> Dict[str, Any]:
 # ── Public API — file operations ──────────────────────────────────────────────
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm'}
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.mpg', '.mpeg'}
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
 
-def _get_drive(db_path: str, drive_id: int) -> Dict[str, Any]:
+def _get_drive(db_path: str, drive_id: int) -> dict[str, Any]:
     """Return drive row dict. Raises RuntimeError if not found."""
     conn = None
     try:
@@ -327,7 +329,7 @@ def _get_drive(db_path: str, drive_id: int) -> Dict[str, Any]:
     return dict(row)
 
 
-def _get_session_or_raise(db_path: str, drive_id: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def _get_session_or_raise(db_path: str, drive_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (drive_row, session_credentials). Raises RuntimeError if not connected."""
     drive = _get_drive(db_path, drive_id)
     session = _get_cached_session(drive_id)
@@ -336,7 +338,7 @@ def _get_session_or_raise(db_path: str, drive_id: int) -> Tuple[Dict[str, Any], 
     return drive, session
 
 
-def list_dir(db_path: str, drive_id: int, path: str = '/') -> List[Dict[str, Any]]:
+def list_dir(db_path: str, drive_id: int, path: str = '/') -> list[dict[str, Any]]:
     """
     List directory contents for SMB/SFTP (os.listdir) or Filen/Internxt (API).
     Returns list of {name, is_dir, size, path}.
@@ -362,7 +364,7 @@ def list_dir(db_path: str, drive_id: int, path: str = '/') -> List[Dict[str, Any
                     'path': os.path.join(path, entry.name),
                 })
         except PermissionError as e:
-            raise RuntimeError(f'Permission denied: {e}')
+            raise RuntimeError(f'Permission denied: {e}')  # noqa: B904
         entries.sort(key=lambda e: (not e['is_dir'], e['name'].lower()))
         return entries
 
@@ -404,7 +406,7 @@ def list_dir(db_path: str, drive_id: int, path: str = '/') -> List[Dict[str, Any
 
 
 def list_image_files(db_path: str, drive_id: int, path: str,
-                     recursive: bool = True) -> List[Dict[str, Any]]:
+                     recursive: bool = True) -> list[dict[str, Any]]:
     """
     Return a flat list of image file entries under 'path'.
     'path' may be a directory (walked) or a single image file.
@@ -484,7 +486,7 @@ def list_image_files(db_path: str, drive_id: int, path: str,
 
 
 def download_to_temp(db_path: str, drive_id: int,
-                     item: Dict[str, Any]) -> Tuple[str, bool]:
+                     item: dict[str, Any]) -> tuple[str, bool]:
     """
     Resolve an item to a local path the processing engine can read.
 
@@ -710,7 +712,7 @@ def delete_item(db_path: str, drive_id: int, path: str) -> bool:
 # ── DB update helper ──────────────────────────────────────────────────────────
 
 def _update_mount_status(db_path: str, drive_id: int, is_mounted: bool,
-                          last_error: Optional[str]) -> None:
+                          last_error: str | None) -> None:
     conn = None
     try:
         conn = _connect(db_path)

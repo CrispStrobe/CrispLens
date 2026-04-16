@@ -23,7 +23,7 @@ import sqlite3
 import subprocess
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -50,7 +50,7 @@ def dbg(*args):
 router = APIRouter()
 
 # Whitelisted column names — never derived from user input
-_ARCHIVE_PATH_COL: Dict[str, str] = {
+_ARCHIVE_PATH_COL: dict[str, str] = {
     "bildarchiv": "bildarchiv_path",
     "bildauswahl": "bildauswahl_path",
 }
@@ -150,7 +150,7 @@ def _sanitize(s: str) -> str:
     s = re.sub(r'__+', '_', s)
     return s.strip('_')
 
-def _year_month(date_val: Optional[str]) -> tuple:
+def _year_month(date_val: str | None) -> tuple:
     if not date_val:
         now = datetime.now()
         return str(now.year), f"{now.month:02d}"
@@ -257,7 +257,7 @@ def _organize_file_sync(source_path: str, dest_path: str, action: str) -> dict:
 # ─── ExifTool ─────────────────────────────────────────────────────────────────
 
 # Use a list as a mutable container so _check_exiftool avoids `global`
-_exiftool_state: List[Optional[bool]] = [None]
+_exiftool_state: list[bool | None] = [None]
 
 def _check_exiftool() -> bool:
     if _exiftool_state[0] is not None:
@@ -386,36 +386,36 @@ def _organize_image(conn: sqlite3.Connection, image_id: int, archive_cfg: dict, 
 # ─── Pydantic models ──────────────────────────────────────────────────────────
 
 class ArchiveMeta(BaseModel):
-    fachbereich: Optional[str] = None
-    veranstaltungsnummer: Optional[str] = None
-    veranstaltungstitel: Optional[str] = None
-    urheber: Optional[str] = None
-    datum: Optional[str] = None
-    description: Optional[str] = None
-    names: Optional[str] = None
+    fachbereich: str | None = None
+    veranstaltungsnummer: str | None = None
+    veranstaltungstitel: str | None = None
+    urheber: str | None = None
+    datum: str | None = None
+    description: str | None = None
+    names: str | None = None
 
 class OrganizeRequest(BaseModel):
-    image_ids: List[int]
-    meta: Optional[ArchiveMeta] = None
+    image_ids: list[int]
+    meta: ArchiveMeta | None = None
     action: str = "copy"
     archive_type: str = "bildarchiv"
     write_exif: bool = False
 
 class BildauswahlRequest(BaseModel):
-    image_ids: List[int]
-    meta: Optional[ArchiveMeta] = None
+    image_ids: list[int]
+    meta: ArchiveMeta | None = None
     action: str = "copy"
     write_exif: bool = False
 
 class RenameBatchRequest(BaseModel):
-    image_ids: List[int]
-    meta: Optional[ArchiveMeta] = None
+    image_ids: list[int]
+    meta: ArchiveMeta | None = None
     archive_type: str = "bildarchiv"
     rename_file: bool = False
 
 class WriteExifRequest(BaseModel):
-    image_ids: List[int]
-    fields: Optional[Dict[str, Any]] = None
+    image_ids: list[int]
+    fields: dict[str, Any] | None = None
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 

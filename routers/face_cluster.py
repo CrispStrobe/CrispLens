@@ -11,7 +11,7 @@ import io
 import os
 import sqlite3
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from routers.deps import get_current_user, require_admin_or_mediamanager
+from routers.deps import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +40,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class AssignClusterRequest(BaseModel):
-    face_ids: List[int]
+    face_ids: list[int]
     person_name: str
 
 
@@ -55,7 +55,7 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def _load_faces(db_path: str, user=None, unidentified_only: bool = True) -> List[Dict[str, Any]]:
+def _load_faces(db_path: str, user=None, unidentified_only: bool = True) -> list[dict[str, Any]]:
     """Return face records with embedding bytes.
 
     When *unidentified_only* is True (default) only faces with no confirmed
@@ -115,7 +115,7 @@ def _load_faces(db_path: str, user=None, unidentified_only: bool = True) -> List
             conn.close()
 
 
-def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
+def _load_unidentified(db_path: str, user=None) -> list[dict[str, Any]]:
     """Backward-compatible wrapper — returns only unidentified faces."""
     return _load_faces(db_path, user, unidentified_only=True)
 
@@ -126,7 +126,7 @@ def _load_unidentified(db_path: str, user=None) -> List[Dict[str, Any]]:
 def list_unidentified_faces(
     limit: int = Query(500, ge=1, le=5000),
     user=Depends(get_current_user),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return all faces that have no identified person (or very low confidence)."""
     s = _state()
     faces = _load_unidentified(s.db_path, user)[:limit]
@@ -148,7 +148,7 @@ def get_face_clusters(
     limit: int = Query(500, ge=1, le=5000),
     include_identified: bool = Query(False, description="Include already-identified faces"),
     user=Depends(get_current_user),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Group faces into clusters by embedding cosine similarity.
     By default only unidentified faces are clustered.  Pass
@@ -175,8 +175,8 @@ def get_face_clusters(
             without_emb.append(f)
 
     # Greedy clustering
-    clusters: List[List[Dict]] = []
-    cluster_centroids: List[np.ndarray] = []
+    clusters: list[list[dict]] = []
+    cluster_centroids: list[np.ndarray] = []
 
     for face, vec in with_emb:
         best_idx = -1
@@ -251,7 +251,7 @@ def get_face_crop(
     try:
         from PIL import Image as PILImage
     except ImportError:
-        raise HTTPException(status_code=500, detail="Pillow not installed")
+        raise HTTPException(status_code=500, detail="Pillow not installed")  # noqa: B904
 
     conn = None
     try:
@@ -327,11 +327,11 @@ def get_face_crop(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Crop failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Crop failed: {e}")  # noqa: B904
 
 
 @router.post("/assign-cluster")
-def assign_cluster(body: AssignClusterRequest, _user=Depends(get_current_user)) -> Dict[str, Any]:
+def assign_cluster(body: AssignClusterRequest, _user=Depends(get_current_user)) -> dict[str, Any]:
     """
     Assign person_name to a list of face_ids.
     Creates or finds the person, then calls reassign_face for each face.

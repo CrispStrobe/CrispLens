@@ -320,3 +320,6 @@ site/
 !thumbnails/.gitkeep
 node_modules/
 .vercel
+
+# Claude Code local settings (don't commit per-machine tool prefs)
+.claude/

@@ -607,6 +607,7 @@ PKGS=(
     git curl rsync sqlite3 build-essential
     libssl-dev libffi-dev libgl1 libglib2.0-0
     exiftool
+    ffmpeg
 )
 if [[ "$DO_NGINX" == true ]]; then
     [[ "$WEB_SERVER" == "nginx" ]]   && PKGS+=(nginx)

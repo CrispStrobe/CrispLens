@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS images (
     owner_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
     visibility TEXT DEFAULT 'shared' CHECK(visibility IN ('shared', 'private')),
 
+    -- Media type (image vs. video) — video uses video_frames table for per-frame data
+    media_type   TEXT DEFAULT 'image' CHECK(media_type IN ('image', 'video')),
+    duration_sec REAL,
+    fps          REAL,
+    frame_count  INTEGER,
+    transcript   TEXT,
+
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -131,6 +138,38 @@ CREATE INDEX IF NOT EXISTS idx_images_description ON images(ai_description);
 CREATE INDEX IF NOT EXISTS idx_images_tags ON images(ai_tags);
 CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_id);
 CREATE INDEX IF NOT EXISTS idx_images_visibility ON images(visibility);
+CREATE INDEX IF NOT EXISTS idx_images_media_type ON images(media_type);
+
+-- ============================================================================
+-- VIDEO_FRAMES TABLE
+-- Per-frame data for video rows in the images table.  One images row per
+-- video (media_type='video'); many video_frames rows referencing it.
+-- Each extracted frame has its own faces rows (linked via frame_id -> image_id?
+-- No: faces still reference images.id of the video row for aggregation, but
+-- the frame metadata lives here so we know the timestamp of a given detection.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS video_frames (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_id         INTEGER NOT NULL,       -- parent video row in images
+    frame_index      INTEGER NOT NULL,       -- 0-based sequence within the video
+    timestamp_ms     INTEGER NOT NULL,       -- offset from video start
+    is_keyframe      INTEGER DEFAULT 0,      -- 1 = ffmpeg scene-change hit
+    phash            TEXT,                   -- perceptual hash for dedup
+    thumbnail_path   TEXT,                   -- on-disk jpeg thumbnail (opt.)
+    face_count       INTEGER DEFAULT 0,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_video_frames_image ON video_frames(image_id);
+CREATE INDEX IF NOT EXISTS idx_video_frames_ts    ON video_frames(image_id, timestamp_ms);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_video_frames_image_idx
+    ON video_frames(image_id, frame_index);
+
+-- Link a faces row to the specific frame it was detected in (videos only).
+-- NULL for image-based detections.
+-- The column is added here so schema_complete.sql reflects reality;
+-- fix_db.sh also ALTER-adds it idempotently for existing DBs.
+-- (faces.frame_id is NULL for still images.)
 
 -- ============================================================================
 -- FACES TABLE
@@ -155,10 +194,13 @@ CREATE TABLE IF NOT EXISTS faces (
     pose_roll REAL,
     pose_yaw REAL,
     pose_pitch REAL,
-    
+
+    -- Video support: which frame this face was detected in (NULL for still images)
+    frame_id INTEGER REFERENCES video_frames(id) ON DELETE CASCADE,
+
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
+
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
 );
 
@@ -514,5 +556,20 @@ VALUES ('schema_version', '2.0', 'string', 'Current database schema version');
 
 INSERT OR REPLACE INTO settings (key, value, value_type, description)
 VALUES ('schema_initialized', datetime('now'), 'string', 'Schema initialization timestamp');
+
+-- ============================================================================
+-- SZENENTYP SEED TAGS (category='Szenentyp')
+-- ============================================================================
+-- Predefined scene-type tags for event photography/videography.
+-- Users can add more freely — same category, managed via the tags UI.
+INSERT OR IGNORE INTO tags (name, category, color) VALUES
+    ('Podium',       'Szenentyp', '#4080c0'),
+    ('Saal',         'Szenentyp', '#4080c0'),
+    ('Publikum',     'Szenentyp', '#4080c0'),
+    ('Rollstuhl',    'Szenentyp', '#4080c0'),
+    ('Junge Leute',  'Szenentyp', '#4080c0'),
+    ('Dialog',       'Szenentyp', '#4080c0'),
+    ('Ausstellung',  'Szenentyp', '#4080c0'),
+    ('Vernissage',   'Szenentyp', '#4080c0');
 
 SELECT 'Database schema initialized successfully - Version 2.0' as status;

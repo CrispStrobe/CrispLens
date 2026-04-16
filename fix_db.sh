@@ -450,6 +450,43 @@ else
         apply_migration "batch_job_files.local_path" \
             "ALTER TABLE batch_job_files ADD COLUMN local_path TEXT;"
 
+        # ── Video support (added 2026-04-16) ──
+        apply_migration "images.media_type"   "ALTER TABLE images ADD COLUMN media_type TEXT DEFAULT 'image';"
+        apply_migration "images.duration_sec" "ALTER TABLE images ADD COLUMN duration_sec REAL;"
+        apply_migration "images.fps"          "ALTER TABLE images ADD COLUMN fps REAL;"
+        apply_migration "images.frame_count"  "ALTER TABLE images ADD COLUMN frame_count INTEGER;"
+        apply_migration "images.transcript"   "ALTER TABLE images ADD COLUMN transcript TEXT;"
+        apply_migration "idx_images_media_type" \
+            "CREATE INDEX IF NOT EXISTS idx_images_media_type ON images(media_type);"
+
+        # video_frames table + faces.frame_id link
+        run_sql "
+            CREATE TABLE IF NOT EXISTS video_frames (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                image_id       INTEGER NOT NULL,
+                frame_index    INTEGER NOT NULL,
+                timestamp_ms   INTEGER NOT NULL,
+                is_keyframe    INTEGER DEFAULT 0,
+                phash          TEXT,
+                thumbnail_path TEXT,
+                face_count     INTEGER DEFAULT 0,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_video_frames_image ON video_frames(image_id);
+            CREATE INDEX IF NOT EXISTS idx_video_frames_ts    ON video_frames(image_id, timestamp_ms);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_video_frames_image_idx
+                ON video_frames(image_id, frame_index);
+        " 2>/dev/null && info "video_frames table ensured" || true
+
+        apply_migration "faces.frame_id" "ALTER TABLE faces ADD COLUMN frame_id INTEGER REFERENCES video_frames(id) ON DELETE CASCADE;"
+
+        # ── Szenentyp predefined tag seeding (idempotent) ──
+        for _sn in "Podium" "Saal" "Publikum" "Rollstuhl" "Junge Leute" "Dialog" "Ausstellung" "Vernissage"; do
+            run_sql "INSERT OR IGNORE INTO tags (name, category, color) VALUES ('${_sn}', 'Szenentyp', '#4080c0');" 2>/dev/null || true
+        done
+        info "Szenentyp seed tags ensured"
+
         info "All migrations complete"
     fi
 fi

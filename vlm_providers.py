@@ -1,6 +1,6 @@
 # vlm_providers.py - Robust multi-VLM support with retries and fallbacks
 import base64
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any
 import requests
 import json
 import logging
@@ -34,7 +34,7 @@ class VLMConfig:
     max_image_size_mb: float = 5.0
     vlm_max_size: int = 0
     supported_formats: set = None
-    
+
     def __post_init__(self):
         if self.supported_formats is None:
             self.supported_formats = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
@@ -42,42 +42,42 @@ class VLMConfig:
 
 class VLMProvider:
     """Base class for VLM providers with robust error handling."""
-    
+
     def __init__(self, config: VLMConfig = None):
         self.config = config or VLMConfig()
-    
+
     def _validate_image(self, image_path: str) -> tuple[bool, str]:
         """Validate image file before processing."""
         try:
             path = Path(image_path)
-            
+
             # Check existence
             if not path.exists():
                 return False, f"Image file not found: {image_path}"
-            
+
             # Check file size
             size_mb = path.stat().st_size / (1024 * 1024)
             if size_mb > self.config.max_image_size_mb:
                 return False, f"Image too large: {size_mb:.2f}MB (max: {self.config.max_image_size_mb}MB)"
-            
+
             # Check format
             ext = path.suffix.lower()
             if ext not in self.config.supported_formats:
                 return False, f"Unsupported format: {ext}. Supported: {self.config.supported_formats}"
-            
+
             # Check if file is readable
             with open(image_path, 'rb') as f:
                 # Read first few bytes to verify it's a valid image
                 header = f.read(16)
                 if not header:
                     return False, "Image file is empty"
-            
+
             return True, "OK"
-            
+
         except Exception as e:
             return False, f"Image validation error: {str(e)}"
-    
-    def _read_image_base64(self, image_path: str) -> Optional[str]:
+
+    def _read_image_base64(self, image_path: str) -> str | None:
         """Read image and convert to base64."""
         try:
             with open(image_path, 'rb') as f:
@@ -86,11 +86,11 @@ class VLMProvider:
         except Exception as e:
             logger.error(f"Failed to read image {image_path}: {e}")
             return None
-    
-    def _extract_json(self, text: str) -> Optional[Dict]:
+
+    def _extract_json(self, text: str) -> dict | None:
         """Extract JSON from text with multiple strategies."""
         import re
-        
+
         # Strategy 1: Find JSON code block
         json_block = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
         if json_block:
@@ -98,7 +98,7 @@ class VLMProvider:
                 return json.loads(json_block.group(1))
             except json.JSONDecodeError:
                 pass
-        
+
         # Strategy 2: Find first complete JSON object
         json_match = re.search(r'\{[\s\S]*\}', text)
         if json_match:
@@ -106,16 +106,16 @@ class VLMProvider:
                 return json.loads(json_match.group())
             except json.JSONDecodeError:
                 pass
-        
+
         # Strategy 3: Try parsing the entire text
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-        
+
         logger.warning("Could not extract valid JSON from VLM response")
         return None
-    
+
     def _get_media_type(self, image_path: str) -> str:
         """Get MIME type for image."""
         ext = Path(image_path).suffix.lower()
@@ -127,7 +127,7 @@ class VLMProvider:
             '.gif': 'image/gif'
         }
         return media_types.get(ext, 'image/jpeg')
-    
+
     def _prepare_image_for_vlm(self, image_path: str, vlm_max_size: int = 0):
         """Return (base64_data, media_type), resizing to vlm_max_size long-edge if >0."""
         if vlm_max_size > 0:
@@ -148,7 +148,7 @@ class VLMProvider:
                 logger.warning(f"VLM resize failed ({e}), sending original")
         return self._read_image_base64(image_path), self._get_media_type(image_path)
 
-    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> dict[str, Any]:
         """
         Enrich image with AI analysis.
 
@@ -160,47 +160,47 @@ class VLMProvider:
 
 class AnthropicVLM(VLMProvider):
     """Anthropic Claude Vision with robust error handling."""
-    
+
     DEFAULT_MODEL = "claude-3-5-sonnet-20241022"
     FALLBACK_MODEL = "claude-3-haiku-20240307"
-    
+
     def __init__(self, api_key: str, model: str = None, config: VLMConfig = None):
         super().__init__(config)
-        
+
         if not ANTHROPIC_AVAILABLE:
             raise ImportError("anthropic library not installed. Install: pip install anthropic")
-        
+
         if not api_key:
             raise ValueError("API key required for Anthropic")
-        
+
         try:
             self.client = anthropic.Anthropic(api_key=api_key)
             self.model = model or self.DEFAULT_MODEL
             logger.info(f"Initialized Anthropic VLM with model: {self.model}")
         except Exception as e:
-            raise ValueError(f"Failed to initialize Anthropic client: {e}")
-    
-    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
+            raise ValueError(f"Failed to initialize Anthropic client: {e}")  # noqa: B904
+
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> dict[str, Any]:
         """Enrich image using Claude Vision."""
         # Validate image
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
 
-        
+
         # Use config default if parameter is 0
         if vlm_max_size == 0 and hasattr(self.config, "vlm_max_size") and self.config.vlm_max_size > 0:
             vlm_max_size = self.config.vlm_max_size
-            
+
         image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
-        
+
         # Retry logic
         for attempt in range(self.config.max_retries):
             try:
                 logger.info(f"Calling Anthropic API (attempt {attempt + 1}/{self.config.max_retries})")
-                
+
                 message = self.client.messages.create(
                     model=self.model,
                     max_tokens=1024,
@@ -220,10 +220,10 @@ class AnthropicVLM(VLMProvider):
                         ]
                     }]
                 )
-                
+
                 # Extract response
                 response_text = message.content[0].text
-                
+
                 # Parse JSON
                 result = self._extract_json(response_text)
                 if result:
@@ -237,47 +237,47 @@ class AnthropicVLM(VLMProvider):
                         "tags": [],
                         "raw_response": response_text
                     }
-                
+
             except anthropic.RateLimitError as e:
                 logger.warning(f"Rate limit hit: {e}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
                 return {"error": "Rate limit exceeded"}
-            
+
             except anthropic.APIError as e:
                 logger.error(f"Anthropic API error: {e}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(1)
                     continue
                 return {"error": f"API error: {str(e)}"}
-            
+
             except Exception as e:
                 logger.error(f"Unexpected error calling Anthropic: {e}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(1)
                     continue
                 return {"error": f"Unexpected error: {str(e)}"}
-        
+
         return {"error": "Failed after all retries"}
 
 
 class OpenAIVLM(VLMProvider):
     """OpenAI GPT-4 Vision with robust error handling."""
-    
+
     DEFAULT_MODEL = "gpt-4o"  # Updated to latest model
     FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4-turbo", "gpt-4-vision-preview"]
-    
-    def __init__(self, api_key: str, endpoint: str = None, 
+
+    def __init__(self, api_key: str, endpoint: str = None,
                  model: str = None, config: VLMConfig = None):
         super().__init__(config)
-        
+
         if not OPENAI_AVAILABLE:
             raise ImportError("openai library not installed. Install: pip install openai")
-        
+
         if not api_key:
             raise ValueError("API key required for OpenAI")
-        
+
         try:
             # Handle custom endpoints (Azure, Ollama, etc.)
             if endpoint and endpoint != "https://api.openai.com/v1":
@@ -287,32 +287,32 @@ class OpenAIVLM(VLMProvider):
                 )
             else:
                 self.client = openai.OpenAI(api_key=api_key)
-            
+
             self.model = model or self.DEFAULT_MODEL
             logger.info(f"Initialized OpenAI VLM with model: {self.model}")
         except Exception as e:
-            raise ValueError(f"Failed to initialize OpenAI client: {e}")
-    
-    def enrich_image(self, image_path: str, prompt: str) -> Dict[str, Any]:
+            raise ValueError(f"Failed to initialize OpenAI client: {e}")  # noqa: B904
+
+    def enrich_image(self, image_path: str, prompt: str) -> dict[str, Any]:
         """Enrich image using OpenAI Vision."""
         # Validate image
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
-        
+
         # Read image
         image_data = self._read_image_base64(image_path)
         if not image_data:
             return {"error": "Failed to read image file"}
-        
+
         # Retry logic with fallback models
         models_to_try = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
-        
+
         for model in models_to_try:
             for attempt in range(self.config.max_retries):
                 try:
                     logger.info(f"Calling OpenAI API with {model} (attempt {attempt + 1}/{self.config.max_retries})")
-                    
+
                     response = self.client.chat.completions.create(
                         model=model,
                         messages=[
@@ -333,10 +333,10 @@ class OpenAIVLM(VLMProvider):
                         max_tokens=1024,
                         timeout=self.config.timeout_seconds
                     )
-                    
+
                     # Extract response
                     content = response.choices[0].message.content
-                    
+
                     # Parse JSON
                     result = self._extract_json(content)
                     if result:
@@ -349,14 +349,14 @@ class OpenAIVLM(VLMProvider):
                             "tags": [],
                             "raw_response": content
                         }
-                    
+
                 except openai.RateLimitError as e:
                     logger.warning(f"Rate limit hit: {e}")
                     if attempt < self.config.max_retries - 1:
                         time.sleep(2 ** attempt)
                         continue
                     break  # Try next model
-                
+
                 except openai.APIError as e:
                     logger.error(f"OpenAI API error with {model}: {e}")
                     if "does not support" in str(e).lower():
@@ -365,36 +365,36 @@ class OpenAIVLM(VLMProvider):
                         time.sleep(1)
                         continue
                     break
-                
+
                 except Exception as e:
                     logger.error(f"Unexpected error calling OpenAI: {e}")
                     if attempt < self.config.max_retries - 1:
                         time.sleep(1)
                         continue
                     break
-        
+
         return {"error": "Failed with all models after all retries"}
 
 
 class OllamaVLM(VLMProvider):
     """Local Ollama with vision models (llava, bakllava, etc)."""
-    
+
     DEFAULT_MODEL = "llava"
     FALLBACK_MODELS = ["llava:13b", "bakllava", "llava:7b"]
-    
+
     def __init__(self, endpoint: str = None, model: str = None, config: VLMConfig = None):
         super().__init__(config)
-        
+
         self.endpoint = (endpoint or "http://localhost:11434").rstrip('/')
         self.model = model or self.DEFAULT_MODEL
-        
+
         # Test connection
         try:
             response = requests.get(f"{self.endpoint}/api/tags", timeout=5)
             if response.status_code == 200:
                 available_models = [m['name'] for m in response.json().get('models', [])]
                 logger.info(f"Connected to Ollama. Available models: {available_models}")
-                
+
                 # Check if requested model is available
                 if self.model not in available_models:
                     logger.warning(f"Model '{self.model}' not found. Available: {available_models}")
@@ -402,27 +402,27 @@ class OllamaVLM(VLMProvider):
                 logger.warning(f"Ollama connection test returned status {response.status_code}")
         except Exception as e:
             logger.warning(f"Could not connect to Ollama at {self.endpoint}: {e}")
-    
-    def enrich_image(self, image_path: str, prompt: str) -> Dict[str, Any]:
+
+    def enrich_image(self, image_path: str, prompt: str) -> dict[str, Any]:
         """Enrich image using Ollama."""
         # Validate image
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
-        
+
         # Read image
         image_data = self._read_image_base64(image_path)
         if not image_data:
             return {"error": "Failed to read image file"}
-        
+
         # Try models
         models_to_try = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
-        
+
         for model in models_to_try:
             for attempt in range(self.config.max_retries):
                 try:
                     logger.info(f"Calling Ollama with {model} (attempt {attempt + 1}/{self.config.max_retries})")
-                    
+
                     response = requests.post(
                         f"{self.endpoint}/api/generate",
                         json={
@@ -433,11 +433,11 @@ class OllamaVLM(VLMProvider):
                         },
                         timeout=self.config.timeout_seconds
                     )
-                    
+
                     if response.status_code == 200:
                         data = response.json()
                         content = data.get('response', '')
-                        
+
                         # Parse JSON
                         result = self._extract_json(content)
                         if result:
@@ -450,35 +450,35 @@ class OllamaVLM(VLMProvider):
                                 "tags": [],
                                 "raw_response": content
                             }
-                    
+
                     elif response.status_code == 404:
                         logger.warning(f"Model {model} not found in Ollama")
                         break  # Try next model
-                    
+
                     else:
                         logger.error(f"Ollama error: {response.status_code} - {response.text}")
                         if attempt < self.config.max_retries - 1:
                             time.sleep(1)
                             continue
                         break
-                    
+
                 except requests.Timeout:
                     logger.warning(f"Ollama request timeout (attempt {attempt + 1})")
                     if attempt < self.config.max_retries - 1:
                         continue
                     break
-                
+
                 except requests.ConnectionError as e:
                     logger.error(f"Cannot connect to Ollama at {self.endpoint}: {e}")
                     return {"error": f"Ollama connection failed: {str(e)}"}
-                
+
                 except Exception as e:
                     logger.error(f"Unexpected error calling Ollama: {e}")
                     if attempt < self.config.max_retries - 1:
                         time.sleep(1)
                         continue
                     break
-        
+
         return {"error": "Failed with all models after all retries"}
 
 
@@ -509,19 +509,19 @@ class OpenAICompatibleVLM(VLMProvider):
             self.model = model or self.DEFAULT_MODEL
             logger.info(f"Initialized {self.__class__.__name__} with model: {self.model}")
         except Exception as e:
-            raise ValueError(f"Failed to initialize {self.__class__.__name__}: {e}")
+            raise ValueError(f"Failed to initialize {self.__class__.__name__}: {e}")  # noqa: B904
 
-    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> Dict[str, Any]:
+    def enrich_image(self, image_path: str, prompt: str, vlm_max_size: int = 0) -> dict[str, Any]:
         """Enrich image using the OpenAI-compatible vision API."""
         valid, msg = self._validate_image(image_path)
         if not valid:
             return {"error": msg}
 
-        
+
         # Use config default if parameter is 0
         if vlm_max_size == 0 and hasattr(self.config, "vlm_max_size") and self.config.vlm_max_size > 0:
             vlm_max_size = self.config.vlm_max_size
-            
+
         image_data, media_type = self._prepare_image_for_vlm(image_path, vlm_max_size)
         if not image_data:
             return {"error": "Failed to read image file"}
@@ -726,8 +726,8 @@ def _is_vision_model(provider: str, model_id: str) -> bool:
     return True
 
 
-def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
-                     timeout: int = 10) -> Tuple[List[str], Optional[str]]:
+def fetch_vlm_models(provider: str, api_key: str | None = None,
+                     timeout: int = 10) -> tuple[list[str], str | None]:
     """
     Fetch available VLM-capable models from a provider's API endpoint.
 
@@ -765,7 +765,7 @@ def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
 
     url, needs_auth = _endpoints[provider]
 
-    headers: Dict[str, str] = {}
+    headers: dict[str, str] = {}
     if needs_auth and api_key:
         headers['Authorization'] = f'Bearer {api_key}'
 
@@ -857,10 +857,10 @@ def fetch_vlm_models(provider: str, api_key: Optional[str] = None,
         return [], f"Unexpected error: {str(e)}"
 
 
-def create_vlm_provider(provider: str, api_key: Optional[str] = None,
-                       endpoint: Optional[str] = None,
-                       model: Optional[str] = None,
-                       config: VLMConfig = None) -> Optional[VLMProvider]:
+def create_vlm_provider(provider: str, api_key: str | None = None,
+                       endpoint: str | None = None,
+                       model: str | None = None,
+                       config: VLMConfig = None) -> VLMProvider | None:
     """
     Factory function to create VLM provider with validation.
 
@@ -918,7 +918,7 @@ def create_vlm_provider(provider: str, api_key: Optional[str] = None,
 
 
 # Utility function for testing
-def test_vlm_provider(provider: VLMProvider, image_path: str) -> Dict[str, Any]:
+def test_vlm_provider(provider: VLMProvider, image_path: str) -> dict[str, Any]:
     """Test a VLM provider with a sample image."""
     test_prompt = """Analyze this image and provide:
 1. A brief description (1-2 sentences)
@@ -931,13 +931,13 @@ Format as JSON:
   "scene_type": "...",
   "tags": ["tag1", "tag2", ...]
 }"""
-    
+
     logger.info(f"Testing VLM provider with image: {image_path}")
     result = provider.enrich_image(image_path, test_prompt)
-    
+
     if "error" in result:
         logger.error(f"Test failed: {result['error']}")
     else:
         logger.info(f"Test successful: {json.dumps(result, indent=2)}")
-    
+
     return result

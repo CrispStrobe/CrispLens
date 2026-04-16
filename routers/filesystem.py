@@ -6,7 +6,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -34,17 +34,17 @@ def _connect(db_path: str):
 
 
 class AddRequest(BaseModel):
-    paths:         List[str]
+    paths:         list[str]
     recursive:     bool            = True
     visibility:    str             = 'shared'
-    det_thresh:    Optional[float] = None
-    min_face_size: Optional[int]   = None
-    rec_thresh:    Optional[float] = None
+    det_thresh:    float | None = None
+    min_face_size: int | None   = None
+    rec_thresh:    float | None = None
     det_model:     str             = 'auto'
     max_size:      int             = 0
 
 
-def _collect_image_paths(paths: List[str], recursive: bool) -> List[str]:
+def _collect_image_paths(paths: list[str], recursive: bool) -> list[str]:
     result = []
     for p in paths:
         pp = Path(p)
@@ -118,7 +118,7 @@ def _check_path_allowed(path: Path, user) -> None:
 
 
 @router.get("/browse")
-def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> Dict[str, Any]:
+def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> dict[str, Any]:
     """
     List a directory with DB-status for each image file and subdirectory.
 
@@ -158,7 +158,7 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
                 key=lambda e: (not e.is_dir(follow_symlinks=True), e.name.lower())
             )
         except PermissionError:
-            raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
+            raise HTTPException(status_code=403, detail=f"Permission denied: {path}")  # noqa: B904
 
         for entry in scan_iter:
             if entry.name.startswith('.'):
@@ -220,7 +220,7 @@ def browse_filesystem(path: str = Query(''), user=Depends(get_current_user)) -> 
         raise
     except Exception as e:
         logger.error("browse_filesystem error for path %s: %s", path, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to list directory")
+        raise HTTPException(status_code=500, detail="Failed to list directory")  # noqa: B904
     finally:
         if conn:
             conn.close()

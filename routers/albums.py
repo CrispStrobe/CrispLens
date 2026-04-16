@@ -1,7 +1,7 @@
 """routers/albums.py — Album CRUD and image membership."""
 import sqlite3
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -58,18 +58,18 @@ class AlbumCreate(BaseModel):
     description: str = ''
 
 class AlbumUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    cover_image_id: Optional[int] = None
+    name: str | None = None
+    description: str | None = None
+    cover_image_id: int | None = None
 
 class ImageIds(BaseModel):
-    image_ids: List[int]
+    image_ids: list[int]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_albums() -> List[Dict[str, Any]]:
+def list_albums() -> list[dict[str, Any]]:
     s = _state()
     _ensure_tables(s.db_path)
     conn = None
@@ -91,7 +91,7 @@ def list_albums() -> List[Dict[str, Any]]:
 
 
 @router.post("")
-def create_album(body: AlbumCreate) -> Dict[str, Any]:
+def create_album(body: AlbumCreate) -> dict[str, Any]:
     s = _state()
     _ensure_tables(s.db_path)
     conn = None
@@ -108,14 +108,14 @@ def create_album(body: AlbumCreate) -> Dict[str, Any]:
         ).fetchone()
         return dict(row)
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=f"Album '{body.name}' already exists")
+        raise HTTPException(status_code=409, detail=f"Album '{body.name}' already exists")  # noqa: B904
     finally:
         if conn:
             conn.close()
 
 
 @router.put("/{album_id}")
-def update_album(album_id: int, body: AlbumUpdate) -> Dict[str, Any]:
+def update_album(album_id: int, body: AlbumUpdate) -> dict[str, Any]:
     s = _state()
     conn = None
     try:
@@ -172,7 +172,7 @@ def list_album_images(
     sort:   str = Query('sort_order'),
     limit:  int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     s = _state()
     conn = None
     try:
@@ -212,7 +212,7 @@ def list_album_images(
 
 
 @router.post("/{album_id}/images")
-def add_images_to_album(album_id: int, body: ImageIds) -> Dict[str, Any]:
+def add_images_to_album(album_id: int, body: ImageIds) -> dict[str, Any]:
     s = _state()
     conn = None
     try:
@@ -235,7 +235,7 @@ def add_images_to_album(album_id: int, body: ImageIds) -> Dict[str, Any]:
 
 
 @router.delete("/{album_id}/images")
-def remove_images_from_album(album_id: int, body: ImageIds) -> Dict[str, Any]:
+def remove_images_from_album(album_id: int, body: ImageIds) -> dict[str, Any]:
     s = _state()
     conn = None
     try:

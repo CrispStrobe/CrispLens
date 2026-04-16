@@ -21,7 +21,6 @@ import sqlite3
 import threading
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -35,7 +34,7 @@ router = APIRouter()
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.pgm'}
 
 # Global cancel events keyed by job_id
-_cancel_events: Dict[int, threading.Event] = {}
+_cancel_events: dict[int, threading.Event] = {}
 _cancel_events_lock = threading.Lock()
 
 
@@ -67,7 +66,7 @@ def _job_row_to_dict(row) -> dict:
     return d
 
 
-def _enum_image_files(folder: str, recursive: bool, follow_symlinks: bool) -> List[str]:
+def _enum_image_files(folder: str, recursive: bool, follow_symlinks: bool) -> list[str]:
     paths = []
     if recursive:
         for root, dirs, files in os.walk(folder, followlinks=follow_symlinks):
@@ -86,7 +85,7 @@ def _enum_image_files(folder: str, recursive: bool, follow_symlinks: bool) -> Li
     return paths
 
 
-def _resolve_tags(conn, tag_ids: List[int], new_tag_names: List[str]) -> List[int]:
+def _resolve_tags(conn, tag_ids: list[int], new_tag_names: list[str]) -> list[int]:
     """Create any new tags and return the full list of tag IDs."""
     final = list(tag_ids)
     for name in new_tag_names:
@@ -109,7 +108,7 @@ def _resolve_tags(conn, tag_ids: List[int], new_tag_names: List[str]) -> List[in
     return result
 
 
-def _resolve_album(conn, album_id: Optional[int], new_album_name: Optional[str]) -> Optional[int]:
+def _resolve_album(conn, album_id: int | None, new_album_name: str | None) -> int | None:
     if album_id:
         return album_id
     if new_album_name:
@@ -210,11 +209,11 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                     continue
 
                 try:
-                    # If the file is in our temporary batch_uploads dir, we should treat it 
+                    # If the file is in our temporary batch_uploads dir, we should treat it
                     # similar to upload_local (it might need to be moved to permanent uploads).
                     is_batch_upload = 'batch_uploads' in filepath
                     original_filename = os.path.basename(local_path) if local_path else None
-                    
+
                     result = _state_obj.engine.process_image(
                         filepath, vlm if not skip_vlm else None,
                         det_thresh=det_params.get('det_thresh'),
@@ -229,7 +228,7 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
                         raise RuntimeError(result.get('error', 'Processing failed'))
 
                     image_id = result['image_id']
-                    
+
                     # If it was a temporary upload, move it to permanent uploads
                     if is_batch_upload:
                         import shutil
@@ -320,21 +319,21 @@ def _run_batch_job(job_id: int, db_path: str, cancel_event: threading.Event):
 
 class BatchFileWithLocalPath(BaseModel):
     filepath: str
-    local_path: Optional[str] = None
+    local_path: str | None = None
 
 class CreateBatchJobRequest(BaseModel):
-    folder: Optional[str] = None
-    filepaths: Optional[List[str]] = None
-    batch_files: Optional[List[BatchFileWithLocalPath]] = None
-    name: Optional[str] = None
+    folder: str | None = None
+    filepaths: list[str] | None = None
+    batch_files: list[BatchFileWithLocalPath] | None = None
+    name: str | None = None
     recursive: bool = True
     follow_symlinks: bool = False
     visibility: str = 'shared'
-    det_params: Optional[dict] = None
-    tag_ids: List[int] = []
-    new_tag_names: List[str] = []
-    album_id: Optional[int] = None
-    new_album_name: Optional[str] = None
+    det_params: dict | None = None
+    tag_ids: list[int] = []
+    new_tag_names: list[str] = []
+    album_id: int | None = None
+    new_album_name: str | None = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -351,18 +350,18 @@ async def upload_batch_file(
     """
     import uuid as _uuid
     s = _state()
-    
+
     suffix = os.path.splitext(file.filename or '.jpg')[1] or '.jpg'
     # Use a 'batch_uploads' directory
     uploads_dir = os.path.join(os.path.dirname(s.thumb_dir), 'batch_uploads')
     os.makedirs(uploads_dir, exist_ok=True)
-    
+
     server_path = os.path.join(uploads_dir, f'{_uuid.uuid4().hex}{suffix}')
-    
+
     content = await file.read()
     with open(server_path, 'wb') as f:
         f.write(content)
-        
+
     return {'server_path': server_path, 'local_path': local_path}
 
 

@@ -4,7 +4,6 @@ routers/processing.py — Single image + batch SSE processing, training.
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional
 
 import os
 import tempfile
@@ -50,23 +49,23 @@ class SingleRequest(BaseModel):
 class BatchRequest(BaseModel):
     folder:        str
     recursive:     bool            = True
-    det_thresh:    Optional[float] = None
-    min_face_size: Optional[int]   = None
-    rec_thresh:    Optional[float] = None
+    det_thresh:    float | None = None
+    min_face_size: int | None   = None
+    rec_thresh:    float | None = None
     det_model:     str             = 'auto'
     max_size:      int             = 0
 
 class BatchFilesRequest(BaseModel):
-    paths:         List[str]       # explicit list of absolute file paths
-    det_thresh:    Optional[float] = None
-    min_face_size: Optional[int]   = None
-    rec_thresh:    Optional[float] = None
+    paths:         list[str]       # explicit list of absolute file paths
+    det_thresh:    float | None = None
+    min_face_size: int | None   = None
+    rec_thresh:    float | None = None
     det_model:     str             = 'auto'
     max_size:      int             = 0
 
 class TrainRequest(BaseModel):
     person_name:  str
-    image_paths:  List[str]
+    image_paths:  list[str]
 
 class FolderTrainRequest(BaseModel):
     folder: str
@@ -78,7 +77,7 @@ class ScanFolderRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_image_paths(folder: str, recursive: bool) -> List[str]:
+def _get_image_paths(folder: str, recursive: bool) -> list[str]:
     base = Path(folder)
     if not base.exists():
         return []
@@ -106,7 +105,7 @@ def process_single(body: SingleRequest, user=Depends(get_current_user)):
         return {"ok": True, "result": result}
     except Exception as e:
         logger.error("process_single failed for %s: %s", body.filepath, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Processing failed. Check server logs.")
+        raise HTTPException(status_code=500, detail="Processing failed. Check server logs.")  # noqa: B904
 
 
 def _build_payload(i, total, path, result=None, error=None):
@@ -182,7 +181,7 @@ async def process_bytes(
         }
     except Exception as e:
         logger.error("process_bytes failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
     finally:
         try: os.unlink(tmp_path)
         except OSError: pass
@@ -235,7 +234,7 @@ def train_person(body: TrainRequest):
         ok, msg, info = s.engine.train_person(body.person_name, body.image_paths)
         return {"ok": ok, "message": msg, "info": info}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.post("/train/folder")
@@ -244,7 +243,7 @@ def train_from_folder(body: FolderTrainRequest):
     try:
         person_map = FolderTrainer.scan_training_folder(body.folder)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     results = {}
     for person_name, image_paths in person_map.items():

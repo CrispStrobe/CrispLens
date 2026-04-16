@@ -13,7 +13,6 @@ import os
 import secrets
 import time
 from collections import defaultdict
-from typing import Optional
 
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -39,7 +38,7 @@ _LOGIN_WINDOW_SECS  = 15 * 60  # 15-minute window
 _login_attempts: dict[str, list] = defaultdict(list)
 
 
-def _get_session_user(token: str) -> Optional[str]:
+def _get_session_user(token: str) -> str | None:
     """Return username for session token, or None if expired/missing. Cleans up expired entries."""
     entry = _sessions.get(token)
     if entry is None:
@@ -106,7 +105,7 @@ def login(body: LoginRequest, response: Response, request: Request):
 
 
 @router.post("/logout")
-def logout(response: Response, session: Optional[str] = Cookie(None)):
+def logout(response: Response, session: str | None = Cookie(None)):
     if session and session in _sessions:
         _sessions.pop(session, None)
     response.delete_cookie("session", path="/", secure=_SECURE_COOKIES, samesite=_SAME_SITE)
@@ -114,7 +113,7 @@ def logout(response: Response, session: Optional[str] = Cookie(None)):
 
 
 @router.post("/change-password")
-def change_password(body: ChangePasswordRequest, session: Optional[str] = Cookie(None)):
+def change_password(body: ChangePasswordRequest, session: str | None = Cookie(None)):
     """Allow any authenticated user to change their own password."""
     username = _get_session_user(session) if session else None
     if not username:
@@ -135,7 +134,7 @@ def change_password(body: ChangePasswordRequest, session: Optional[str] = Cookie
     return {"ok": True, "message": "Password changed successfully"}
 
 
-def _require_rate_limit_access(request: Request, session: Optional[str]) -> None:
+def _require_rate_limit_access(request: Request, session: str | None) -> None:
     """Allow authenticated admins or unauthenticated localhost callers."""
     username = _get_session_user(session) if session else None
     if username:
@@ -150,7 +149,7 @@ def _require_rate_limit_access(request: Request, session: Optional[str]) -> None
 
 
 @router.get("/rate-limits")
-def list_rate_limits(request: Request, session: Optional[str] = Cookie(None)):
+def list_rate_limits(request: Request, session: str | None = Cookie(None)):
     """Show IPs with active login-attempt records."""
     _require_rate_limit_access(request, session)
     now = time.time()
@@ -169,7 +168,7 @@ def list_rate_limits(request: Request, session: Optional[str] = Cookie(None)):
 
 
 @router.post("/reset-rate-limit")
-def reset_rate_limit(request: Request, ip: Optional[str] = None, session: Optional[str] = Cookie(None)):
+def reset_rate_limit(request: Request, ip: str | None = None, session: str | None = Cookie(None)):
     """Clear login rate-limit counters. Admin only.
 
     If *ip* is given, only that IP is cleared; otherwise all IPs are cleared.
@@ -185,7 +184,7 @@ def reset_rate_limit(request: Request, ip: Optional[str] = None, session: Option
 
 
 @router.get("/me")
-def me(session: Optional[str] = Cookie(None)):
+def me(session: str | None = Cookie(None)):
     username = _get_session_user(session) if session else None
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")

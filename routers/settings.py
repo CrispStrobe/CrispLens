@@ -5,7 +5,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,26 +24,26 @@ def _state():
 
 
 class SettingsPatch(BaseModel):
-    language:              Optional[str]        = None
-    backend:               Optional[str]        = None
-    model:                 Optional[str]        = None
-    det_threshold:         Optional[float]      = None
-    rec_threshold:         Optional[float]      = None
-    det_size:              Optional[int]        = None
-    det_model:             Optional[str]        = None   # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
-    vlm_provider:          Optional[str]        = None
-    vlm_model:             Optional[str]        = None
-    vlm_enabled:           Optional[bool]       = None
+    language:              str | None        = None
+    backend:               str | None        = None
+    model:                 str | None        = None
+    det_threshold:         float | None      = None
+    rec_threshold:         float | None      = None
+    det_size:              int | None        = None
+    det_model:             str | None        = None   # 'auto'|'retinaface'|'scrfd'|'yunet'|'mediapipe'
+    vlm_provider:          str | None        = None
+    vlm_model:             str | None        = None
+    vlm_enabled:           bool | None       = None
     # Storage: if set, uploaded images are resized to this max dimension before saving.
     # 0 = keep full resolution (default).
-    upload_max_dimension:  Optional[int]        = None
+    upload_max_dimension:  int | None        = None
     # Admin: paths that are already on the server — uploaded files from these locations
     # are recorded in-place (no copy to uploads/).  Default: ['/mnt']
-    copy_exempt_paths:     Optional[list]       = None
+    copy_exempt_paths:     list | None       = None
     # Admin: path to fix_db.sh for the one-click server update feature.
-    fix_db_path:           Optional[str]        = None
+    fix_db_path:           str | None        = None
     # License: InsightFace buffalo_l is non-commercial only; must be accepted before use.
-    nc_model_accepted:     Optional[bool]       = None
+    nc_model_accepted:     bool | None       = None
 
 
 _DE: dict = {
@@ -586,7 +586,7 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
         with open(config_path, 'w') as f:
             yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")  # noqa: B904
 
     s.config = config
 
@@ -596,8 +596,8 @@ def put_settings(body: SettingsPatch, user=Depends(get_current_user)):
        body.det_size is not None or body.det_model is not None:
         from face_recognition_core import FaceRecognitionConfig
         new_face_cfg = FaceRecognitionConfig(config.get('face_recognition', {}))
-        # If backend or model changed, we must re-init. 
-        # If only thresholds/size changed, we could just update attributes, 
+        # If backend or model changed, we must re-init.
+        # If only thresholds/size changed, we could just update attributes,
         # but re-creating the engine instance is safer and ensure lazy-init handles it.
         if body.backend is not None or body.model is not None:
             from face_recognition_core import FaceRecognitionEngine
@@ -676,9 +676,9 @@ def get_effective_vlm_provider(user, state):
 
 
 class UserVlmPrefs(BaseModel):
-    vlm_enabled:  Optional[bool] = None   # None = reset to global default
-    vlm_provider: Optional[str]  = None   # None = reset to global default
-    vlm_model:    Optional[str]  = None   # None = reset to global default
+    vlm_enabled:  bool | None = None   # None = reset to global default
+    vlm_provider: str | None  = None   # None = reset to global default
+    vlm_model:    str | None  = None   # None = reset to global default
 
 
 @router.get("/user-vlm")
@@ -747,7 +747,7 @@ def put_user_vlm(body: UserVlmPrefs, user=Depends(get_current_user)):
         logger.info('put_user_vlm: DB commit OK for user_id=%s', user.id)
     except Exception as e:
         logger.error('put_user_vlm: DB write failed for user_id=%s: %s', user.id, e)
-        raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save VLM preferences: {e}")  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -771,7 +771,7 @@ def get_effective_det_model(user, state) -> str:
 
 
 class UserDetPrefs(BaseModel):
-    det_model: Optional[str] = None   # None = reset to global default
+    det_model: str | None = None   # None = reset to global default
 
 
 @router.get("/user-detection")
@@ -807,7 +807,7 @@ def put_user_detection(body: UserDetPrefs, user=Depends(get_current_user)):
                 raise
         conn.commit()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save detection preferences: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save detection preferences: {e}")  # noqa: B904
     finally:
         if conn:
             conn.close()
@@ -835,7 +835,7 @@ def db_status(_admin=Depends(require_admin)):
     """Return basic DB health information (admin only)."""
     s = _state()
     db_path = s.db_path
-    info: Dict[str, Any] = {"db_path": db_path}
+    info: dict[str, Any] = {"db_path": db_path}
     try:
         stat = Path(db_path).stat()
         info["file_size_mb"] = round(stat.st_size / (1024 * 1024), 2)
@@ -972,7 +972,7 @@ def accept_nc_license(_admin=Depends(require_admin)):
         with open(config_path, "w") as f:
             yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")  # noqa: B904
 
     s.config = config
     logger.info("NC model license accepted by admin — InsightFace models will download on next use")

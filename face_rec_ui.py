@@ -26,9 +26,7 @@ import gradio as gr
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
 import yaml
-import json
 from datetime import datetime
 import shutil
 
@@ -42,14 +40,11 @@ from vlm_providers import create_vlm_provider, VLMConfig, fetch_vlm_models
 from api_key_manager import ApiKeyManager, PROVIDER_CONFIGS
 from folder_training import FolderTrainer
 from drive_mount import DriveMount
-from i18n import i18n, get_language_name
+from i18n import i18n
 from image_ops import (
     SCENE_TYPES,
     browse_images_filtered,
     format_exif_as_markdown,
-    get_all_person_names,
-    get_all_scene_types,
-    get_all_tags,
     get_image_record,
     load_thumbnail_pil,
     read_exif,
@@ -63,7 +58,7 @@ from image_ops import (
 
 class AppState:
     """Global application state."""
-    
+
     def __init__(self):
         self.config = None
         self.engine = None
@@ -72,7 +67,7 @@ class AppState:
         self.vlm_provider = None
         self.current_user = None
         self.initialized = False
-    
+
     def initialize(self, config_path: str = None):
         """Initialize application."""
         try:
@@ -82,18 +77,18 @@ class AppState:
 
             # Load configuration
             if Path(config_path).exists():
-                with open(config_path, 'r') as f:
+                with open(config_path) as f:
                     config_dict = yaml.safe_load(f)
                 logger.info(f"Loaded configuration from {config_path}")
             else:
                 config_dict = {}
                 logger.warning(f"config.yaml not found at {config_path}, using defaults")
-            
+
             # Set language
             ui_config = config_dict.get('ui', {})
             language = ui_config.get('language', 'de')
             i18n.set_language(language)
-            
+
             # Initialize face recognition engine
             _default_db = os.path.join(_DATA_DIR, 'face_recognition.db') if _DATA_DIR else 'face_recognition.db'
             db_path = config_dict.get('database', {}).get('path', _default_db)
@@ -101,10 +96,10 @@ class AppState:
             if _DATA_DIR and not os.path.isabs(db_path):
                 db_path = os.path.join(_DATA_DIR, db_path)
             face_config = FaceRecognitionConfig(config_dict.get('face_recognition', {}))
-            
+
             self.engine = FaceRecognitionEngine(db_path, face_config)
             logger.info("Face recognition engine initialized")
-            
+
             # Initialize permissions
             self.permissions = PermissionManager(db_path)
             logger.info("Permission manager initialized")
@@ -125,6 +120,7 @@ class AppState:
                     api_key = vlm_config.get('api', {}).get('key') or None
                     key_source = "config.yaml (legacy)"
                 endpoint = vlm_config.get('api', {}).get('endpoint') or None
+                vlm_max_size = int(vlm_config.get('vlm_max_size', 0) or 0)
                 if api_key:
                     masked = f"****{api_key[-4:]}" if len(api_key) > 4 else "****"
                     logger.info(f"VLM startup: provider={provider}, model={model or 'default'}, "
@@ -143,10 +139,10 @@ class AppState:
                     logger.info(f"VLM provider auto-activated: {provider}")
                 else:
                     logger.warning(f"VLM provider NOT activated for {provider} — check key and model")
-            
+
             self.config = config_dict
             self.initialized = True
-            
+
             return True, "✅ System initialized successfully"
 
         except Exception as e:
@@ -173,7 +169,7 @@ class AppState:
         except Exception as e:
             return {'path': getattr(self.engine, 'db_path', '?'), 'error': str(e)}
 
-    def switch_database(self, new_path: str) -> Tuple[bool, str]:
+    def switch_database(self, new_path: str) -> tuple[bool, str]:
         """
         Hot-swap the active SQLite database.
         Re-initialises the engine, permissions manager, and API key manager.
@@ -207,7 +203,7 @@ class AppState:
             # Persist to config.yaml so the choice survives restarts
             config_path = os.path.join(_DATA_DIR, 'config.yaml') if _DATA_DIR else 'config.yaml'
             try:
-                with open(config_path, 'r') as f:
+                with open(config_path) as f:
                     cfg = yaml.safe_load(f) or {}
                 cfg.setdefault('database', {})['path'] = new_path
                 with open(config_path, 'w') as f:
@@ -230,16 +226,16 @@ app_state = AppState()
 # AUTHENTICATION
 # ============================================================================
 
-def login(username: str, password: str) -> Tuple[bool, str, Optional[User]]:
+def login(username: str, password: str) -> tuple[bool, str, User | None]:
     """Authenticate user."""
     if not app_state.initialized:
         return False, i18n.t('system_not_initialized'), None
-    
+
     if not username or not password:
         return False, i18n.t('invalid_input'), None
-    
+
     success, message, user = app_state.permissions.authenticate(username, password)
-    
+
     if success:
         app_state.current_user = user
         logger.info(f"User logged in: {username}")
@@ -261,10 +257,10 @@ def check_permission(folder_path: str = None) -> bool:
     """Check if current user has permission."""
     if not app_state.current_user:
         return False
-    
+
     if folder_path:
         return app_state.permissions.can_access_folder(app_state.current_user, folder_path)
-    
+
     return True
 
 
@@ -272,28 +268,28 @@ def check_permission(folder_path: str = None) -> bool:
 # IMAGE PROCESSING FUNCTIONS
 # ============================================================================
 
-def draw_faces_on_image(image: np.ndarray, faces: List[Dict], 
+def draw_faces_on_image(image: np.ndarray, faces: list[dict],
                         show_rectangles: bool = True,
                         show_names: bool = True,
                         show_confidence: bool = False) -> np.ndarray:
     """Draw face rectangles and labels on image."""
     if not show_rectangles and not show_names:
         return image
-    
+
     # Create copy
     img_display = image.copy()
     height, width = img_display.shape[:2]
-    
+
     for face_data in faces:
         bbox = face_data['bbox']
         recognition = face_data.get('recognition')
-        
+
         # Convert to pixels
         top = int(bbox['top'] * height)
         right = int(bbox['right'] * width)
         bottom = int(bbox['bottom'] * height)
         left = int(bbox['left'] * width)
-        
+
         # Determine color and label
         if recognition and recognition.get('verified'):
             color = (0, 255, 0)  # Green for known
@@ -301,18 +297,18 @@ def draw_faces_on_image(image: np.ndarray, faces: List[Dict],
         else:
             color = (0, 0, 255)  # Red for unknown
             label = i18n.t('unknown_people')
-        
+
         # Draw rectangle
         if show_rectangles:
             cv2.rectangle(img_display, (left, top), (right, bottom), color, 2)
-        
+
         # Draw label
         if show_names:
             label_text = label
             if show_confidence and recognition:
                 conf = recognition.get('confidence', 0)
                 label_text += f" ({conf:.2%})"
-            
+
             # Calculate text size and background
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.6
@@ -320,7 +316,7 @@ def draw_faces_on_image(image: np.ndarray, faces: List[Dict],
             (text_width, text_height), baseline = cv2.getTextSize(
                 label_text, font, font_scale, thickness
             )
-            
+
             # Draw background rectangle for text
             cv2.rectangle(
                 img_display,
@@ -329,7 +325,7 @@ def draw_faces_on_image(image: np.ndarray, faces: List[Dict],
                 color,
                 -1
             )
-            
+
             # Draw text
             cv2.putText(
                 img_display,
@@ -340,7 +336,7 @@ def draw_faces_on_image(image: np.ndarray, faces: List[Dict],
                 (255, 255, 255),
                 thickness
             )
-    
+
     return img_display
 
 
@@ -390,7 +386,7 @@ def process_single_image(image_path, show_rectangles, show_names, show_confidenc
 
         # Create thumbnail
         img_thumb = cv2.resize(img_display, (300, 300))
-        
+
         # Build results text
         face_count = result['face_count']
         known_count = sum(1 for f in result['faces'] if f['recognition'] and f['recognition']['verified'])
@@ -455,30 +451,30 @@ def train_from_uploads(person_name: str, training_images):
     """Train from uploaded images."""
     if not check_permission():
         return i18n.t('permission_denied')
-    
+
     if not person_name or not person_name.strip():
         return i18n.t('enter_name')
-    
+
     if not training_images:
         return i18n.t('upload_images')
-    
+
     try:
         # Save uploaded images
         temp_dir = Path("/tmp/gradio_training") / person_name.replace(" ", "_")
         temp_dir.mkdir(parents=True, exist_ok=True)
-        
+
         image_paths = []
         for i, img in enumerate(training_images):
             img_path = temp_dir / f"train_{i}.jpg"
             cv2.imwrite(str(img_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             image_paths.append(str(img_path))
-        
+
         # Train
         success, message, details = app_state.engine.train_person(person_name, image_paths)
-        
+
         # Cleanup
         shutil.rmtree(temp_dir, ignore_errors=True)
-        
+
         if success:
             result = f"""
 {i18n.t('training_complete')}
@@ -492,9 +488,9 @@ def train_from_uploads(person_name: str, training_images):
 """
         else:
             result = f"{i18n.t('training_failed')}\n\n{message}"
-        
+
         return result
-    
+
     except Exception as e:
         logger.error(f"Training failed: {e}", exc_info=True)
         return f"{i18n.t('error')}: {str(e)}"
@@ -505,69 +501,69 @@ def train_from_folder(folder_path: str, progress=gr.Progress()):
     if not check_permission(folder_path):
         yield i18n.t('permission_denied')
         return
-    
+
     if not folder_path or not folder_path.strip():
         yield i18n.t('folder_not_found')
         return
-    
+
     try:
         # Validate folder
         yield "⏳ " + i18n.t('scanning')
         progress(0, desc=i18n.t('scanning'))
-        
+
         valid, message, summary = FolderTrainer.validate_folder_structure(folder_path)
-        
+
         if not valid:
             yield message
             return
-        
+
         # Scan folder
         person_to_images = FolderTrainer.scan_training_folder(folder_path)
-        
+
         if not person_to_images:
             yield i18n.t('no_images_found')
             return
-        
+
         # Train each person with progress updates
         total_people = len(person_to_images)
         results = []
         total_embeddings = 0
         total_processed = 0
         total_failed = 0
-        
+
         # Initial status
         yield f"🚀 Starting training for {total_people} people..."
-        
+
         for i, (person_name, image_paths) in enumerate(person_to_images.items(), 1):
             # Update progress bar
             progress_val = (i - 1) / total_people
             progress(progress_val, desc=f"Training: {person_name} ({i}/{total_people})")
-            
+
             # Yield status update
             status = f"Training {person_name} ({i}/{total_people})...\n\n"
             status += f"Processed: {total_processed}, Failed: {total_failed}, Embeddings: {total_embeddings}"
             yield status
-            
+
             # Train this person
             success, msg, details = app_state.engine.train_person(person_name, image_paths)
-            
+
             if success:
                 embeddings = details.get('embeddings_count', 0)
                 processed = details.get('processed_images', 0)
                 failed = details.get('failed_images', 0)
-                
+
                 total_embeddings += embeddings
                 total_processed += processed
                 total_failed += failed
-                
+
                 results.append(f"✅ **{person_name}**: {embeddings} embeddings ({processed}/{len(image_paths)} images)")
             else:
                 total_failed += len(image_paths)
                 results.append(f"❌ **{person_name}**: {msg}")
-        
+
         # Final progress update
         progress(1.0, desc=i18n.t('training_complete'))
-        
+
         # Build final summary
         result_text = f"""
 ## {i18n.t('training_complete')}
@@ -581,10 +577,10 @@ def train_from_folder(folder_path: str, progress=gr.Progress()):
 
 ### {i18n.t('details')}
 """ + "\n".join(results)
-        
+
         # Final yield - this is what stays on screen
         yield result_text
-    
+
     except Exception as e:
         logger.error(f"Folder training failed: {e}", exc_info=True)
         yield f"{i18n.t('error')}: {str(e)}"
@@ -642,13 +638,13 @@ def browse_images(sort_by: str, max_images: int):
     """Browse all processed images with face rectangles."""
     if not check_permission():
         return i18n.t('permission_denied'), []
-    
+
     if not app_state.engine:
         return "System not initialized", []
-    
+
     try:
         conn = app_state.engine._get_connection()
-        
+
         # Build query based on sort
         sort_mapping = {
             i18n.t('sort_newest'): "created_at DESC",
@@ -656,11 +652,11 @@ def browse_images(sort_by: str, max_images: int):
             i18n.t('sort_most_faces'): "face_count DESC",
             i18n.t('sort_least_faces'): "face_count ASC"
         }
-        
+
         order_by = sort_mapping.get(sort_by, "created_at DESC")
-        
+
         logger.info(f"Browsing images: sort_by={sort_by}, order_by={order_by}, max={max_images}")
-        
+
         cursor = conn.execute(f"""
             SELECT id, filepath, filename, face_count, ai_description
             FROM images
@@ -668,32 +664,32 @@ def browse_images(sort_by: str, max_images: int):
             ORDER BY {order_by}
             LIMIT ?
         """, (max_images,))
-        
+
         results = cursor.fetchall()
         logger.info(f"Found {len(results)} images in database")
         conn.close()
-        
+
         # Build gallery with face rectangles
         gallery_items = []
-        
+
         for row in results:
             image_id = row['id']
             filepath = row['filepath']
-            
+
             logger.debug(f"Processing image {image_id}: {filepath}")
-            
+
             # Check file exists
             if not Path(filepath).exists():
                 logger.warning(f"  ❌ File does not exist: {filepath}")
                 continue
-            
+
             try:
                 # Load image
                 img = cv2.imread(filepath)
                 if img is None:
                     logger.warning(f"  ❌ Failed to load: {filepath}")
                     continue
-                
+
                 # Get face data from database
                 conn = app_state.engine._get_connection()
                 cursor = conn.execute("""
@@ -707,20 +703,20 @@ def browse_images(sort_by: str, max_images: int):
                     LEFT JOIN people p ON fe.person_id = p.id
                     WHERE f.image_id = ?
                 """, (image_id,))
-                
+
                 faces = cursor.fetchall()
                 conn.close()
-                
+
                 # Draw rectangles on image
                 height, width = img.shape[:2]
-                
+
                 for face in faces:
                     # Convert normalized coords to pixels
                     top = int(face['bbox_top'] * height)
                     right = int(face['bbox_right'] * width)
                     bottom = int(face['bbox_bottom'] * height)
                     left = int(face['bbox_left'] * width)
-                    
+
                     # Determine color and label
                     if face['person_name']:
                         color = (0, 255, 0)  # Green for known
@@ -730,10 +726,10 @@ def browse_images(sort_by: str, max_images: int):
                     else:
                         color = (0, 0, 255)  # Red for unknown
                         label = i18n.t('unknown_people')
-                    
+
                     # Draw rectangle
                     cv2.rectangle(img, (left, top), (right, bottom), color, 2)
-                    
+
                     # Draw label with background
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     font_scale = 0.5
@@ -741,7 +737,7 @@ def browse_images(sort_by: str, max_images: int):
                     (text_width, text_height), baseline = cv2.getTextSize(
                         label, font, font_scale, thickness
                     )
-                    
+
                     # Background rectangle
                     cv2.rectangle(
                         img,
@@ -750,7 +746,7 @@ def browse_images(sort_by: str, max_images: int):
                         color,
                         -1
                     )
-                    
+
                     # Text
                     cv2.putText(
                         img,
@@ -761,22 +757,22 @@ def browse_images(sort_by: str, max_images: int):
                         (255, 255, 255),
                         thickness
                     )
-                
+
                 # Convert to RGB for display
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
+
                 caption = f"{row['filename']}\n{i18n.t('total_faces')}: {row['face_count']}"
                 gallery_items.append((img_rgb, caption))
-                
+
             except Exception as e:
                 logger.error(f"  ❌ Failed to process image {filepath}: {e}")
                 continue
-        
+
         message = f"{i18n.t('showing_images')} ({sort_by}): {len(gallery_items)} images"
         logger.info(f"Returning {len(gallery_items)} gallery items")
-        
+
         return message, gallery_items
-    
+
     except Exception as e:
         logger.error(f"Browse failed: {e}", exc_info=True)
         import traceback
@@ -819,7 +815,7 @@ def batch_process_folder(folder_path: str, extensions: str, recursive: bool, pro
 
         total = len(image_files)
         processed = skipped = failed = total_faces = 0
-        recent_lines: List[str] = []   # keep a rolling window of last results
+        recent_lines: list[str] = []   # keep a rolling window of last results
 
         yield f"⏳ Found **{total}** images — starting...\n"
 
@@ -899,10 +895,10 @@ def get_statistics():
     """Get system statistics."""
     if not check_permission():
         return i18n.t('permission_denied')
-    
+
     try:
         stats = app_state.engine.get_statistics()
-        
+
         stats_text = f"""
 ### {i18n.t('stats_overview')}
 
@@ -927,12 +923,12 @@ def get_statistics():
 ### {i18n.t('stats_top_people')}
 
 """
-        
+
         for person in stats.get('top_people', []):
             stats_text += f"- **{person['name']}**: {person['count']}\n"
-        
+
         return stats_text
-    
+
     except Exception as e:
         logger.error(f"Failed to get statistics: {e}", exc_info=True)
         return f"{i18n.t('error')}: {str(e)}"
@@ -1048,13 +1044,13 @@ def clear_all_embeddings():
 # ADMIN TAB
 # ============================================================================
 
-def mount_network_drive(mount_type: str, server: str, share: str, 
-                        mount_point: str, username: str, password: str, 
+def mount_network_drive(mount_type: str, server: str, share: str,
+                        mount_point: str, username: str, password: str,
                         domain: str, read_only: bool):
     """Mount network drive."""
     if not app_state.current_user or app_state.current_user.role != 'admin':
         return i18n.t('permission_denied')
-    
+
     try:
         if mount_type == "SMB/CIFS":
             success, message = DriveMount.mount_smb(
@@ -1063,7 +1059,7 @@ def mount_network_drive(mount_type: str, server: str, share: str,
             return message
         else:
             return f"{i18n.t('error')}: Unsupported mount type"
-    
+
     except Exception as e:
         logger.error(f"Mount failed: {e}", exc_info=True)
         return f"{i18n.t('error')}: {str(e)}"
@@ -1073,17 +1069,17 @@ def create_new_user(username: str, password: str, role: str, allowed_folders: st
     """Create new user."""
     if not app_state.current_user or app_state.current_user.role != 'admin':
         return i18n.t('permission_denied')
-    
+
     try:
         # Parse folders
         folders = [f.strip() for f in allowed_folders.split('\n') if f.strip()]
-        
+
         success, message, user_id = app_state.permissions.create_user(
             username, password, role.lower(), folders
         )
-        
+
         return message
-    
+
     except Exception as e:
         logger.error(f"User creation failed: {e}", exc_info=True)
         return f"{i18n.t('error')}: {str(e)}"
@@ -1093,15 +1089,15 @@ def list_all_users():
     """List all users."""
     if not app_state.current_user or app_state.current_user.role != 'admin':
         return i18n.t('permission_denied')
-    
+
     try:
         users = app_state.permissions.list_users()
-        
+
         if not users:
             return "No users found"
-        
+
         result = f"### {i18n.t('user_management')}\n\n"
-        
+
         for user in users:
             result += f"**{user.username}** ({user.role})\n"
             result += f"  - Created: {user.created_at}\n"
@@ -1109,9 +1105,9 @@ def list_all_users():
             if user.allowed_folders:
                 result += f"  - Folders: {len(user.allowed_folders)}\n"
             result += "\n"
-        
+
         return result
-    
+
     except Exception as e:
         logger.error(f"List users failed: {e}", exc_info=True)
         return f"{i18n.t('error')}: {str(e)}"
@@ -1121,7 +1117,7 @@ def list_all_users():
 # VLM / API KEY MANAGEMENT FUNCTIONS
 # ============================================================================
 
-def _current_username() -> Optional[str]:
+def _current_username() -> str | None:
     """Return the currently logged-in username, or None."""
     return app_state.current_user.username if app_state.current_user else None
 
@@ -1130,7 +1126,7 @@ def _is_admin() -> bool:
     return bool(app_state.current_user and app_state.current_user.role == 'admin')
 
 
-def _validate_api_key(provider: str, api_key: str) -> Tuple[bool, str]:
+def _validate_api_key(provider: str, api_key: str) -> tuple[bool, str]:
     """
     Test an API key by calling the provider's models endpoint.
     Returns (valid, message).  Skips validation for providers that don't need keys.
@@ -1221,7 +1217,7 @@ def get_provider_key_status(provider: str) -> str:
     return "\n".join(lines)
 
 
-def fetch_models_for_provider(provider: str) -> Tuple[List[str], str]:
+def fetch_models_for_provider(provider: str) -> tuple[list[str], str]:
     """
     Call the provider's /models endpoint and return the list.
     Returns (choices_list, status_message).
@@ -1291,7 +1287,7 @@ def _thumb_dir() -> str:
     return os.path.join(os.path.dirname(_db_path()), 'thumbnails')
 
 
-def ui_get_image_detail(image_id: Optional[int]):
+def ui_get_image_detail(image_id: int | None):
     """
     Load full image + EXIF + tags for the detail panel.
     Returns (pil_image, exif_md, description, scene_type, tags_csv, filepath).
@@ -1455,7 +1451,8 @@ def ui_download_image(image_id):
 def ui_open_in_os(image_id) -> str:
     """Open image in the default OS viewer. Returns status string."""
     # Phase-B API: POST /api/images/{id}/open  (local-only, Electron mode)
-    import subprocess, sys
+    import subprocess
+    import sys
     if not image_id or not app_state.initialized:
         return "❌ No image selected"
     record = get_image_record(_db_path(), image_id)
@@ -1483,21 +1480,11 @@ def ui_open_in_os(image_id) -> str:
 
 def build_ui():
     """Build Gradio UI - Gradio 6.0 compatible."""
-    
-    # Custom CSS
-    css = """
-    .main-container {
-        max-width: 1400px;
-        margin: auto;
-    }
-    .gradio-container {
-        font-family: 'Inter', sans-serif;
-    }
-    """
-    
+
     # Note: In Gradio 6.0, theme and css are passed to launch(), not Blocks()
+    # (actual CSS lives in `custom_css` below, where launch(css=...) uses it)
     with gr.Blocks() as app:
-        
+
         # Header
         gr.Markdown(f"""
         # {i18n.t('app_title')}
@@ -1520,10 +1507,10 @@ The ArcFace algorithm may be patent-protected.
 >
 > By continuing to use InsightFace models you confirm non-commercial use only.
         """)
-        
+
         # Session state
         user_state = gr.State(None)
-        
+
         # Login section
         with gr.Column(visible=True) as login_section:
             with gr.Row():
@@ -1532,7 +1519,7 @@ The ArcFace algorithm may be patent-protected.
                     login_password = gr.Textbox(label=i18n.t('password'), type="password", placeholder="admin")
                     login_btn = gr.Button(i18n.t('login'), variant="primary")
                     login_status = gr.Textbox(label=i18n.t('batch_status'), interactive=False)
-        
+
         def handle_login(username, password):
             success, message, user = login(username, password)
             if success:
@@ -1552,13 +1539,13 @@ The ArcFace algorithm may be patent-protected.
                     None,
                     gr.update(visible=False)
                 )
-        
+
         # Main content (hidden until login)
         with gr.Column(visible=False) as main_content:
-            
+
             # Tabs
             with gr.Tabs():
-                
+
                 # ============================================================
                 # RECOGNIZE TAB
                 # ============================================================
@@ -1587,7 +1574,7 @@ The ArcFace algorithm may be patent-protected.
 
                     # ── Edit metadata after processing ───────────────────────
                     recog_edit_id = gr.State(None)
-                    with gr.Accordion("✏️ Edit metadata", open=False) as recog_edit_acc:
+                    with gr.Accordion("✏️ Edit metadata", open=False):
                         recog_edit_desc = gr.Textbox(
                             label="Description",
                             lines=3,
@@ -1619,13 +1606,13 @@ The ArcFace algorithm may be patent-protected.
                         inputs=[recog_edit_id, recog_edit_desc, recog_edit_scene, recog_edit_tags],
                         outputs=recog_edit_result,
                     )
-                
+
                 # ============================================================
                 # TRAIN TAB
                 # ============================================================
                 with gr.Tab(i18n.t('tab_train')):
                     gr.Markdown(f"### {i18n.t('train_description')}")
-                    
+
                     with gr.Tab(i18n.t('train_upload')):
                         train_name = gr.Textbox(
                             label=i18n.t('person_name'),
@@ -1638,13 +1625,13 @@ The ArcFace algorithm may be patent-protected.
                         )
                         train_upload_btn = gr.Button(i18n.t('train_system'), variant="primary")
                         train_upload_result = gr.Markdown()
-                        
+
                         train_upload_btn.click(
                             fn=train_from_uploads,
                             inputs=[train_name, train_images],
                             outputs=train_upload_result
                         )
-                    
+
                     # Find this section in the TRAIN TAB:
                     with gr.Tab(i18n.t('train_folder')):
                         gr.Markdown(i18n.t('train_folder_description'))
@@ -1654,7 +1641,7 @@ The ArcFace algorithm may be patent-protected.
                         )
                         train_folder_btn = gr.Button(i18n.t('train_system'), variant="primary")
                         train_folder_result = gr.Markdown()
-                        
+
                         # FIX: Change this line
                         train_folder_btn.click(
                             fn=train_from_folder,
@@ -1662,7 +1649,7 @@ The ArcFace algorithm may be patent-protected.
                             outputs=train_folder_result,
                             show_progress="full"  # ← Add this for visual progress bar!
                         )
-                    
+
                     # Tips
                     with gr.Accordion(i18n.t('training_tips'), open=False):
                         gr.Markdown(f"""
@@ -1673,7 +1660,7 @@ The ArcFace algorithm may be patent-protected.
                         - {i18n.t('tip_5')}
                         - {i18n.t('tip_6')}
                         """)
-                
+
                 # ============================================================
                 # SEARCH TAB
                 # ============================================================
@@ -1700,7 +1687,7 @@ The ArcFace algorithm may be patent-protected.
                     # ── Detail / edit panel for search results ──────────────
                     search_ids_state = gr.State([])
 
-                    with gr.Accordion("📋 Image Details", open=False) as search_detail_acc:
+                    with gr.Accordion("📋 Image Details", open=False):
                         with gr.Row():
                             with gr.Column(scale=1):
                                 search_detail_img  = gr.Image(label="Selected image", interactive=False)
@@ -1870,41 +1857,40 @@ The ArcFace algorithm may be patent-protected.
                             browse_dl_file   = gr.File(label="Download", visible=True)
                             browse_open_result = gr.Markdown()
 
-                        with gr.Column(scale=2):
-                            with gr.Tabs():
-                                with gr.Tab("📋 Info & EXIF"):
-                                    browse_detail_info = gr.Markdown(
-                                        "_Click a thumbnail to see image details here._"
+                        with gr.Column(scale=2), gr.Tabs():
+                            with gr.Tab("📋 Info & EXIF"):
+                                browse_detail_info = gr.Markdown(
+                                    "_Click a thumbnail to see image details here._"
+                                )
+                            with gr.Tab("✏️ Edit metadata"):
+                                browse_detail_desc  = gr.Textbox(
+                                    label="Description",
+                                    lines=3,
+                                    placeholder="A brief description of this image…",
+                                )
+                                browse_detail_scene = gr.Dropdown(
+                                    label="Scene type",
+                                    choices=[''] + SCENE_TYPES,
+                                    allow_custom_value=True,
+                                )
+                                browse_detail_tags  = gr.Textbox(
+                                    label="Tags (comma-separated)",
+                                    placeholder="outdoor, family, birthday…",
+                                )
+                                browse_detail_save_btn = gr.Button(
+                                    "💾 Save metadata", variant="primary"
+                                )
+                                gr.Markdown("---")
+                                with gr.Row():
+                                    browse_detail_rename     = gr.Textbox(
+                                        label="Rename file to",
+                                        placeholder="new_filename.jpg",
+                                        scale=3,
                                     )
-                                with gr.Tab("✏️ Edit metadata"):
-                                    browse_detail_desc  = gr.Textbox(
-                                        label="Description",
-                                        lines=3,
-                                        placeholder="A brief description of this image…",
+                                    browse_detail_rename_btn = gr.Button(
+                                        "✏️ Rename", scale=1
                                     )
-                                    browse_detail_scene = gr.Dropdown(
-                                        label="Scene type",
-                                        choices=[''] + SCENE_TYPES,
-                                        allow_custom_value=True,
-                                    )
-                                    browse_detail_tags  = gr.Textbox(
-                                        label="Tags (comma-separated)",
-                                        placeholder="outdoor, family, birthday…",
-                                    )
-                                    browse_detail_save_btn = gr.Button(
-                                        "💾 Save metadata", variant="primary"
-                                    )
-                                    gr.Markdown("---")
-                                    with gr.Row():
-                                        browse_detail_rename     = gr.Textbox(
-                                            label="Rename file to",
-                                            placeholder="new_filename.jpg",
-                                            scale=3,
-                                        )
-                                        browse_detail_rename_btn = gr.Button(
-                                            "✏️ Rename", scale=1
-                                        )
-                                    browse_detail_result = gr.Markdown()
+                                browse_detail_result = gr.Markdown()
 
                     browse_detail_id = gr.State(None)   # currently selected image_id
 
@@ -1961,7 +1947,7 @@ The ArcFace algorithm may be patent-protected.
                 # ============================================================
                 with gr.Tab(i18n.t('tab_batch')):
                     gr.Markdown(f"### {i18n.t('batch_description')}")
-                    
+
                     batch_folder = gr.Textbox(
                         label=i18n.t('folder_path'),
                         placeholder="/path/to/images"
@@ -1976,42 +1962,42 @@ The ArcFace algorithm may be patent-protected.
                     )
                     batch_btn = gr.Button(i18n.t('process_folder'), variant="primary")
                     batch_result = gr.Markdown()
-                    
+
                     batch_btn.click(
                         fn=batch_process_folder,
                         inputs=[batch_folder, batch_extensions, batch_recursive],
                         outputs=batch_result,
                         show_progress="full"  # ← Also add this for visual progress bar!
                     )
-                
+
                 # ============================================================
                 # STATISTICS TAB
                 # ============================================================
                 with gr.Tab(i18n.t('tab_stats')):
                     stats_refresh_btn = gr.Button(i18n.t('refresh_stats'), variant="secondary")
                     stats_display = gr.Markdown()
-                    
+
                     stats_refresh_btn.click(
                         fn=get_statistics,
                         outputs=stats_display
                     )
-                    
+
                     # Load stats on tab open
                     app.load(fn=get_statistics, outputs=stats_display)
-                
+
                 # ============================================================
                 # SETTINGS TAB
                 # ============================================================
                 with gr.Tab(i18n.t('tab_settings')):
                     gr.Markdown(f"### {i18n.t('settings_title')}")
-                    
+
                     with gr.Accordion(i18n.t('ui_settings'), open=True):
                         settings_language = gr.Dropdown(
                             label=i18n.t('language'),
                             choices=['de', 'en'],
                             value=i18n.get_language()
                         )
-                    
+
                     with gr.Accordion(i18n.t('recognition_settings'), open=True):
                         # Build backend choices dynamically from what's installed
                         _avail = get_available_backends()
@@ -2278,7 +2264,7 @@ The ArcFace algorithm may be patent-protected.
                             label="VLM Downsizing (Max Dimension)",
                             info="0 = disabled. Recommended for Mistral: 900px, Groq: 1024px."
                         )
-                        
+
                         def _update_vlm_max_size(provider):
                             default = PROVIDER_CONFIGS.get(provider, {}).get('default_vlm_max_size', 0)
                             return gr.update(value=default)
@@ -2302,13 +2288,13 @@ The ArcFace algorithm may be patent-protected.
                             inputs=[vlm_enable_chk, vlm_act_provider, vlm_act_model, vlm_max_size],
                             outputs=vlm_activation_result
                         )
-                
+
                 # ============================================================
                 # ADMIN TAB
                 # ============================================================
                 with gr.Tab(i18n.t('tab_admin')):
                     gr.Markdown(f"### {i18n.t('admin_title')}")
-                    
+
                     with gr.Accordion(i18n.t('mount_drives'), open=False):
                         mount_type = gr.Dropdown(
                             label=i18n.t('mount_type'),
@@ -2324,7 +2310,7 @@ The ArcFace algorithm may be patent-protected.
                         mount_readonly = gr.Checkbox(label=i18n.t('read_only'), value=False)
                         mount_btn = gr.Button(i18n.t('mount_button'), variant="primary")
                         mount_result = gr.Markdown()
-                        
+
                         mount_btn.click(
                             fn=mount_network_drive,
                             inputs=[
@@ -2333,7 +2319,7 @@ The ArcFace algorithm may be patent-protected.
                             ],
                             outputs=mount_result
                         )
-                    
+
                     with gr.Accordion(i18n.t('user_management'), open=True):
                         user_username = gr.Textbox(label=i18n.t('user_name'))
                         user_password = gr.Textbox(label=i18n.t('user_password'), type="password")
@@ -2349,61 +2335,61 @@ The ArcFace algorithm may be patent-protected.
                         )
                         user_create_btn = gr.Button(i18n.t('create_user'), variant="primary")
                         user_result = gr.Markdown()
-                        
+
                         user_create_btn.click(
                             fn=create_new_user,
                             inputs=[user_username, user_password, user_role, user_folders],
                             outputs=user_result
                         )
-                        
+
                         user_list_btn = gr.Button(i18n.t('list_users'), variant="secondary")
                         user_list_result = gr.Markdown()
-                        
+
                         user_list_btn.click(
                             fn=list_all_users,
                             outputs=user_list_result
                         )
-        
+
         # Login handler
         login_btn.click(
             fn=handle_login,
             inputs=[login_username, login_password],
             outputs=[login_status, login_section, main_content, user_state, system_key_group]
         )
-    
+
     return app
 
 def fix_broken_confidence_data(db_path: str = "face_recognition.db"):
     """Fix existing records with invalid recognition_confidence."""
     import sqlite3
-    
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
+
     # Fix NULL values
     cursor.execute("""
         UPDATE face_embeddings 
         SET recognition_confidence = 0.0 
         WHERE recognition_confidence IS NULL
     """)
-    
+
     # Fix values outside range
     cursor.execute("""
         UPDATE face_embeddings 
         SET recognition_confidence = 0.0 
         WHERE recognition_confidence < 0.0
     """)
-    
+
     cursor.execute("""
         UPDATE face_embeddings 
         SET recognition_confidence = 1.0 
         WHERE recognition_confidence > 1.0
     """)
-    
+
     rows_fixed = cursor.rowcount
     conn.commit()
     conn.close()
-    
+
     print(f"✅ Fixed {rows_fixed} records with broken confidence data")
 
 
@@ -2414,7 +2400,7 @@ def fix_broken_confidence_data(db_path: str = "face_recognition.db"):
 if __name__ == "__main__":
     # Initialize application
     logger.info("Starting Face Recognition System...")
-    
+
     success, message = app_state.initialize()
     if not success:
         logger.error(f"Failed to initialize: {message}")
@@ -2424,14 +2410,14 @@ if __name__ == "__main__":
         print("2. Required packages are installed (run setup.sh)")
         print("3. config.yaml exists with valid configuration")
         exit(1)
-    
+
     logger.info(message)
 
     fix_broken_confidence_data()
-    
+
     # Build UI
     app = build_ui()
-    
+
     # Get server config
     server_config = app_state.config.get('ui', {}).get('server', {})
 
@@ -2450,7 +2436,7 @@ if __name__ == "__main__":
         font-family: 'Inter', sans-serif;
     }
     """
-    
+
     # Launch - Gradio 6.0 style (theme and css passed here)
     # Allow Gradio to serve thumbnail files and the directory containing the DB
     # (the user's actual photo directories are not known at startup — add them

@@ -14,7 +14,7 @@ Endpoints (all require admin or medienverwalter):
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -44,27 +44,27 @@ def _state():
 class DriveCreate(BaseModel):
     name: str
     type: str                             # smb | sftp | filen | internxt
-    config: Dict[str, Any]               # plain credentials (will be encrypted)
-    mount_point: Optional[str] = None
+    config: dict[str, Any]               # plain credentials (will be encrypted)
+    mount_point: str | None = None
     scope: str = 'system'                # system | user
-    allowed_roles: List[str] = ['admin', 'medienverwalter']
+    allowed_roles: list[str] = ['admin', 'medienverwalter']
     auto_mount: bool = False
     enabled: bool = True
 
 
 class DriveUpdate(BaseModel):
-    name: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
-    mount_point: Optional[str] = None
-    scope: Optional[str] = None
-    allowed_roles: Optional[List[str]] = None
-    auto_mount: Optional[bool] = None
-    enabled: Optional[bool] = None
+    name: str | None = None
+    config: dict[str, Any] | None = None
+    mount_point: str | None = None
+    scope: str | None = None
+    allowed_roles: list[str] | None = None
+    auto_mount: bool | None = None
+    enabled: bool | None = None
 
 
 class TestDriveRequest(BaseModel):
     type: str
-    config: Dict[str, Any]
+    config: dict[str, Any]
 
 
 class MkdirRequest(BaseModel):
@@ -72,15 +72,15 @@ class MkdirRequest(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    paths: List[str] = ['/']
+    paths: list[str] = ['/']
     recursive: bool = True
     visibility: str = 'shared'
     # Detection params (v4-compatible)
-    det_thresh: Optional[float] = None
-    min_face_size: Optional[int] = None
-    rec_thresh: Optional[float] = None
-    max_size: Optional[int] = None
-    det_model: Optional[str] = None
+    det_thresh: float | None = None
+    min_face_size: int | None = None
+    rec_thresh: float | None = None
+    max_size: int | None = None
+    det_model: str | None = None
     skip_vlm: bool = True
     duplicate_mode: str = 'skip'
 
@@ -96,7 +96,7 @@ class ItemPathRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _user_can_see(drive: Dict[str, Any], user) -> bool:
+def _user_can_see(drive: dict[str, Any], user) -> bool:
     """Check whether `user` is allowed to see/use this drive."""
     if user.role == 'admin':
         return True
@@ -107,7 +107,7 @@ def _user_can_see(drive: Dict[str, Any], user) -> bool:
     return user.role in allowed
 
 
-def _row_to_dict(row) -> Dict[str, Any]:
+def _row_to_dict(row) -> dict[str, Any]:
     d = dict(row)
     try:
         d['allowed_roles'] = json.loads(d.get('allowed_roles') or '[]')
@@ -120,7 +120,7 @@ def _row_to_dict(row) -> Dict[str, Any]:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get('')
-def list_drives(user=Depends(get_current_user)) -> List[Dict[str, Any]]:
+def list_drives(user=Depends(get_current_user)) -> list[dict[str, Any]]:
     s = _state()
     ensure_table(s.db_path)
     conn = None
@@ -138,7 +138,7 @@ def list_drives(user=Depends(get_current_user)) -> List[Dict[str, Any]]:
     return [_row_to_dict_status(r) for r in result]
 
 
-def _row_to_dict_status(row: Dict[str, Any]) -> Dict[str, Any]:
+def _row_to_dict_status(row: dict[str, Any]) -> dict[str, Any]:
     d = dict(row)
     d.pop('config_encrypted', None)
     try:
@@ -149,7 +149,7 @@ def _row_to_dict_status(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.post('')
-def create_drive(body: DriveCreate, _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+def create_drive(body: DriveCreate, _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     s = _state()
     ensure_table(s.db_path)
     if body.type not in ('smb', 'sftp', 'filen', 'internxt'):
@@ -182,7 +182,7 @@ def create_drive(body: DriveCreate, _user=Depends(require_admin_or_mediamanager)
 
 
 @router.get('/{drive_id}')
-def get_drive(drive_id: int, user=Depends(get_current_user)) -> Dict[str, Any]:
+def get_drive(drive_id: int, user=Depends(get_current_user)) -> dict[str, Any]:
     s = _state()
     conn = None
     try:
@@ -201,7 +201,7 @@ def get_drive(drive_id: int, user=Depends(get_current_user)) -> Dict[str, Any]:
 
 @router.put('/{drive_id}')
 def update_drive(drive_id: int, body: DriveUpdate,
-                 _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                 _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     s = _state()
     conn = None
     try:
@@ -210,7 +210,7 @@ def update_drive(drive_id: int, body: DriveUpdate,
         if not row:
             raise HTTPException(status_code=404, detail='Drive not found')
 
-        updates: Dict[str, Any] = {}
+        updates: dict[str, Any] = {}
         if body.name is not None:
             updates['name'] = body.name
         if body.config is not None:
@@ -245,7 +245,7 @@ def update_drive(drive_id: int, body: DriveUpdate,
 
 
 @router.delete('/{drive_id}')
-def delete_drive(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+def delete_drive(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     s = _state()
     conn = None
     try:
@@ -262,7 +262,7 @@ def delete_drive(drive_id: int, _user=Depends(require_admin_or_mediamanager)) ->
 
 
 @router.post('/{drive_id}/mount')
-def mount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+def mount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     s = _state()
     ensure_table(s.db_path)
     ok, msg = mount_drive(s.db_path, drive_id)
@@ -272,7 +272,7 @@ def mount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> Dict[s
 
 
 @router.post('/{drive_id}/unmount')
-def unmount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+def unmount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     s = _state()
     ok, msg = unmount_drive(s.db_path, drive_id)
     if not ok:
@@ -282,7 +282,7 @@ def unmount(drive_id: int, _user=Depends(require_admin_or_mediamanager)) -> Dict
 
 @router.get('/{drive_id}/browse')
 def browse(drive_id: int, path: str = '/',
-           user=Depends(get_current_user)) -> Dict[str, Any]:
+           user=Depends(get_current_user)) -> dict[str, Any]:
     """List directory contents at `path` for the given drive.
     Returns {path, entries, parent} matching the filesystem browse format."""
     import json as _json
@@ -314,28 +314,28 @@ def browse(drive_id: int, path: str = '/',
                 'drive_id': drive_id, 'drive_name': drive.get('name', ''),
                 'drive_type': drive.get('type', '')}
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.post('/{drive_id}/mkdir')
 def mkdir(drive_id: int, body: MkdirRequest,
-          _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+          _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Create a directory at the given path."""
     s = _state()
     try:
         make_dir(s.db_path, drive_id, body.path)
         return {'ok': True, 'path': body.path}
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.get('/{drive_id}/config')
 def get_drive_config(drive_id: int,
-                     _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                     _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Return the decrypted credential config for a drive (for pre-filling the edit form)."""
     s = _state()
     conn = None
@@ -350,7 +350,7 @@ def get_drive_config(drive_id: int,
     try:
         return decrypt_config(s.db_path, dict(row)['config_encrypted'])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Could not decrypt config: {e}')
+        raise HTTPException(status_code=500, detail=f'Could not decrypt config: {e}')  # noqa: B904
 
 
 @router.get('/{drive_id}/download-file')
@@ -358,7 +358,8 @@ async def download_drive_file(drive_id: int, path: str,
                               user=Depends(get_current_user)):
     """Download a single file from the cloud drive and stream it to the browser.
     Used by the frontend for direct file download and for browser-side WASM ingest."""
-    import asyncio, mimetypes
+    import asyncio
+    import mimetypes
     s = _state()
     conn = None
     try:
@@ -380,9 +381,9 @@ async def download_drive_file(drive_id: int, path: str,
             None, lambda: download_to_temp(s.db_path, drive_id, item)
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
     filename = os.path.basename(path)
     mime, _ = mimetypes.guess_type(filename)
@@ -442,7 +443,7 @@ async def ingest_drive(drive_id: int, body: IngestRequest,
         loop = asyncio.get_event_loop()
 
         # Collect all image files across requested paths
-        all_items: List[Dict[str, Any]] = []
+        all_items: list[dict[str, Any]] = []
         for path in body.paths:
             try:
                 items = await loop.run_in_executor(
@@ -528,49 +529,49 @@ async def ingest_drive(drive_id: int, body: IngestRequest,
 
 @router.post('/{drive_id}/rename')
 def rename_drive_item(drive_id: int, body: RenameRequest,
-                      _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                      _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Rename a file or folder on the drive."""
     s = _state()
     try:
         rename_item(s.db_path, drive_id, body.path, body.new_name)
         return {'ok': True, 'path': body.path, 'new_name': body.new_name}
     except (ValueError, RuntimeError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.post('/{drive_id}/trash')
 def trash_drive_item(drive_id: int, body: ItemPathRequest,
-                     _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                     _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Move a file or folder to trash (cloud) or delete it (SMB/SFTP)."""
     s = _state()
     try:
         trash_item(s.db_path, drive_id, body.path)
         return {'ok': True, 'path': body.path}
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.delete('/{drive_id}/item')
 def delete_drive_item(drive_id: int, body: ItemPathRequest,
-                      _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                      _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Permanently delete a file or folder on the drive."""
     s = _state()
     try:
         delete_item(s.db_path, drive_id, body.path)
         return {'ok': True, 'path': body.path}
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @router.post('/test')
 def test_connection(body: TestDriveRequest,
-                    _user=Depends(require_admin_or_mediamanager)) -> Dict[str, Any]:
+                    _user=Depends(require_admin_or_mediamanager)) -> dict[str, Any]:
     """Test credentials without saving anything."""
     cfg = body.config
 

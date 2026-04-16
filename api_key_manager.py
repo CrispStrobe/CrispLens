@@ -2,7 +2,6 @@
 import sqlite3
 import os
 import logging
-from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,7 @@ except ImportError:
 # PROVIDER REGISTRY
 # ============================================================================
 
-PROVIDER_CONFIGS: Dict[str, Dict] = {
+PROVIDER_CONFIGS: dict[str, dict] = {
     'anthropic': {
         'display_name': 'Anthropic (Claude)',
         'base_url': None,
@@ -251,7 +250,7 @@ class ApiKeyManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def set_system_key(self, provider: str, api_key: str) -> Tuple[bool, str]:
+    def set_system_key(self, provider: str, api_key: str) -> tuple[bool, str]:
         """
         Store a system-wide API key.
         Caller is responsible for enforcing admin-only access.
@@ -285,7 +284,7 @@ class ApiKeyManager:
         finally:
             conn.close()
 
-    def set_user_key(self, provider: str, api_key: str, username: str) -> Tuple[bool, str]:
+    def set_user_key(self, provider: str, api_key: str, username: str) -> tuple[bool, str]:
         """Store a personal API key for a specific user."""
         if provider not in PROVIDER_CONFIGS:
             return False, f"Unknown provider: {provider}"
@@ -317,7 +316,7 @@ class ApiKeyManager:
         finally:
             conn.close()
 
-    def get_effective_key(self, provider: str, username: Optional[str]) -> Optional[str]:
+    def get_effective_key(self, provider: str, username: str | None) -> str | None:
         """
         Retrieve the effective plaintext API key for a provider.
         User key takes precedence over system key.
@@ -352,7 +351,7 @@ class ApiKeyManager:
         finally:
             conn.close()
 
-    def delete_system_key(self, provider: str) -> Tuple[bool, str]:
+    def delete_system_key(self, provider: str) -> tuple[bool, str]:
         """Delete the system-wide API key for a provider. Caller enforces admin access."""
         conn = self._get_connection()
         try:
@@ -370,7 +369,7 @@ class ApiKeyManager:
         finally:
             conn.close()
 
-    def delete_user_key(self, provider: str, username: str) -> Tuple[bool, str]:
+    def delete_user_key(self, provider: str, username: str) -> tuple[bool, str]:
         """Delete a user's personal API key."""
         conn = self._get_connection()
         try:
@@ -398,7 +397,7 @@ class ApiKeyManager:
         except Exception:
             return "****"
 
-    def get_key_status(self, provider: str, username: Optional[str] = None) -> Dict:
+    def get_key_status(self, provider: str, username: str | None = None) -> dict:
         """
         Return masked key status for UI display.
         Never exposes plaintext keys.
@@ -440,6 +439,6 @@ class ApiKeyManager:
         finally:
             conn.close()
 
-    def get_all_key_statuses(self, username: Optional[str] = None) -> Dict[str, Dict]:
+    def get_all_key_statuses(self, username: str | None = None) -> dict[str, dict]:
         """Return key status for all registered providers."""
         return {p: self.get_key_status(p, username) for p in PROVIDER_CONFIGS}
