@@ -48,8 +48,12 @@ COPY schema_complete.sql ./
 # Copy built frontend from Stage 1
 COPY --from=frontend-builder /build/electron-app-v4/renderer/dist/ ./renderer/dist/
 
-# Pre-download models during build into /app/models/buffalo_l/
-RUN node core/model-downloader.js
+# Pre-download models during build into /app/models/buffalo_l/.
+# --accept-nc accepts InsightFace's non-commercial research license for the
+# buffalo_l model on behalf of the image (the image ships these models;
+# downstream users of this image are responsible for their own licence
+# compliance per the notice in README / app UI).
+RUN node core/model-downloader.js --accept-nc
 
 # Create data directory and set permissions for Hugging Face user (1000)
 RUN mkdir -p /data && chown -R 1000:1000 /app /data
